@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Terrain Chess</title>
+    <link data-trunk rel="rust" href="../crates/game/Cargo.toml" data-bin="terrainchess" data-cargo-profile="wasm-release" />
+    <!-- Only the processed atlas ships; the source sheet stays out of the build. -->
+    <link data-trunk rel="copy-file" href="../assets/atlas.png" data-target-path="assets" />
+    <style>
+      html, body { margin: 0; height: 100%; background: #1a1c2c; overflow: hidden; }
+      /* The canvas is transparent until Bevy draws, so the loading text shows through. */
+      #bevy { width: 100%; height: 100%; display: block; outline: none; }
+      #loading {
+        position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+        color: #e9dab2; font: 16px monospace; z-index: -1;
+      }
+    </style>
+  </head>
+  <body>
+    <canvas id="bevy" oncontextmenu="return false"></canvas>
+    <div id="loading">Raising the terrain...</div>
+  </body>
+</html>
