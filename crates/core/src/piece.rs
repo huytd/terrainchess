@@ -58,12 +58,8 @@ impl PieceKind {
         PieceKind::Queen,
         PieceKind::King,
     ];
-    pub const PROMOTIONS: [PieceKind; 4] = [
-        PieceKind::Queen,
-        PieceKind::Rook,
-        PieceKind::Bishop,
-        PieceKind::Knight,
-    ];
+    pub const PROMOTIONS: [PieceKind; 4] =
+        [PieceKind::Queen, PieceKind::Rook, PieceKind::Bishop, PieceKind::Knight];
 
     pub fn index(self) -> usize {
         self as usize

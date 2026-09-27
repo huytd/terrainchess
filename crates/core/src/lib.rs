@@ -2,13 +2,13 @@
 //! headlessly and shared with the AI (see PLAN.md §2).
 
 pub mod board;
-pub mod worldgen;
 pub mod movegen;
 pub mod piece;
 pub mod position;
 pub mod rng;
 pub mod rules;
 pub mod terrain;
+pub mod worldgen;
 
 pub use board::Sq;
 pub use movegen::{Move, MoveKind};

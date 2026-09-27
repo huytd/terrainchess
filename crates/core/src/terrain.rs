@@ -38,11 +38,7 @@ pub struct Tile {
 
 impl Tile {
     pub const fn flat(height: u8) -> Self {
-        Tile {
-            height,
-            kind: TileKind::Grass,
-            feature: Feature::None,
-        }
+        Tile { height, kind: TileKind::Grass, feature: Feature::None }
     }
 
     /// No piece may ever stand here.
@@ -63,10 +59,7 @@ pub struct Terrain {
 
 impl Terrain {
     pub fn flat(size: u8) -> Self {
-        Terrain {
-            size,
-            tiles: vec![Tile::flat(0); size as usize * size as usize],
-        }
+        Terrain { size, tiles: vec![Tile::flat(0); size as usize * size as usize] }
     }
 
     pub fn get(&self, sq: Sq) -> &Tile {

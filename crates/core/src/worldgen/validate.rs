@@ -29,11 +29,8 @@ pub fn validate(terrain: &Terrain, rules: &Rules, pos: &Position) -> Result<(), 
     }
     for side in Side::BOTH {
         for kind in PieceKind::ALL {
-            let starts: Vec<Sq> = pos
-                .pieces()
-                .filter(|(_, p)| p.side == side && p.kind == kind)
-                .map(|(s, _)| s)
-                .collect();
+            let starts: Vec<Sq> =
+                pos.pieces().filter(|(_, p)| p.side == side && p.kind == kind).map(|(s, _)| s).collect();
             if starts.is_empty() {
                 continue;
             }

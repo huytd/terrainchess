@@ -45,16 +45,11 @@ impl Position {
     }
 
     pub fn pieces(&self) -> impl Iterator<Item = (Sq, Piece)> + '_ {
-        self.squares
-            .iter()
-            .enumerate()
-            .filter_map(|(i, p)| p.map(|p| (Sq::from_index(i, self.size), p)))
+        self.squares.iter().enumerate().filter_map(|(i, p)| p.map(|p| (Sq::from_index(i, self.size), p)))
     }
 
     pub fn king(&self, side: Side) -> Option<Sq> {
-        self.pieces()
-            .find(|(_, p)| p.side == side && p.kind == PieceKind::King)
-            .map(|(s, _)| s)
+        self.pieces().find(|(_, p)| p.side == side && p.kind == PieceKind::King).map(|(s, _)| s)
     }
 
     /// Number of flattened home ranks the terrain generator must keep clear.
@@ -68,8 +63,8 @@ impl Position {
         const STANDARD: [PieceKind; 8] = [Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook];
         // 16×16: doubled back rank, one king (4R 4N 4B 2Q 1K + an extra rook).
         const DOUBLED: [PieceKind; 16] = [
-            Rook, Knight, Bishop, Rook, Knight, Bishop, Queen, King, Queen, Bishop, Knight, Rook,
-            Bishop, Knight, Rook, Rook,
+            Rook, Knight, Bishop, Rook, Knight, Bishop, Queen, King, Queen, Bishop, Knight, Rook, Bishop,
+            Knight, Rook, Rook,
         ];
         let (back, x0): (&[PieceKind], u8) = match size {
             8 => (&STANDARD, 0),
@@ -92,9 +87,8 @@ impl Position {
             let king_x = x0 + back.iter().position(|&k| k == King).unwrap() as u8;
             let rook_at = |x: &u8| back[(*x - x0) as usize] == Rook;
             let s = side.index();
-            pos.castling[s][KINGSIDE] = (king_x + 1..x0 + back.len() as u8)
-                .find(rook_at)
-                .map(|x| Sq::new(x, back_y));
+            pos.castling[s][KINGSIDE] =
+                (king_x + 1..x0 + back.len() as u8).find(rook_at).map(|x| Sq::new(x, back_y));
             pos.castling[s][QUEENSIDE] = (x0..king_x).rev().find(rook_at).map(|x| Sq::new(x, back_y));
         }
         pos

@@ -11,7 +11,11 @@ struct Fixture {
 
 impl Fixture {
     fn new(fen: &str) -> Self {
-        Fixture { terrain: Terrain::flat(8), rules: Rules::standard(8), pos: Position::from_fen(fen).unwrap() }
+        Fixture {
+            terrain: Terrain::flat(8),
+            rules: Rules::standard(8),
+            pos: Position::from_fen(fen).unwrap(),
+        }
     }
 
     fn h(mut self, squares: &[&str], height: u8) -> Self {

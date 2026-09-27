@@ -113,10 +113,7 @@ pub fn generate_unchecked(seed: u64, params: &GenParams) -> Terrain {
         if t.get(sq).is_water() {
             continue;
         }
-        let shore = KING
-            .iter()
-            .filter_map(|&(dx, dy)| sq.offset(dx, dy, size))
-            .any(|n| t.get(n).is_water());
+        let shore = KING.iter().filter_map(|&(dx, dy)| sq.offset(dx, dy, size)).any(|n| t.get(n).is_water());
         let tile = t.get_mut(sq);
         tile.kind = if shore && tile.height <= 1 {
             TileKind::Sand
@@ -129,9 +126,8 @@ pub fn generate_unchecked(seed: u64, params: &GenParams) -> Terrain {
 
     // 5. Cave entrances, preferably cut into a cliff face (south neighbour lower).
     //    Each entrance links to its mirror image on the other half.
-    let free = |t: &Terrain, sq: Sq| {
-        middle(sq) && !t.get(sq).is_water() && t.get(sq).feature == Feature::None
-    };
+    let free =
+        |t: &Terrain, sq: Sq| middle(sq) && !t.get(sq).is_water() && t.get(sq).feature == Feature::None;
     for link in 0..params.cave_pairs {
         let candidates: Vec<Sq> = crate::board::squares(size).filter(|&s| free(&t, s)).collect();
         let cliffs: Vec<Sq> = candidates

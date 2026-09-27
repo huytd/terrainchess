@@ -12,7 +12,10 @@ pub enum MoveKind {
     Normal,
     DoublePush,
     EnPassant,
-    Castle { rook_from: Sq, rook_to: Sq },
+    Castle {
+        rook_from: Sq,
+        rook_to: Sq,
+    },
     /// Tunnel hop from one cave entrance to a linked one.
     Cave,
 }
@@ -71,9 +74,7 @@ impl Ctx<'_> {
     /// A slide that just stepped `from` → `to` cannot continue past `to`.
     fn slide_ends(&self, prof: &MoveProfile, from: Sq, to: Sq) -> bool {
         let up = self.up(from, to);
-        (prof.uphill_ends_slide && up >= 1)
-            || -up > prof.max_slide_drop as i16
-            || self.in_shallow_water(to)
+        (prof.uphill_ends_slide && up >= 1) || -up > prof.max_slide_drop as i16 || self.in_shallow_water(to)
     }
 
     fn can_land_jump(&self, prof: &MoveProfile, from: Sq, to: Sq) -> bool {
@@ -82,7 +83,14 @@ impl Ctx<'_> {
 
     /// Walk a ray, calling `f` for each reachable square. The ray stops at the first
     /// occupied square (which is still reported) or where terrain ends it.
-    fn ray(&self, pos: &Position, prof: &MoveProfile, from: Sq, dir: (i8, i8), f: &mut impl FnMut(Sq) -> bool) -> bool {
+    fn ray(
+        &self,
+        pos: &Position,
+        prof: &MoveProfile,
+        from: Sq,
+        dir: (i8, i8),
+        f: &mut impl FnMut(Sq) -> bool,
+    ) -> bool {
         // A piece standing in shallow water can't move 2+ squares.
         let max_steps = if self.in_shallow_water(from) { 1 } else { usize::MAX };
         let mut cur = from;
@@ -104,16 +112,23 @@ impl Ctx<'_> {
 
     /// Every square `piece` at `from` attacks, i.e. could capture on if an enemy stood
     /// there. Pawn pushes are not attacks. `f` returns true to stop early.
-    fn for_each_attack(&self, pos: &Position, from: Sq, piece: Piece, f: &mut impl FnMut(Sq) -> bool) -> bool {
+    fn for_each_attack(
+        &self,
+        pos: &Position,
+        from: Sq,
+        piece: Piece,
+        f: &mut impl FnMut(Sq) -> bool,
+    ) -> bool {
         let size = self.size();
         let prof = self.rules.profile(piece);
         let slide_dirs: &[(i8, i8)] = match piece.kind {
             PieceKind::Pawn => {
                 for dx in [-1, 1] {
-                    if let Some(to) = from.offset(dx, piece.side.forward(), size) {
-                        if self.can_step(prof, from, to) && f(to) {
-                            return true;
-                        }
+                    if let Some(to) = from.offset(dx, piece.side.forward(), size)
+                        && self.can_step(prof, from, to)
+                        && f(to)
+                    {
+                        return true;
                     }
                 }
                 &[]
@@ -121,10 +136,11 @@ impl Ctx<'_> {
             PieceKind::Knight => {
                 if !self.in_shallow_water(from) {
                     for (dx, dy) in KNIGHT {
-                        if let Some(to) = from.offset(dx, dy, size) {
-                            if self.can_land_jump(prof, from, to) && f(to) {
-                                return true;
-                            }
+                        if let Some(to) = from.offset(dx, dy, size)
+                            && self.can_land_jump(prof, from, to)
+                            && f(to)
+                        {
+                            return true;
                         }
                     }
                 }
@@ -132,10 +148,11 @@ impl Ctx<'_> {
             }
             PieceKind::King => {
                 for (dx, dy) in KING {
-                    if let Some(to) = from.offset(dx, dy, size) {
-                        if self.can_step(prof, from, to) && f(to) {
-                            return true;
-                        }
+                    if let Some(to) = from.offset(dx, dy, size)
+                        && self.can_step(prof, from, to)
+                        && f(to)
+                    {
+                        return true;
                     }
                 }
                 &[]
@@ -205,24 +222,24 @@ impl Ctx<'_> {
             }
         };
 
-        if let Some(one) = from.offset(0, fwd, size) {
-            if pos.get(one).is_none() && self.can_step(prof, from, one) {
-                push(Move::new(from, one, MoveKind::Normal), out);
-                // The double step can't climb: neither tile may be higher than the start.
-                let rank = side.relative_rank(from.y, size);
-                let h = self.terrain.height(from);
-                if let Some(two) = one.offset(0, fwd, size) {
-                    if rank >= 1
-                        && rank <= self.rules.double_step_max_rank
-                        && !self.in_shallow_water(from)
-                        && !self.slide_ends(prof, from, one)
-                        && pos.get(two).is_none()
-                        && self.can_step(prof, one, two)
-                        && self.terrain.height(two) <= h
-                    {
-                        push(Move::new(from, two, MoveKind::DoublePush), out);
-                    }
-                }
+        if let Some(one) = from.offset(0, fwd, size)
+            && pos.get(one).is_none()
+            && self.can_step(prof, from, one)
+        {
+            push(Move::new(from, one, MoveKind::Normal), out);
+            // The double step can't climb: neither tile may be higher than the start.
+            let rank = side.relative_rank(from.y, size);
+            let h = self.terrain.height(from);
+            if let Some(two) = one.offset(0, fwd, size)
+                && rank >= 1
+                && rank <= self.rules.double_step_max_rank
+                && !self.in_shallow_water(from)
+                && !self.slide_ends(prof, from, one)
+                && pos.get(two).is_none()
+                && self.can_step(prof, one, two)
+                && self.terrain.height(two) <= h
+            {
+                push(Move::new(from, two, MoveKind::DoublePush), out);
             }
         }
         for dx in [-1, 1] {
