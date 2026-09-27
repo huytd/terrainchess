@@ -84,8 +84,9 @@ FACES = [
 BOTTOM = (0.5, 1.0)  # anchor: feet / base at the bottom centre
 CENTER = (0.5, 0.5)
 
-# Pieces: idle frames. Target heights follow SPRITES.md §0 (pawn smallest, king tallest).
-PIECE_H = {"pawn": 30, "rook": 38, "knight": 36, "bishop": 50, "queen": 54, "king": 56}
+# Pieces: idle frames, pawn smallest to king tallest. Kept shorter than SPRITES.md §0 so a
+# piece covers at most about half of the square behind it.
+PIECE_H = {"pawn": 26, "knight": 30, "rook": 32, "bishop": 36, "queen": 38, "king": 40}
 
 SPRITES = [
     # Ashen Sun (white)
