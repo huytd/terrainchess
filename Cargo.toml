@@ -1,6 +1,31 @@
-[package]
-name = "terrainchess"
+[workspace]
+resolver = "3"
+members = ["crates/core", "crates/game"]
+
+[workspace.package]
 version = "0.1.0"
 edition = "2024"
 
-[dependencies]
+[workspace.dependencies]
+tc_core = { path = "crates/core" }
+bevy = { version = "=0.19.1", default-features = false, features = ["2d", "ui"] }
+noise = { version = "0.9", default-features = false }
+serde = { version = "1", features = ["derive"] }
+ron = "0.12"
+
+# Bevy is slow unoptimised; optimise dependencies even in dev builds.
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
+# Web release builds: small over fast (see PLAN.md M8).
+[profile.wasm-release]
+inherits = "release"
+opt-level = "z"
+strip = "debuginfo"

@@ -1,0 +1,8 @@
+[package]
+name = "tc_core"
+version.workspace = true
+edition.workspace = true
+description = "Terrain Chess rules: board, terrain, move generation, generator. No Bevy."
+
+[dependencies]
+noise.workspace = true
