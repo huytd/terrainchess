@@ -67,6 +67,11 @@ impl Match {
         self.ctx().legal_moves(&self.pos)
     }
 
+    /// Hashes of every position so far, oldest first (the current one last).
+    pub fn history(&self) -> &[u64] {
+        &self.history
+    }
+
     pub fn in_check(&self) -> bool {
         self.ctx().in_check(&self.pos, self.pos.side_to_move)
     }

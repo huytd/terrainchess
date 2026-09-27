@@ -112,7 +112,7 @@ impl Ctx<'_> {
 
     /// Every square `piece` at `from` attacks, i.e. could capture on if an enemy stood
     /// there. Pawn pushes are not attacks. `f` returns true to stop early.
-    fn for_each_attack(
+    pub fn for_each_attack(
         &self,
         pos: &Position,
         from: Sq,

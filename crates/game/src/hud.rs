@@ -4,6 +4,7 @@
 use bevy::prelude::*;
 use tc_core::{DrawReason, Outcome, PieceKind, Side};
 
+use crate::ai::Thinker;
 use crate::game::GameState;
 
 #[derive(Component)]
@@ -54,7 +55,8 @@ fn setup(mut commands: Commands) {
         children![(
             Text::new(
                 "Click: select / move   Right-drag, WASD: pan   Wheel: zoom   Alt: heights\n\
-                 U: undo   N: new board   1 / 2 / 3: 8x8 / 16x16 / 32x32",
+                 U: undo   N: new board   1 / 2 / 3: 8x8 / 16x16 / 32x32\n\
+                 H: AI / hotseat   F: swap sides with the AI   - / =: AI level",
             ),
             TextFont { font_size: 13.0.into(), ..default() },
             TextColor(INK.with_alpha(0.8)),
@@ -62,8 +64,12 @@ fn setup(mut commands: Commands) {
     ));
 }
 
-fn update_status(state: Res<GameState>, mut text: Single<&mut Text, With<StatusText>>) {
-    if !state.is_changed() {
+fn update_status(
+    state: Res<GameState>,
+    thinker: Res<Thinker>,
+    mut text: Single<&mut Text, With<StatusText>>,
+) {
+    if !state.is_changed() && !thinker.is_changed() {
         return;
     }
     let turn = state.game.pos.side_to_move;
@@ -78,10 +84,20 @@ fn update_status(state: Res<GameState>, mut text: Single<&mut Text, With<StatusT
                 DrawReason::InsufficientMaterial => "insufficient material",
             }
         ),
-        None if state.game.in_check() => format!("{} to move - check!", side_name(turn)),
-        None => format!("{} to move", side_name(turn)),
+        None => {
+            let check = if state.game.in_check() { " - check!" } else { "" };
+            let verb = if state.ai_to_move() && thinker.is_thinking() { "is thinking" } else { "to move" };
+            format!("{} {verb}{check}", side_name(turn))
+        }
     };
-    text.0 = format!("{line}\n{0}x{0}  seed {1}  move {2}", state.size, state.seed, state.game.pos.fullmove);
+    let mode = match state.ai_side {
+        Some(ai) => format!("vs AI ({}) level {}", side_name(ai), state.ai_level),
+        None => "hotseat".to_string(),
+    };
+    text.0 = format!(
+        "{line}\n{mode}\n{0}x{0}  seed {1}  move {2}",
+        state.size, state.seed, state.game.pos.fullmove
+    );
 }
 
 fn show_promotion(mut commands: Commands, state: Res<GameState>, panel: Query<Entity, With<PromotionPanel>>) {

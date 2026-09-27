@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/game"]
+members = ["crates/core", "crates/ai", "crates/game"]
 
 [workspace.package]
 version = "0.1.0"
@@ -8,6 +8,7 @@ edition = "2024"
 
 [workspace.dependencies]
 tc_core = { path = "crates/core" }
+tc_ai = { path = "crates/ai" }
 bevy = { version = "=0.19.1", default-features = false, features = ["2d", "ui"] }
 noise = { version = "0.9", default-features = false }
 serde = { version = "1", features = ["derive"] }

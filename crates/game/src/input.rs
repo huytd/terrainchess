@@ -5,7 +5,9 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::board_view::{LIFT, TILE, pick_tile, tile_top};
-use crate::game::GameState;
+use tc_core::Side;
+
+use crate::game::{GameState, MAX_AI_LEVEL};
 
 const MAX_ZOOM: f32 = 6.0;
 
@@ -95,7 +97,10 @@ fn click_board(
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
 ) {
-    if !mouse.just_pressed(MouseButton::Left) || state.pending_promotion.is_some() || state.outcome.is_some()
+    if !mouse.just_pressed(MouseButton::Left)
+        || state.pending_promotion.is_some()
+        || state.outcome.is_some()
+        || state.ai_to_move()
     {
         return;
     }
@@ -144,7 +149,26 @@ fn hotkeys(keys: Res<ButtonInput<KeyCode>>, mut state: ResMut<GameState>, time: 
     if let Some(size) = new_size {
         // Time since start is a good enough source of a fresh seed on every platform.
         let seed = time.elapsed().as_nanos() as u64 ^ state.seed.rotate_left(17);
-        *state = GameState::new(size, seed);
+        *state = state.restart(size, seed);
+    }
+    if keys.just_pressed(KeyCode::KeyH) {
+        // Toggle between playing the AI (as the Ashen Sun) and hotseat.
+        state.ai_side = match state.ai_side {
+            Some(_) => None,
+            None => Some(Side::Black),
+        };
+    }
+    if keys.just_pressed(KeyCode::KeyF) && state.ai_side.is_some() {
+        // Swap sides with the AI.
+        state.ai_side = state.ai_side.map(Side::opposite);
+        state.selected = None;
+        state.pieces_dirty = true;
+    }
+    if keys.just_pressed(KeyCode::Minus) {
+        state.ai_level = state.ai_level.saturating_sub(1);
+    }
+    if keys.just_pressed(KeyCode::Equal) {
+        state.ai_level = (state.ai_level + 1).min(MAX_AI_LEVEL);
     }
     if keys.just_pressed(KeyCode::Backspace) || keys.just_pressed(KeyCode::KeyU) {
         state.undo();

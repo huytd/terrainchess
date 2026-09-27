@@ -390,7 +390,8 @@ fn animate_hops(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &
         p.z = if k >= 1.0 { hop.to.z } else { hop.from.z };
         tf.translation = p;
         if k >= 1.0 {
-            commands.entity(e).remove::<Hop>();
+            // The piece may have been rebuilt by a move this same frame.
+            commands.entity(e).try_remove::<Hop>();
         }
     }
 }

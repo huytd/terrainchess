@@ -3,6 +3,7 @@
 // Bevy query filters are verbose by nature.
 #![allow(clippy::type_complexity)]
 
+mod ai;
 mod atlas;
 mod board_view;
 mod game;
@@ -26,6 +27,7 @@ fn main() {
         .insert_resource(ClearColor(Color::srgb_u8(0x1A, 0x1C, 0x2C)))
         .add_plugins((
             atlas::AtlasPlugin,
+            ai::AiPlugin,
             game::GamePlugin,
             board_view::BoardViewPlugin,
             input::InputPlugin,

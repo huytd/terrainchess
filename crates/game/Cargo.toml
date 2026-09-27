@@ -5,6 +5,7 @@ edition.workspace = true
 
 [dependencies]
 tc_core.workspace = true
+tc_ai.workspace = true
 bevy.workspace = true
 serde.workspace = true
 ron.workspace = true

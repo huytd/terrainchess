@@ -2,7 +2,7 @@
 
 use bevy::prelude::*;
 use tc_core::worldgen::{GenParams, generate};
-use tc_core::{Match, Move, Outcome, Position, Rules, Sq};
+use tc_core::{Match, Move, Outcome, Position, Rules, Side, Sq};
 
 #[derive(Resource)]
 pub struct GameState {
@@ -21,10 +21,16 @@ pub struct GameState {
     pub pieces_dirty: bool,
     /// The move just played, to animate.
     pub animate: Option<Move>,
+    /// Side the AI plays, or `None` for hotseat.
+    pub ai_side: Option<Side>,
+    /// AI strength as a run floor (0 = gentle, 7 = boss).
+    pub ai_level: u8,
 }
 
+pub const MAX_AI_LEVEL: u8 = 7;
+
 impl GameState {
-    pub fn new(size: u8, seed: u64) -> Self {
+    pub fn new(size: u8, seed: u64, ai_side: Option<Side>, ai_level: u8) -> Self {
         let (terrain, seed) = generate(seed, &GenParams::for_floor(size, 2));
         let game = Match::new(terrain, Rules::standard(size), Position::start(size));
         GameState {
@@ -38,7 +44,18 @@ impl GameState {
             terrain_dirty: true,
             pieces_dirty: true,
             animate: None,
+            ai_side,
+            ai_level,
         }
+    }
+
+    /// A fresh board with the same opponent settings.
+    pub fn restart(&self, size: u8, seed: u64) -> Self {
+        GameState::new(size, seed, self.ai_side, self.ai_level)
+    }
+
+    pub fn ai_to_move(&self) -> bool {
+        self.outcome.is_none() && self.ai_side == Some(self.game.pos.side_to_move)
     }
 
     pub fn play(&mut self, mv: Move) {
@@ -53,15 +70,19 @@ impl GameState {
         self.pieces_dirty = true;
     }
 
+    /// Take back a move; against the AI, back to the player's last turn.
     pub fn undo(&mut self) {
-        if let Some(prev) = self.undo.pop() {
+        while let Some(prev) = self.undo.pop() {
             self.game = prev;
-            self.outcome = None;
-            self.selected = None;
-            self.pending_promotion = None;
-            self.animate = None;
-            self.pieces_dirty = true;
+            if self.ai_side != Some(self.game.pos.side_to_move) {
+                break;
+            }
         }
+        self.outcome = None;
+        self.selected = None;
+        self.pending_promotion = None;
+        self.animate = None;
+        self.pieces_dirty = true;
     }
 
     /// Legal moves of the selected piece.
@@ -79,6 +100,6 @@ pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(GameState::new(8, 1));
+        app.insert_resource(GameState::new(8, 1, Some(Side::Black), 2));
     }
 }

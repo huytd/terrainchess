@@ -4524,6 +4524,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "tc_ai"
+version = "0.1.0"
+dependencies = [
+ "tc_core",
+]
+
+[[package]]
 name = "tc_core"
 version = "0.1.0"
 dependencies = [
@@ -4546,6 +4553,7 @@ dependencies = [
  "bevy",
  "ron",
  "serde",
+ "tc_ai",
  "tc_core",
 ]
 
