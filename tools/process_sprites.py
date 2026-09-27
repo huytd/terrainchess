@@ -95,8 +95,7 @@ SPRITES = [
     ("white_rook", cell(9, 8), PIECE_H["rook"], BOTTOM),
     ("white_bishop", cell(10, 8, 1, 2), PIECE_H["bishop"], BOTTOM),
     ("white_queen", cell(10, 12, 1, 2), PIECE_H["queen"], BOTTOM),
-    # The sheet has no full-body Ashen King yet; the portrait bust stands in.
-    ("white_king", cell(12, 8), 42, BOTTOM),
+    # white_king has no full-body cell on the sheet; see WHITE_KING below.
     # Hollow Crown (black)
     ("black_pawn", cell(8, 8), PIECE_H["pawn"], BOTTOM),
     ("black_knight", cell(9, 14), PIECE_H["knight"], BOTTOM),
@@ -131,6 +130,17 @@ SPRITES = [
     ("ov_blocked", (730, 1676, 806, 1752), None, CENTER),
     ("ov_ring", (822, 1668, 918, 1760), None, CENTER),
 ]
+
+# The sheet has no full-body Ashen King, so one is assembled in source pixels: the
+# portrait bust (crown, head, ermine cape) over the bishop's robe and sun staff.
+WHITE_KING = {
+    "body": cell(10, 8, 1, 2),  # bishop, 128×256
+    "head_cut": (105, 84),  # blank the bishop's mitre and face: rows < 105, cols < 84
+    "bust": cell(12, 8),
+    "bust_scale": 0.9,
+    "bust_bottom": 130,  # bust's lower edge, in body-cell rows
+}
+
 
 # SPRITES.md §1
 PALETTE = """
@@ -205,6 +215,21 @@ def snap(img, pal):
     return img
 
 
+def white_king(crop):
+    """Composite the full-body white king (see WHITE_KING) on a magenta canvas."""
+    k = WHITE_KING
+    body = crop(k["body"]).copy()
+    rows, cols = k["head_cut"]
+    body[:rows, :cols] = (255, 0, 255)
+    bust = Image.fromarray(crop(k["bust"]).astype(np.uint8))
+    side = round(CELL * k["bust_scale"])
+    bust = np.asarray(bust.resize((side, side), Image.LANCZOS)).astype(np.float32)
+    mask = key_mask(bust)
+    x0, y0 = (body.shape[1] - side) // 2, k["bust_bottom"] - side
+    body[y0 : y0 + side, x0 : x0 + side][mask] = bust[mask]
+    return body
+
+
 def process(src, palette):
     rgb_all = np.asarray(src.convert("RGB")).astype(np.float32)
     out = {}  # name -> (RGBA float array, anchor)
@@ -244,6 +269,7 @@ def process(src, palette):
 
     for name, box, target_h, anchor in SPRITES:
         out[name] = (trimmed(crop(box), target_h), anchor)
+    out["white_king"] = (trimmed(white_king(crop), PIECE_H["king"]), BOTTOM)
 
     if palette:
         pal = palette_array()

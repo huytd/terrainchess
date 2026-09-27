@@ -396,8 +396,16 @@ fn animate_hops(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &
     }
 }
 
-fn toggle_height_badges(keys: Res<ButtonInput<KeyCode>>, mut q: Query<&mut Visibility, With<HeightBadge>>) {
-    let show = keys.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
+/// Height badges stay on while set (toolbar / T); holding Alt shows them briefly.
+#[derive(Resource, Default)]
+pub struct ShowHeights(pub bool);
+
+fn toggle_height_badges(
+    keys: Res<ButtonInput<KeyCode>>,
+    pinned: Res<ShowHeights>,
+    mut q: Query<&mut Visibility, With<HeightBadge>>,
+) {
+    let show = pinned.0 || keys.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
     let want = if show { Visibility::Inherited } else { Visibility::Hidden };
     for mut v in &mut q {
         if *v != want {
@@ -410,7 +418,7 @@ pub struct BoardViewPlugin;
 
 impl Plugin for BoardViewPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
+        app.init_resource::<ShowHeights>().add_systems(
             Update,
             ((spawn_terrain, spawn_pieces).chain(), animate_water, animate_hops, toggle_height_badges),
         );

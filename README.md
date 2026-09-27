@@ -26,8 +26,11 @@ cd web && trunk serve                # browser build at http://localhost:8080
 ```
 
 You play the Ashen Sun against the AI by default. Controls: click to select and move · right-drag /
-WASD to pan · wheel to zoom · hold Alt for tile heights · U undo · N new board · 1/2/3 for 8×8,
-16×16, 32×32 · H toggles AI / hotseat · F swaps sides with the AI · -/= changes AI level (0–7).
+WASD to pan · wheel to zoom · hold Alt (or T to toggle) for tile heights · U undo · N new board ·
+1/2/3 for 8×8, 16×16, 32×32 · H toggles AI / hotseat · F swaps sides with the AI · -/= changes AI
+level (0–7). The toolbar at the bottom has the same commands.
+
+On phones and tablets (web build): tap to select and move · drag to pan · pinch to zoom.
 
 ## Art
 

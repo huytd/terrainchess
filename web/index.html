@@ -2,15 +2,24 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="theme-color" content="#1a1c2c" />
     <title>Terrain Chess</title>
     <link data-trunk rel="rust" href="../crates/game/Cargo.toml" data-bin="terrainchess" data-cargo-profile="wasm-release" />
     <!-- Only the processed atlas ships; the source sheet stays out of the build. -->
     <link data-trunk rel="copy-file" href="../assets/atlas.png" data-target-path="assets" />
     <style>
-      html, body { margin: 0; height: 100%; background: #1a1c2c; overflow: hidden; }
+      html, body {
+        margin: 0; height: 100%; background: #1a1c2c; overflow: hidden;
+        /* Mobile: no page scroll, bounce, text selection or tap flash; the game handles touch. */
+        overscroll-behavior: none; user-select: none; -webkit-user-select: none;
+        -webkit-touch-callout: none; -webkit-tap-highlight-color: transparent;
+      }
+      body { position: fixed; inset: 0; height: 100dvh; }
       /* The canvas is transparent until Bevy draws, so the loading text shows through. */
-      #bevy { width: 100%; height: 100%; display: block; outline: none; }
+      #bevy { width: 100%; height: 100%; display: block; outline: none; touch-action: none; }
       #loading {
         position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
         color: #e9dab2; font: 16px monospace; z-index: -1;
