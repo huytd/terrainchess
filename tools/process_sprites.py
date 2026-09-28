@@ -114,7 +114,7 @@ SPRITES = [
     ("cave_door_0", (1152, 256, 1280, 400), None, BOTTOM),
     ("cave_door_1", (1280, 256, 1408, 400), None, BOTTOM),
     ("cave_door_2", (1408, 256, 1536, 400), None, BOTTOM),
-    ("cave_rune_0", (1168, 408, 1280, 482), None, CENTER),
+    ("cave_rune_0", (1215, 410, 1340, 492), None, CENTER),
     ("rock", cell(6, 0), None, BOTTOM),
     ("rock_mossy", cell(7, 0), None, BOTTOM),
     ("pine", (1024, 578, 1152, 768), 56, BOTTOM),
@@ -231,6 +231,96 @@ def white_king(crop):
     return body
 
 
+# --- Isometric board pieces -------------------------------------------------------
+# The board is drawn as 2:1 isometric blocks: a diamond top per square and two shaded
+# side faces per column. Keep these in sync with crates/game/src/board_view.rs.
+ISO_W, ISO_H = 48, 24  # diamond top
+ISO_LIFT = 12  # px per height level
+ISO_BASE = 6  # column height at level 0
+ISO_LEVELS = 4  # heights 0..=3
+ISO_FACE_FILL = (78, 85, 99)  # stone behind transparent bits of the cliff art
+
+
+def iso_diamond_mask(ss=1):
+    """Coverage of the diamond top, sampled on an ss×ss grid per pixel."""
+    ys, xs = np.mgrid[0 : ISO_H * ss, 0 : ISO_W * ss]
+    px, py = (xs + 0.5) / ss, (ys + 0.5) / ss
+    return np.abs(px - ISO_W / 2) / (ISO_W / 2) + np.abs(py - ISO_H / 2) / (ISO_H / 2) <= 1.0
+
+
+def iso_top(tile):
+    """Map a square top-down tile onto the diamond (north = up-left, east = up-right)."""
+    ss = 4
+    ys, xs = np.mgrid[0 : ISO_H * ss, 0 : ISO_W * ss]
+    px, py = (xs + 0.5) / ss, (ys + 0.5) / ss
+    a = (px - ISO_W / 2) / (ISO_W / 2)  # u - v
+    b = (ISO_H - py) / (ISO_H / 2) - 1  # u + v - 1, from the bottom corner
+    u, v = (a + b + 1) / 2, (b + 1 - a) / 2
+    n = tile.shape[0]
+    tx = np.clip((u * n).astype(int), 0, n - 1)
+    ty = np.clip(((1 - v) * n).astype(int), 0, n - 1)
+    rgb = tile[ty, tx, :3].reshape(ISO_H, ss, ISO_W, ss, 3).mean((1, 3))
+    out = np.zeros((ISO_H, ISO_W, 4), np.float32)
+    inside = iso_diamond_mask(ss).reshape(ISO_H, ss, ISO_W, ss).mean((1, 3)) >= 0.5
+    out[..., :3] = rgb
+    out[..., 3] = np.where(inside, 255, 0)
+    return out
+
+
+def iso_face(art, levels, right):
+    """A column side face `levels` high, textured with cliff art (grass lip on top).
+    Left faces run down-right from the diamond's left corner, right faces up-right."""
+    hw = ISO_W // 2
+    face_h = ISO_BASE + levels * ISO_LIFT
+    h = ISO_H // 2 + face_h
+    out = np.zeros((h, hw, 4), np.float32)
+    n = art.shape[1]
+    def art_row(dy):
+        # cliff_0 rows: 0 magenta fringe, 1-6 grass lip, 8-27 stone, 28-29 dark base.
+        if face_h >= 10 and dy >= face_h - 2:
+            return 28 + dy - (face_h - 2)
+        if dy < 7:
+            return 1 + dy
+        return 8 + (dy - 7) % 20
+
+    for x in range(hw):
+        top = (ISO_H // 2 - (x + 1) // 2) if right else x // 2
+        tx = min(n - 1, int((x + 0.5) / hw * n))
+        for dy in range(face_h):
+            c = art[art_row(dy), tx]
+            out[top + dy, x, :3] = c[:3] if c[3] > 0 else ISO_FACE_FILL
+            out[top + dy, x, 3] = 255
+    return out
+
+
+def iso_outline():
+    """One-pixel white rim of the diamond, tinted in game."""
+    m = iso_diamond_mask()
+    inner = m.copy()
+    inner[1:, :] &= m[:-1, :]
+    inner[:-1, :] &= m[1:, :]
+    inner[:, 1:] &= m[:, :-1]
+    inner[:, :-1] &= m[:, 1:]
+    out = np.zeros((ISO_H, ISO_W, 4), np.float32)
+    out[m & ~inner] = (255, 255, 255, 255)
+    return out
+
+
+def iso_sprites(out):
+    iso = {}
+    for name, _, _ in TILES:
+        iso[f"iso_{name}"] = (iso_top(out[name][0]), (0.5, 0.5))
+    fill = np.zeros((ISO_H, ISO_W, 4), np.float32)
+    fill[iso_diamond_mask()] = (255, 255, 255, 255)
+    iso["iso_fill"] = (fill, (0.5, 0.5))
+    iso["iso_outline"] = (iso_outline(), (0.5, 0.5))
+    art = out["cliff_0"][0]
+    for lv in range(ISO_LEVELS):
+        iso[f"iso_face_l_{lv}"] = (iso_face(art, lv, False), (0.0, 0.0))  # anchored top-left
+        iso[f"iso_face_r_{lv}"] = (iso_face(art, lv, True), (0.0, 0.0))
+    return iso
+
+
 def process(src, palette):
     rgb_all = np.asarray(src.convert("RGB")).astype(np.float32)
     out = {}  # name -> (RGBA float array, anchor)
@@ -271,6 +361,8 @@ def process(src, palette):
     for name, box, target_h, anchor in SPRITES:
         out[name] = (trimmed(crop(box), target_h), anchor)
     out["white_king"] = (trimmed(white_king(crop), PIECE_H["king"]), BOTTOM)
+
+    out.update(iso_sprites(out))
 
     if palette:
         pal = palette_array()

@@ -6,7 +6,7 @@ use bevy::input::touch::Touches;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
-use crate::board_view::{LIFT, ShowHeights, TILE, pick_tile, tile_top};
+use crate::board_view::{ShowHeights, TILE_H, board_bounds, pick_tile, tile_top};
 use tc_core::Side;
 
 use crate::game::{GameState, MAX_AI_LEVEL};
@@ -56,11 +56,6 @@ fn setup_camera(mut commands: Commands) {
     commands.spawn((Camera2d, MainCamera));
 }
 
-fn board_center(size: u8) -> Vec2 {
-    let span = (size as f32 - 1.0) * TILE;
-    Vec2::new(span / 2.0, span / 2.0 + LIFT)
-}
-
 fn fit_camera(
     mut fit: ResMut<FitCamera>,
     state: Res<GameState>,
@@ -74,14 +69,14 @@ fn fit_camera(
     }
     fit.0 = Some(key);
     let (mut tf, mut proj) = camera.into_inner();
-    let board_px = state.size as f32 * TILE + 3.0 * TILE;
-    let zoom = (win.x / board_px).min((win.y - HUD_TOP - HUD_BOTTOM) / board_px).floor().clamp(1.0, MAX_ZOOM);
+    let (center, extent) = board_bounds(state.size);
+    let zoom = (win.x / extent.x).min((win.y - HUD_TOP - HUD_BOTTOM) / extent.y).floor().clamp(1.0, MAX_ZOOM);
     if let Projection::Orthographic(o) = &mut *proj {
         o.scale = 1.0 / zoom;
     }
     // Centre the board in the space between the HUD bars.
     let shift = Vec2::new(0.0, (HUD_BOTTOM - HUD_TOP) / 2.0 / zoom);
-    tf.translation = (board_center(state.size) - shift).extend(tf.translation.z);
+    tf.translation = (center - shift).extend(tf.translation.z);
 }
 
 fn pan_zoom(
@@ -216,7 +211,7 @@ fn tap_board(state: &mut GameState, p: Vec2) {
         .into_iter()
         .map(|m| m.to)
         .map(|sq| (sq, tile_top(sq, state.game.terrain.height(sq)).distance(p)))
-        .filter(|&(_, d)| d < TILE * 0.4)
+        .filter(|&(_, d)| d < TILE_H * 0.5)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(sq, _)| sq);
     let Some(sq) = marked.or_else(|| pick_tile(state, p)) else {

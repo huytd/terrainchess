@@ -1,9 +1,9 @@
-//! Draws the board in a top-down 3/4 view (PLAN.md §8): each height level lifts a
-//! tile by 16 px, and a cliff face is drawn below any tile whose south neighbour is
-//! lower. Rows are layered back to front so cliffs hide what stands behind them.
+//! Draws the board as 2:1 isometric blocks (PLAN.md §8): every square is a column
+//! with a diamond top and two shaded side faces, raised `LIFT` px per height level.
+//! a1 is the bottom corner, files run up-right and ranks up-left. Columns are drawn
+//! back to front, so nearer and taller columns hide what stands behind them.
 
 use bevy::prelude::*;
-use bevy::sprite::Anchor;
 use tc_core::movegen::Ctx;
 use tc_core::terrain::TileKind;
 use tc_core::{Feature, MoveKind, Obstacle, PieceKind, Side, Sq};
@@ -11,68 +11,71 @@ use tc_core::{Feature, MoveKind, Obstacle, PieceKind, Side, Sq};
 use crate::atlas::Atlas;
 use crate::game::GameState;
 
-pub const TILE: f32 = 32.0;
-pub const LIFT: f32 = 16.0;
+/// Diamond top of one square (matches ISO_* in tools/process_sprites.py).
+pub const TILE_W: f32 = 48.0;
+pub const TILE_H: f32 = 24.0;
+/// Screen px per height level.
+pub const LIFT: f32 = 12.0;
+/// Heights 0..=3 have face sprites.
+const MAX_LEVEL: u8 = 3;
 
-/// Depth layers within one board row.
+/// Depth layers within one depth band (squares with the same x + y).
 mod layer {
-    pub const GROUND: f32 = 0.0;
-    /// Grid lines, height edges and contact shadows drawn on the ground.
-    pub const EDGE: f32 = 0.05;
-    pub const FACE: f32 = 0.1;
+    pub const FACE: f32 = 0.0;
+    pub const GROUND: f32 = 0.05;
+    pub const EDGE: f32 = 0.1;
     pub const DECAL: f32 = 0.2;
     pub const TINT: f32 = 0.3;
     pub const ACTOR: f32 = 0.6;
 }
 
-/// Move markers and height badges sit above every row, so a cliff or a tall piece in
-/// front never hides where you can move.
+/// Rim drawn around every diamond top so neighbouring squares stay distinct.
+const OUTLINE: Color = Color::srgba(0.05, 0.06, 0.10, 0.45);
+
+/// Move markers and height badges sit above every column, so a cliff or a tall piece
+/// in front never hides where you can move.
 const MARKER_Z: f32 = 100.0;
 
-/// Screen position of the centre of a tile's top surface.
+/// Screen position of the centre of a square's diamond top.
 pub fn tile_top(sq: Sq, height: u8) -> Vec2 {
-    Vec2::new(sq.x as f32 * TILE, sq.y as f32 * TILE + height as f32 * LIFT)
+    let (x, y) = (sq.x as f32, sq.y as f32);
+    Vec2::new((x - y) * TILE_W / 2.0, (x + y) * TILE_H / 2.0 + height as f32 * LIFT)
 }
 
-/// Rows further north are drawn first; everything in a row shares its depth band.
-pub fn row_z(y: u8, layer: f32) -> f32 {
-    -(y as f32) + layer
+/// Squares further from the viewer (larger x + y) are drawn first.
+pub fn depth_z(sq: Sq, layer: f32) -> f32 {
+    -((sq.x + sq.y) as f32) + layer
 }
 
-/// Grid line between squares.
-const GRID: Color = Color::srgba(0.05, 0.06, 0.10, 0.30);
-/// Crest of a square that is higher than its neighbour.
-const LIP: Color = Color::srgba(1.0, 0.97, 0.85, 0.45);
-/// Outline where a higher square drops to a lower one.
-const DROP_EDGE: Color = Color::srgba(0.04, 0.04, 0.08, 0.75);
-/// Shadow a higher square casts on the lower square beside it.
-const SHADOW: Color = Color::srgba(0.0, 0.0, 0.05, 0.32);
+/// Centre of the board and the screen size it covers at zoom 1, for fitting the camera.
+pub fn board_bounds(size: u8) -> (Vec2, Vec2) {
+    let n = size as f32;
+    let center = Vec2::new(0.0, (n - 1.0) * TILE_H / 2.0 + LIFT);
+    // Diamond span, plus room for the tallest columns and pieces.
+    (center, Vec2::new(n * TILE_W, n * TILE_H + 4.0 * LIFT + 40.0))
+}
 
-/// Tile whose top surface or cliff face is under `p`, front-most first.
+/// Screen px of side face under a column of this height.
+fn column_depth(height: u8) -> f32 {
+    6.0 + height as f32 * LIFT
+}
+
+/// Square whose top or side face is under `p`. Nearest columns are tested first
+/// since they are drawn on top.
 pub fn pick_tile(state: &GameState, p: Vec2) -> Option<Sq> {
     let t = &state.game.terrain;
-    for y in 0..state.size {
-        for x in 0..state.size {
-            let sq = Sq::new(x, y);
-            let top = tile_top(sq, t.height(sq));
-            let below = face_depth(state, sq) as f32 * LIFT;
-            let inside_x = (p.x - top.x).abs() <= TILE / 2.0;
-            if inside_x && p.y <= top.y + TILE / 2.0 && p.y >= top.y - TILE / 2.0 - below {
-                return Some(sq);
-            }
+    let mut squares: Vec<Sq> = tc_core::board::squares(state.size).collect();
+    squares.sort_by_key(|sq| sq.x + sq.y);
+    squares.into_iter().find(|&sq| {
+        let d = p - tile_top(sq, t.height(sq));
+        let (hw, hh) = (TILE_W / 2.0, TILE_H / 2.0);
+        if d.x.abs() > hw {
+            return false;
         }
-    }
-    None
-}
-
-/// Height levels of cliff face shown below a tile (the front row stands on a plinth).
-fn face_depth(state: &GameState, sq: Sq) -> u8 {
-    let t = &state.game.terrain;
-    let h = t.height(sq);
-    match sq.offset(0, -1, state.size) {
-        Some(s) => h.saturating_sub(t.height(s)),
-        None => h + 1,
-    }
+        // The lower diamond edge at this x; the column hangs below it.
+        let lower = -hh + d.x.abs() * hh / hw;
+        d.y <= -lower && d.y >= lower - column_depth(t.height(sq))
+    })
 }
 
 #[derive(Component)]
@@ -147,48 +150,43 @@ fn spawn_terrain(
             }
             TileKind::Stone => (["cobble", "flagstone"][hash(sq, 2) as usize % 2], None),
             TileKind::Sand => ("sand", None),
-            TileKind::ShallowWater => ("shallow_0", Some(["shallow_0", "shallow_1"])),
+            TileKind::ShallowWater => ("shallow_0", Some(["iso_shallow_0", "iso_shallow_1"])),
             TileKind::DeepWater => ("deep", None),
             TileKind::Void => ("void", None),
         };
-        let checker = if (sq.x + sq.y) % 2 == 0 { 0.86 } else { 1.0 };
-        let shade = checker * (0.80 + 0.10 * tile.height as f32).min(1.1);
-        let (mut sprite, anchor) = atlas.sprite(name);
+        let checker = if (sq.x + sq.y) % 2 == 0 { 0.9 } else { 1.0 };
+        let shade = checker * (0.84 + 0.07 * tile.height as f32);
+        let (mut sprite, anchor) = atlas.sprite(&format!("iso_{name}"));
         sprite.color = Color::srgb(shade, shade, shade);
         let mut ground = commands.spawn((
             TerrainPart,
             sprite,
             anchor,
-            Transform::from_translation(top.extend(row_z(sq.y, layer::GROUND))),
+            Transform::from_translation(top.extend(depth_z(sq, layer::GROUND))),
         ));
         if let Some(frames) = water {
             ground.insert(AnimatedWater { frames });
         }
+        let (mut rim, anchor) = atlas.sprite("iso_outline");
+        rim.color = OUTLINE;
+        commands.spawn((
+            TerrainPart,
+            rim,
+            anchor,
+            Transform::from_translation(top.extend(depth_z(sq, layer::EDGE))),
+        ));
 
-        spawn_height_edges(&mut commands, &state, sq, top);
-
-        // Cliff face below the tile.
-        let depth = face_depth(&state, sq);
-        if depth > 0 {
-            let cave = matches!(tile.feature, Feature::Cave(_));
-            let name = match tile.feature {
-                Feature::Cave(link) => ["cave_door_0", "cave_door_1"][link as usize % 2],
-                _ => ["cliff_0", "cliff_1", "cliff_2", "cliff_3", "cliff_4"][hash(sq, 3) as usize % 5],
-            };
-            let (mut sprite, _) = atlas.sprite(name);
-            sprite.custom_size = Some(Vec2::new(TILE, depth as f32 * LIFT));
-            if cave && depth < 2 {
-                // A door squashed into a one-level ledge reads badly; use plain cliff.
-                sprite = atlas.sprite("cliff_0").0;
-                sprite.custom_size = Some(Vec2::new(TILE, depth as f32 * LIFT));
-            }
-            let shade = 0.8 + 0.07 * tile.height as f32;
-            sprite.color = Color::srgb(shade, shade, shade);
+        // Side faces: the left one in shade, the right one half lit.
+        let level = tile.height.min(MAX_LEVEL);
+        for (side, x, light) in [("l", -TILE_W / 2.0, 0.58), ("r", 0.0, 0.8)] {
+            let (mut face, anchor) = atlas.sprite(&format!("iso_face_{side}_{level}"));
+            let light = light + 0.04 * tile.height as f32;
+            face.color = Color::srgb(light, light, light);
             commands.spawn((
                 TerrainPart,
-                sprite,
-                Anchor::TOP_CENTER,
-                Transform::from_translation(Vec3::new(top.x, top.y - TILE / 2.0, row_z(sq.y, layer::FACE))),
+                face,
+                anchor,
+                Transform::from_translation(Vec3::new(top.x + x, top.y, depth_z(sq, layer::FACE))),
             ));
         }
 
@@ -196,12 +194,12 @@ fn spawn_terrain(
             Feature::Cave(link) => {
                 let (mut sprite, anchor) = atlas.sprite("cave_rune_0");
                 sprite.color = cave_color(link);
-                sprite.custom_size = Some(Vec2::new(26.0, 18.0));
+                sprite.custom_size = Some(Vec2::new(24.0, 13.0));
                 commands.spawn((
                     TerrainPart,
                     sprite,
                     anchor,
-                    Transform::from_translation(top.extend(row_z(sq.y, layer::DECAL))),
+                    Transform::from_translation(top.extend(depth_z(sq, layer::DECAL))),
                 ));
             }
             Feature::Obstacle(kind) => {
@@ -214,7 +212,7 @@ fn spawn_terrain(
                     TerrainPart,
                     sprite,
                     anchor,
-                    Transform::from_translation(Vec3::new(top.x, top.y - 10.0, row_z(sq.y, layer::ACTOR))),
+                    Transform::from_translation(Vec3::new(top.x, top.y - 3.0, depth_z(sq, layer::ACTOR))),
                 ));
             }
             _ => {}
@@ -227,50 +225,9 @@ fn spawn_terrain(
             TextFont { font_size: 14.0.into(), ..default() },
             TextColor(Color::WHITE),
             Visibility::Hidden,
-            Transform::from_translation(Vec3::new(top.x + 9.0, top.y + 8.0, MARKER_Z + 1.0))
+            Transform::from_translation(Vec3::new(top.x, top.y + 1.0, MARKER_Z + 1.0))
                 .with_scale(Vec3::splat(0.75)),
         ));
-    }
-}
-
-/// Lines that make each square and each change in height readable: a faint grid on
-/// every square, and where a neighbour is lower, a bright lip on this square's edge, a
-/// dark outline along the drop and a shadow on the lower square.
-fn spawn_height_edges(commands: &mut Commands, state: &GameState, sq: Sq, top: Vec2) {
-    let t = &state.game.terrain;
-    let h = t.height(sq);
-    let z = row_z(sq.y, layer::EDGE);
-    let half = TILE / 2.0;
-    let mut quad = |color: Color, center: Vec2, size: Vec2, z: f32| {
-        commands.spawn((
-            TerrainPart,
-            Sprite::from_color(color, size),
-            Transform::from_translation(center.extend(z)),
-        ));
-    };
-    // Grid: each square draws its west and north edges, so every seam is one line.
-    quad(GRID, top + Vec2::new(-half + 0.5, 0.0), Vec2::new(1.0, TILE), z);
-    quad(GRID, top + Vec2::new(0.0, half - 0.5), Vec2::new(TILE, 1.0), z);
-
-    for (dx, dy) in [(-1i8, 0i8), (1, 0), (0, 1), (0, -1)] {
-        let Some(n) = sq.offset(dx, dy, state.size) else { continue };
-        let nh = t.height(n);
-        if nh >= h {
-            continue;
-        }
-        let dir = Vec2::new(dx as f32, dy as f32);
-        let thick = |w: f32| if dx == 0 { Vec2::new(TILE, w) } else { Vec2::new(w, TILE) };
-        // Lip just inside this square's edge, outline right on the edge.
-        quad(LIP, top + dir * (half - 2.5), thick(1.0), z);
-        quad(DROP_EDGE, top + dir * (half - 1.0), thick(2.0), z);
-        if dy == 1 {
-            // The north neighbour is mostly hidden behind this square; no shadow to cast.
-            continue;
-        }
-        // Shadow on the lower square along the shared edge, deeper for bigger drops.
-        let depth = (4.0 + 2.0 * (h - nh) as f32).min(10.0);
-        let center = tile_top(n, nh) - dir * (half - depth / 2.0);
-        quad(SHADOW, center, thick(depth), row_z(n.y, layer::EDGE));
     }
 }
 
@@ -293,7 +250,7 @@ fn piece_sprite_name(kind: PieceKind, side: Side) -> String {
 /// Where a piece's feet go on a tile.
 fn piece_spot(state: &GameState, sq: Sq) -> Vec3 {
     let top = tile_top(sq, state.game.terrain.height(sq));
-    Vec3::new(top.x, top.y - 9.0, row_z(sq.y, layer::ACTOR + 0.05))
+    Vec3::new(top.x, top.y - 3.0, depth_z(sq, layer::ACTOR + 0.05))
 }
 
 fn spawn_pieces(
@@ -324,7 +281,7 @@ fn spawn_pieces(
             let height = match (piece.kind, mv.kind) {
                 (_, MoveKind::Cave) => 0.0,
                 (PieceKind::Knight, _) => 26.0,
-                _ => 8.0 + (from.y - spot.y).abs().min(16.0) * 0.5,
+                _ => 8.0 + (from.y - spot.y).abs().min(LIFT) * 0.5,
             };
             e.insert((
                 Transform::from_translation(from.with_z(top_z)),
@@ -344,19 +301,18 @@ fn spawn_pieces(
 
 fn spawn_overlays(commands: &mut Commands, state: &GameState, atlas: &Atlas) {
     let t = &state.game.terrain;
-    let at = |sq: Sq, layer: f32| tile_top(sq, t.height(sq)).extend(row_z(sq.y, layer));
     let tint = |commands: &mut Commands, sq: Sq, color: Color| {
-        commands.spawn((
-            Overlay,
-            Sprite::from_color(color, Vec2::splat(TILE)),
-            Transform::from_translation(at(sq, layer::TINT)),
-        ));
-    };
-    let mark = |commands: &mut Commands, sq: Sq, name: &str, size: f32, color: Color| {
-        let (mut sprite, anchor) = atlas.sprite(name);
-        sprite.custom_size = Some(Vec2::splat(size));
+        let (mut sprite, anchor) = atlas.sprite("iso_fill");
         sprite.color = color;
-        let p = tile_top(sq, t.height(sq)).extend(MARKER_Z - sq.y as f32 * 0.01);
+        let p = tile_top(sq, t.height(sq)).extend(depth_z(sq, layer::TINT));
+        commands.spawn((Overlay, sprite, anchor, Transform::from_translation(p)));
+    };
+    // Markers are flattened to lie on the diamond.
+    let mark = |commands: &mut Commands, sq: Sq, name: &str, size: Vec2, color: Color| {
+        let (mut sprite, anchor) = atlas.sprite(name);
+        sprite.custom_size = Some(size);
+        sprite.color = color;
+        let p = tile_top(sq, t.height(sq)).extend(MARKER_Z - (sq.x + sq.y) as f32 * 0.01);
         commands.spawn((Overlay, sprite, anchor, Transform::from_translation(p)));
     };
 
@@ -371,24 +327,32 @@ fn spawn_overlays(commands: &mut Commands, state: &GameState, atlas: &Atlas) {
         tint(commands, k, Color::srgba(0.9, 0.1, 0.15, 0.45));
     }
     let Some(sel) = state.selected else { return };
-    mark(commands, sel, "ov_select", TILE, Color::WHITE);
+    mark(commands, sel, "ov_select", Vec2::new(40.0, 22.0), Color::WHITE);
     let moves = state.selected_moves();
     for mv in &moves {
         let capture = state.game.pos.get(mv.to).is_some() || mv.kind == MoveKind::EnPassant;
         if capture {
-            mark(commands, mv.to, "ov_capture", TILE, Color::WHITE);
+            mark(commands, mv.to, "ov_capture", Vec2::new(40.0, 22.0), Color::WHITE);
         } else if mv.kind == MoveKind::Cave {
-            mark(commands, mv.to, "ov_ring", 22.0, Color::WHITE);
+            mark(commands, mv.to, "ov_ring", Vec2::new(26.0, 14.0), Color::WHITE);
         } else {
-            mark(commands, mv.to, "ov_dot", 10.0, Color::srgba(1.0, 1.0, 1.0, 0.85));
+            mark(commands, mv.to, "ov_dot", Vec2::new(10.0, 6.0), Color::srgba(1.0, 1.0, 1.0, 0.85));
         }
     }
-    // Neighbouring squares the piece could reach on flat ground but a cliff blocks.
+    // Neighbouring squares the piece could reach on flat ground but a cliff blocks, and
+    // enemies in reach that stand too high to capture.
     if let Some(piece) = state.game.pos.get(sel) {
         let ctx = Ctx { terrain: t, rules: &state.game.rules };
-        for sq in cliff_blocked(&ctx, sel, piece) {
+        let mut blocked = cliff_blocked(&ctx, sel, piece);
+        ctx.for_each_attack(&state.game.pos, sel, piece, &mut |sq| {
+            if state.game.pos.get(sq).is_some_and(|p| p.side != piece.side) && t.height(sq) > t.height(sel) {
+                blocked.push(sq);
+            }
+            false
+        });
+        for sq in blocked {
             if !moves.iter().any(|m| m.to == sq) {
-                mark(commands, sq, "ov_blocked", 16.0, Color::srgba(1.0, 1.0, 1.0, 0.7));
+                mark(commands, sq, "ov_blocked", Vec2::new(16.0, 12.0), Color::srgba(1.0, 1.0, 1.0, 0.7));
             }
         }
     }

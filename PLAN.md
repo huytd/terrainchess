@@ -84,7 +84,7 @@ Tile {
 | **Shallow water** | Can be entered, but it ends any slide. A piece standing in it can't move 2+ squares next turn. |
 | **Deep water** | Impassable unless an item or spell allows it (bridge, freeze, boat). |
 | **Cave entrance** | A piece standing on an entrance may use its move to go to the linked entrance, if that tile is empty or holds an enemy it can capture. It is one tunnel hop regardless of piece type. |
-| **High ground** *(optional)* | A piece that is ≥2 higher than a target can't be captured by that target (upward cliff). This falls out of the climb rule anyway. |
+| **High ground** | Captures only go level or downhill: a piece can't capture an enemy standing on a higher tile (this includes en passant, cave hops and check). It may still climb onto a higher tile that is empty. |
 
 Castling needs flat, clear squares between king and rook. En passant stays as normal.
 
@@ -160,8 +160,8 @@ This gives players a reason to play into the terrain instead of turtling.
 Target: **modern indie pixel art** like the grassland screenshot reference (bold outlines, vivid colours, textured grass, teal cliffs, foamy water), with a fantasy setting that has a dark edge (ruins, graveyards, magic glows). All art comes from a **single 2048² atlas on a 32×32 grid of 64 px cells** (`atlas.png`, see SPRITES.md). It is generated at 2× and downscaled.
 
 - **Grid:** 32×32 px logical tiles, rendered at integer scale with nearest-neighbour sampling. A faint grid is drawn over the board, as in the reference.
-- **Height in 2D:** each height level lifts the tile's top surface by **16 px** and draws a **cliff face strip** below it wherever the south neighbour is lower. A 1-level step reads as a small ledge (climbable). 2+ levels read as a tall wall (a cliff). East/west drops get a thin rock sliver, and every raised edge gets a grass lip overlay. A shadow band is drawn on the tile below a cliff.
-- **Draw order:** rows are drawn back-to-front, north to south. Pieces and props are y-sorted with `z = base_z - world_y`, adjusted by tile height, so a piece standing behind a cliff is correctly hidden by it.
+- **Height in 2:1 isometric:** every square is a column: a 48×24 diamond top (generated from the square ground tile) and two side faces built from the cliff art, the left one in shade and the right one half lit. Each height level raises the column by **12 px**, so a step reads as a ledge and 2+ levels as a wall. a1 is the bottom corner; files run up-right, ranks up-left.
+- **Draw order:** columns are drawn back to front by `x + y`, so nearer and taller columns hide what stands behind them. Pieces and props share their square's depth band.
 - **Layers:** (1) water, (2) ground autotiles, (3) cliff faces + lips, (4) shadows, (5) board overlays (highlights), (6) y-sorted props and pieces, (7) FX, (8) UI.
 - **Autotiling:** 13-tile RPG-style sets (3×3 + inner corners) are composed from quarter-tiles at load time into all 47 neighbour cases. This covers grass/water and grass/sand edges and plateau lips.
 - **Water:** 2–4 frame tile animation plus a scrolling foam strip where it meets land or cliffs.

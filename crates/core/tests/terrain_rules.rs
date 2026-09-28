@@ -167,10 +167,42 @@ fn pawn_double_step_cannot_climb() {
 
 #[test]
 fn high_ground_cannot_be_captured_from_below() {
-    let f = Fixture::new("7k/8/8/8/8/3p4/4P3/7K w - - 0 1").h(&["d3"], 2);
-    assert!(!f.can("e2", "d3"));
+    // Pawn: even one level up is out of reach; level or downhill is fine.
     let f = Fixture::new("7k/8/8/8/8/3p4/4P3/7K w - - 0 1").h(&["d3"], 1);
+    assert!(!f.can("e2", "d3"));
+    let f = Fixture::new("7k/8/8/8/8/3p4/4P3/7K w - - 0 1").h(&["d3", "e2"], 1);
     assert!(f.can("e2", "d3"));
+    let f = Fixture::new("7k/8/8/8/8/3p4/4P3/7K w - - 0 1").h(&["e2"], 1);
+    assert!(f.can("e2", "d3"), "capturing downhill is allowed");
+
+    // Rook: may climb onto an empty higher square but not capture on one.
+    let f = Fixture::new("7k/8/8/8/8/8/8/R2p3K w - - 0 1").h(&["b1"], 1);
+    assert!(f.can("a1", "b1"));
+    let f = Fixture::new("7k/8/8/8/8/8/8/Rp5K w - - 0 1").h(&["b1"], 1);
+    assert!(!f.can("a1", "b1"));
+
+    // Knight jumps can't capture uphill either.
+    let f = Fixture::new("7k/8/8/8/8/8/2p5/N6K w - - 0 1").h(&["c2"], 1);
+    assert!(!f.can("a1", "c2"));
+
+    // En passant: the victim's square counts.
+    let f = Fixture::new("7k/8/8/3pP3/8/8/8/7K w - d6 0 1").h(&["d5"], 1);
+    assert!(!f.can("e5", "d6"));
+    let f = Fixture::new("7k/8/8/3pP3/8/8/8/7K w - d6 0 1");
+    assert!(f.can("e5", "d6"));
+
+    // Cave hops can't capture onto higher ground.
+    let f = Fixture::new("7k/8/8/8/3p4/8/8/B6K w - - 0 1").cave(&["a1", "d4"], 0).h(&["d4"], 1);
+    assert!(!f.can("a1", "d4"));
+}
+
+#[test]
+fn high_ground_king_is_not_in_check_from_below() {
+    let fen = "4r2k/8/8/8/8/8/8/4K3 w - - 0 1";
+    let f = Fixture::new(fen).h(&["e1"], 1);
+    assert!(!f.ctx().in_check(&f.pos, tc_core::Side::White), "the rook is below the king");
+    let f = Fixture::new(fen).h(&["e8"], 1);
+    assert!(f.ctx().in_check(&f.pos, tc_core::Side::White), "attacking downhill still checks");
 }
 
 #[test]

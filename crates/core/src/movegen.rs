@@ -1,5 +1,7 @@
 //! Terrain-aware move generation (PLAN.md §4). Check detection reuses the same
 //! step rules, so terrain that blocks a move also blocks the matching attack.
+//! Captures only go level or downhill: a piece on higher ground is safe from anything
+//! below it, though the lower piece may still climb onto that square once it is empty.
 
 use crate::board::{DIAG, KING, KNIGHT, ORTHO, Sq};
 use crate::piece::{MoveProfile, Piece, PieceKind, Side};
@@ -77,6 +79,11 @@ impl Ctx<'_> {
         (prof.uphill_ends_slide && up >= 1) || -up > prof.max_slide_drop as i16 || self.in_shallow_water(to)
     }
 
+    /// Captures can't go uphill: `from` must be at least as high as the victim's square.
+    fn can_capture_on(&self, from: Sq, victim: Sq) -> bool {
+        self.terrain.height(victim) <= self.terrain.height(from)
+    }
+
     fn can_land_jump(&self, prof: &MoveProfile, from: Sq, to: Sq) -> bool {
         self.can_stand(prof, to) && self.up(from, to).unsigned_abs() <= prof.jump_max_dh as u16
     }
@@ -110,8 +117,9 @@ impl Ctx<'_> {
         false
     }
 
-    /// Every square `piece` at `from` attacks, i.e. could capture on if an enemy stood
-    /// there. Pawn pushes are not attacks. `f` returns true to stop early.
+    /// Every square `piece` at `from` reaches by its movement pattern: it moves to these
+    /// when empty and captures on them when they hold an enemy no higher than `from`.
+    /// Pawn pushes are not included. `f` returns true to stop early.
     pub fn for_each_attack(
         &self,
         pos: &Position,
@@ -176,9 +184,9 @@ impl Ctx<'_> {
     }
 
     pub fn is_attacked(&self, pos: &Position, target: Sq, by: Side) -> bool {
-        pos.pieces()
-            .filter(|(_, p)| p.side == by)
-            .any(|(from, p)| self.for_each_attack(pos, from, p, &mut |sq| sq == target))
+        pos.pieces().filter(|(_, p)| p.side == by).any(|(from, p)| {
+            self.can_capture_on(from, target) && self.for_each_attack(pos, from, p, &mut |sq| sq == target)
+        })
     }
 
     pub fn in_check(&self, pos: &Position, side: Side) -> bool {
@@ -195,7 +203,11 @@ impl Ctx<'_> {
             }
             let caves: Vec<Sq> = self.terrain.cave_exits(from).collect();
             self.for_each_attack(pos, from, piece, &mut |to| {
-                if pos.get(to).is_none_or(|p| p.side != side) {
+                let open = match pos.get(to) {
+                    None => true,
+                    Some(p) => p.side != side && self.can_capture_on(from, to),
+                };
+                if open {
                     let kind = if caves.contains(&to) { MoveKind::Cave } else { MoveKind::Normal };
                     out.push(Move::new(from, to, kind));
                 }
@@ -248,13 +260,17 @@ impl Ctx<'_> {
                 continue;
             }
             if pos.get(to).is_some_and(|p| p.side != side) {
-                push(Move::new(from, to, MoveKind::Normal), out);
-            } else if pos.en_passant == Some(to) {
+                if self.can_capture_on(from, to) {
+                    push(Move::new(from, to, MoveKind::Normal), out);
+                }
+            } else if pos.en_passant == Some(to) && self.can_capture_on(from, Sq::new(to.x, from.y)) {
                 push(Move::new(from, to, MoveKind::EnPassant), out);
             }
         }
         for exit in self.terrain.cave_exits(from) {
-            if self.can_stand(prof, exit) && pos.get(exit).is_none_or(|p| p.side != side) {
+            if self.can_stand(prof, exit)
+                && pos.get(exit).is_none_or(|p| p.side != side && self.can_capture_on(from, exit))
+            {
                 push(Move::new(from, exit, MoveKind::Cave), out);
             }
         }
