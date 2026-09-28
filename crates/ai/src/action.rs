@@ -60,19 +60,22 @@ pub fn choose_action_with_clock(m: &Match, limits: Limits, clock: &dyn Fn() -> f
     };
 
     let side = m.pos.side_to_move;
-    let charges = m.charges(side);
-    let has_charges = charges.iter().any(|(_, count)| *count > 0);
-    if !has_charges {
+    let hand = m.hand(side);
+    let mut unused_spells: Vec<SpellId> = hand
+        .hand
+        .iter()
+        .zip(hand.used.iter())
+        .filter_map(|(&card, &used)| if !used { card } else { None })
+        .collect();
+    if unused_spells.is_empty() {
         return Action::Move(best_mv.expect("legal move"));
     }
 
-    let mut spells_with_charges: Vec<SpellId> =
-        charges.iter().filter(|(_, count)| *count > 0).map(|(s, _)| *s).collect();
-    spells_with_charges.sort_by_key(|&s| spell_cost(s));
-    spells_with_charges.dedup();
+    unused_spells.sort_by_key(|&s| spell_cost(s));
+    unused_spells.dedup();
 
     let mut candidates = Vec::new();
-    for spell in spells_with_charges {
+    for spell in unused_spells {
         candidates.extend(m.cast_targets(spell));
     }
     candidates.sort_by_key(|cast| spell_cost(cast.spell_id()));

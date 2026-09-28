@@ -30,7 +30,7 @@ You play the Ashen Sun against the AI by default. Controls: click to select and 
 or Q/E to turn the board · right-drag up/down or Z/X to tilt · middle-drag / WASD to pan · wheel
 to zoom · U undo · N new run · 1/2/3 new run of 8/16/32 · H sandbox · F swaps sides with the AI ·
 -/= changes AI level (0–7) · M mute · Menu button or Esc opens the title menu ·
-spells: click a spell card or 5–9, then a highlighted square (Esc cancels).
+spells: 15-card deck with 3-card hand; click a card or 5–7 to arm, then a highlighted square (Esc cancels); spends the card and auto-draws up to 3 when empty; D or Discard button redraws a fresh hand when unused.
 Pawns promote to a queen automatically.
 
 On phones and tablets (web build): tap to select and move · drag to pan · pinch to zoom · twist two

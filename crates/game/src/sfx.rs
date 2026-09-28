@@ -110,6 +110,9 @@ fn play_game_events_sfx(
             GameEvent::Cleared { .. } => {
                 play_sound(&mut commands, &sfx.capture, muted.0);
             }
+            GameEvent::Discarded { .. } | GameEvent::HandDrawn { .. } => {
+                play_sound(&mut commands, &sfx.card, muted.0);
+            }
             GameEvent::Promoted { .. } => {}
         }
     }

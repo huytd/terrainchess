@@ -410,7 +410,10 @@ pub fn process_game_events(state: Res<GameState>, mut spawner: FxSpawner) {
                 spawner.spawn_dust(pos);
                 spawner.spawn_smoke(pos);
             }
-            GameEvent::Pickup { .. } | GameEvent::Selected { .. } => {}
+            GameEvent::Pickup { .. }
+            | GameEvent::Selected { .. }
+            | GameEvent::Discarded { .. }
+            | GameEvent::HandDrawn { .. } => {}
         }
     }
 }

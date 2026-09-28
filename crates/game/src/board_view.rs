@@ -581,10 +581,9 @@ fn spawn_pieces(
         }
     }
 
-    // Pickups on the board: SpellCharge -> orb, RunItem -> chest, bobbing at 1.5 Hz.
+    // Pickups on the board: RunItem -> chest, bobbing at 1.5 Hz.
     for &(sq, pickup) in &state.game.pickups {
         let sprite_name = match pickup {
-            tc_core::Pickup::SpellCharge(_) => "orb",
             tc_core::Pickup::RunItem => "chest",
         };
         let mesh = card_mesh(&mut look, &mut meshes, &atlas, sprite_name, false);

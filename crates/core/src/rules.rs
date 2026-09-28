@@ -6,13 +6,12 @@ use crate::board::{Sq, squares};
 use crate::movegen::{Ctx, Move, MoveKind};
 use crate::piece::{MoveProfile, Piece, PieceKind, Side};
 use crate::position::Position;
-use crate::spell::{SpellCast, SpellId};
+use crate::spell::{SpellCast, SpellHand, SpellId};
 use crate::terrain::{Feature, MAX_HEIGHT, Terrain, TileKind};
 
 /// Pickups that appear on the board and can be collected by moving pieces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Pickup {
-    SpellCharge(SpellId),
     RunItem,
 }
 
@@ -82,7 +81,7 @@ pub struct Match {
     /// Hashes of every position so far, for repetition.
     history: Vec<u64>,
     pub moves: Vec<Move>,
-    pub charges: [Vec<(SpellId, u8)>; 2],
+    pub hands: [SpellHand; 2],
     pub timed_effects: Vec<TimedEffect>,
     pub timed_caves: Vec<TimedCave>,
     pub pickups: Vec<(Sq, Pickup)>,
@@ -101,7 +100,7 @@ impl Match {
             pos,
             history,
             moves: Vec::new(),
-            charges: [Vec::new(), Vec::new()],
+            hands: [SpellHand::default(), SpellHand::default()],
             timed_effects: Vec::new(),
             timed_caves: Vec::new(),
             pickups: Vec::new(),
@@ -115,16 +114,47 @@ impl Match {
         self.veteran[side.index()] = active;
     }
 
-    pub fn set_charges(&mut self, side: Side, charges: Vec<(SpellId, u8)>) {
-        self.charges[side.index()] = charges;
+    pub fn set_deck(&mut self, side: Side, cards: Vec<SpellId>) {
+        self.hands[side.index()] = SpellHand::new(cards);
     }
 
-    pub fn charges(&self, side: Side) -> &[(SpellId, u8)] {
-        &self.charges[side.index()]
+    pub fn hand(&self, side: Side) -> &SpellHand {
+        &self.hands[side.index()]
     }
 
-    pub fn charge_count(&self, side: Side, spell: SpellId) -> u8 {
-        self.charges[side.index()].iter().filter(|(s, _)| *s == spell).map(|(_, c)| *c).sum()
+    pub fn hand_mut(&mut self, side: Side) -> &mut SpellHand {
+        &mut self.hands[side.index()]
+    }
+
+    pub fn deck_len(&self, side: Side) -> usize {
+        self.hands[side.index()].deck.len()
+    }
+
+    pub fn can_discard_hand(&self, side: Side) -> bool {
+        let hand = &self.hands[side.index()];
+        !hand.used.iter().any(|&u| u) && hand.hand.iter().any(|c| c.is_some()) && !hand.deck.is_empty()
+    }
+
+    pub fn discard_hand(&mut self, side: Side) -> Result<(), String> {
+        let hand = &self.hands[side.index()];
+        if hand.used.iter().any(|&u| u) {
+            return Err("cannot discard hand when cards have already been used".to_string());
+        }
+        if !hand.hand.iter().any(|c| c.is_some()) {
+            return Err("cannot discard an empty hand".to_string());
+        }
+        if hand.deck.is_empty() {
+            return Err("cannot discard when deck is empty".to_string());
+        }
+
+        let hand = &mut self.hands[side.index()];
+        for slot in &mut hand.hand {
+            if let Some(card) = slot.take() {
+                hand.discarded.push(card);
+            }
+        }
+        hand.draw();
+        Ok(())
     }
 
     pub fn set_pickups(&mut self, pickups: Vec<(Sq, Pickup)>) {
@@ -233,13 +263,6 @@ impl Match {
         {
             let (_, pickup) = self.pickups.swap_remove(idx);
             match pickup {
-                Pickup::SpellCharge(spell) => {
-                    if let Some(entry) = self.charges[side.index()].iter_mut().find(|(s, _)| *s == spell) {
-                        entry.1 = entry.1.saturating_add(1);
-                    } else {
-                        self.charges[side.index()].push((spell, 1));
-                    }
-                }
                 Pickup::RunItem => {
                     self.run_items_collected[side.index()] =
                         self.run_items_collected[side.index()].saturating_add(1);
@@ -253,10 +276,12 @@ impl Match {
         Ok(())
     }
 
-    /// Every legal cast for the side to move, if it has a charge.
+    /// Every legal cast for the side to move, if it has an unused card in hand.
     pub fn cast_targets(&self, spell: SpellId) -> Vec<SpellCast> {
         let side = self.pos.side_to_move;
-        if self.charge_count(side, spell) == 0 || !spell.is_castable() {
+        let hand = &self.hands[side.index()];
+        let has_unused = (0..3).any(|i| hand.hand[i] == Some(spell) && !hand.used[i]);
+        if !has_unused || !spell.is_castable() {
             return Vec::new();
         }
 
@@ -434,13 +459,15 @@ impl Match {
         out
     }
 
-    /// Cast a spell: checks legality, spends one charge, applies the effect,
-    /// and ends the turn unless the spell is quick.
+    /// Cast a spell: checks legality, spends one card from an unused hand slot,
+    /// applies the effect, and ends the turn unless the spell is quick.
     pub fn cast(&mut self, cast: SpellCast) -> Result<(), String> {
         let spell = cast.spell_id();
         let side = self.pos.side_to_move;
-        if self.charge_count(side, spell) == 0 {
-            return Err(format!("no charges remaining for spell {:?}", spell));
+        let hand = &self.hands[side.index()];
+        let has_unused = (0..3).any(|i| hand.hand[i] == Some(spell) && !hand.used[i]);
+        if !has_unused {
+            return Err(format!("spell {:?} is not in an unused hand slot", spell));
         }
         let canonical_cast = match cast {
             SpellCast::Swap(a, b) if a > b => SpellCast::Swap(b, a),
@@ -461,12 +488,18 @@ impl Match {
             self.snapshots.push(snap);
         }
 
-        // Spend one charge
-        let entry = self.charges[side.index()]
-            .iter_mut()
-            .find(|(s, c)| *s == spell && *c > 0)
-            .expect("charge count was verified above");
-        entry.1 -= 1;
+        // Mark that slot used (the card is spent)
+        let hand = &mut self.hands[side.index()];
+        let slot_idx =
+            (0..3).find(|&i| hand.hand[i] == Some(spell) && !hand.used[i]).expect("slot was verified above");
+        hand.used[slot_idx] = true;
+
+        // Drawing: as soon as every non-empty slot of the hand is used, the hand is cleared
+        // and up to 3 new cards are drawn from the front of the deck.
+        let all_used = (0..3).all(|i| hand.hand[i].is_none() || hand.used[i]);
+        if all_used {
+            hand.draw();
+        }
 
         // Apply effect
         match cast {
@@ -540,11 +573,8 @@ impl Match {
                 let mut target = self.snapshots[target_idx].clone();
                 let remaining_snapshots: Vec<Match> = self.snapshots[..target_idx].to_vec();
                 target.snapshots = remaining_snapshots;
-                if let Some(entry) =
-                    target.charges[side.index()].iter_mut().find(|(s, _)| *s == SpellId::Rewind)
-                {
-                    entry.1 = entry.1.saturating_sub(1);
-                }
+                let updated_hand = self.hands[side.index()].clone();
+                target.hands[side.index()] = updated_hand;
                 *self = target;
             }
         }

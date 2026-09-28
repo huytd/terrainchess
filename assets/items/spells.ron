@@ -2,7 +2,7 @@
     (
         id: "raise_earth",
         name: "Raise Earth",
-        description: "Raise the height of a target tile.",
+        description: "Adds 2 cards to your spell deck.",
         rarity: Common,
         kind: Spell(
             spell: RaiseEarth,
@@ -13,7 +13,7 @@
     (
         id: "lower_earth",
         name: "Lower Earth",
-        description: "Lower the height of a target tile.",
+        description: "Adds 2 cards to your spell deck.",
         rarity: Common,
         kind: Spell(
             spell: LowerEarth,
@@ -24,7 +24,7 @@
     (
         id: "freeze",
         name: "Freeze",
-        description: "Freeze water to make it walkable.",
+        description: "Adds 2 cards to your spell deck.",
         rarity: Uncommon,
         kind: Spell(
             spell: Freeze,
@@ -35,7 +35,7 @@
     (
         id: "bridge",
         name: "Bridge",
-        description: "Place a walkable bridge plank over a gap.",
+        description: "Adds 2 cards to your spell deck.",
         rarity: Common,
         kind: Spell(
             spell: Bridge,
@@ -46,7 +46,7 @@
     (
         id: "dig_tunnel",
         name: "Dig Tunnel",
-        description: "Create a temporary cave link between cliff faces.",
+        description: "Adds 1 card to your spell deck.",
         rarity: Uncommon,
         kind: Spell(
             spell: DigTunnel,
@@ -57,7 +57,7 @@
     (
         id: "shield",
         name: "Shield",
-        description: "Protect a piece from capture until your next turn.",
+        description: "Adds 1 card to your spell deck.",
         rarity: Uncommon,
         kind: Spell(
             spell: Shield,
@@ -68,7 +68,7 @@
     (
         id: "swap",
         name: "Swap",
-        description: "Switch positions of two friendly pieces.",
+        description: "Adds 1 card to your spell deck.",
         rarity: Rare,
         kind: Spell(
             spell: Swap,
@@ -79,7 +79,7 @@
     (
         id: "rewind",
         name: "Rewind",
-        description: "Undo the last full move played in the match.",
+        description: "Adds 1 card to your spell deck.",
         rarity: Rare,
         kind: Spell(
             spell: Rewind,

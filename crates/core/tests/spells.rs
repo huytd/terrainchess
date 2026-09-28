@@ -26,7 +26,7 @@ fn all_spells_are_castable() {
 }
 
 #[test]
-fn cannot_cast_without_charges() {
+fn cannot_cast_without_cards_in_hand() {
     let mut game = game_with_fen("7k/8/8/8/8/8/8/7K w - - 0 1");
     assert!(game.cast_targets(SpellId::RaiseEarth).is_empty());
     assert!(game.cast(SpellCast::RaiseEarth(sq("d4"))).is_err());
@@ -36,7 +36,7 @@ fn cannot_cast_without_charges() {
 fn raise_earth_legality_effect_and_turn_ending() {
     let fen = "7k/8/8/8/8/8/8/R6K w - - 0 1";
     let mut game = game_with_fen(fen);
-    game.set_charges(Side::White, vec![(SpellId::RaiseEarth, 1)]);
+    game.set_deck(Side::White, vec![SpellId::RaiseEarth, SpellId::LowerEarth]);
 
     // Blocked tiles (void or obstacle) or tiles with kings cannot be targeted
     game.terrain.get_mut(sq("b2")).kind = TileKind::Void;
@@ -54,16 +54,17 @@ fn raise_earth_legality_effect_and_turn_ending() {
     assert_eq!(game.terrain.height(sq("d4")), 0);
     assert_eq!(game.pos.side_to_move, Side::White);
     assert_eq!(game.pos.fullmove, 1);
+    assert!(!game.hand(Side::White).used[0]);
 
     game.cast(SpellCast::RaiseEarth(sq("d4"))).expect("cast should succeed");
     assert_eq!(game.terrain.height(sq("d4")), 1);
-    assert_eq!(game.charge_count(Side::White, SpellId::RaiseEarth), 0);
+    assert!(game.hand(Side::White).used[0], "card slot 0 is marked used");
     assert_eq!(game.pos.side_to_move, Side::Black, "turn-ending spell flips side");
 
     // Clamping: raising height 3 stays at 3
     let mut game2 = game_with_fen(fen);
     game2.terrain.get_mut(sq("e4")).height = 3;
-    game2.set_charges(Side::White, vec![(SpellId::RaiseEarth, 1)]);
+    game2.set_deck(Side::White, vec![SpellId::RaiseEarth]);
     game2.cast(SpellCast::RaiseEarth(sq("e4"))).unwrap();
     assert_eq!(game2.terrain.height(sq("e4")), 3);
 }
@@ -73,7 +74,7 @@ fn lower_earth_legality_and_effect() {
     let fen = "7k/8/8/8/8/8/8/7K w - - 0 1";
     let mut game = game_with_fen(fen);
     game.terrain.get_mut(sq("d4")).height = 2;
-    game.set_charges(Side::White, vec![(SpellId::LowerEarth, 1)]);
+    game.set_deck(Side::White, vec![SpellId::LowerEarth]);
 
     game.cast(SpellCast::LowerEarth(sq("d4"))).expect("lower earth should succeed");
     assert_eq!(game.terrain.height(sq("d4")), 1);
@@ -82,7 +83,7 @@ fn lower_earth_legality_and_effect() {
     // Min 0
     let mut game2 = game_with_fen(fen);
     game2.terrain.get_mut(sq("d4")).height = 0;
-    game2.set_charges(Side::White, vec![(SpellId::LowerEarth, 1)]);
+    game2.set_deck(Side::White, vec![SpellId::LowerEarth]);
     game2.cast(SpellCast::LowerEarth(sq("d4"))).unwrap();
     assert_eq!(game2.terrain.height(sq("d4")), 0);
 }
@@ -96,7 +97,7 @@ fn earth_spell_refused_if_it_leaves_king_in_check() {
     game.terrain.get_mut(sq("e4")).height = 1;
     assert!(!game.in_check(), "uphill step onto e4 blocks check");
 
-    game.set_charges(Side::White, vec![(SpellId::LowerEarth, 1)]);
+    game.set_deck(Side::White, vec![SpellId::LowerEarth]);
     // Lowering e4 to height 0 flattens the file and exposes White king to check!
     let targets = game.cast_targets(SpellId::LowerEarth);
     assert!(!targets.contains(&SpellCast::LowerEarth(sq("e4"))), "lowering hill leaves king in check");
@@ -109,7 +110,7 @@ fn freeze_legality_effect_and_reverting_after_6_plies() {
     let mut game = game_with_fen(fen);
     game.terrain.get_mut(sq("a2")).kind = TileKind::DeepWater;
     game.terrain.get_mut(sq("b2")).kind = TileKind::ShallowWater;
-    game.set_charges(Side::White, vec![(SpellId::Freeze, 1)]);
+    game.set_deck(Side::White, vec![SpellId::Freeze]);
 
     // Must have at least one water tile in Chebyshev distance 1
     assert!(game.cast_targets(SpellId::Freeze).contains(&SpellCast::Freeze(sq("a1"))));
@@ -165,7 +166,7 @@ fn shield_is_quick_protects_piece_and_removes_check() {
     let mut game = game_with_fen(fen);
     assert!(game.in_check(), "White king starts in check");
 
-    game.set_charges(Side::White, vec![(SpellId::Shield, 1)]);
+    game.set_deck(Side::White, vec![SpellId::Shield]);
 
     // Shield can only target caster's own pieces
     let targets = game.cast_targets(SpellId::Shield);
@@ -175,7 +176,7 @@ fn shield_is_quick_protects_piece_and_removes_check() {
     game.cast(SpellCast::Shield(sq("e1"))).expect("shield cast should succeed");
     assert_eq!(game.pos.shield, Some((sq("e1"), Side::White)));
     assert_eq!(game.pos.side_to_move, Side::White, "quick spell does NOT end turn");
-    assert_eq!(game.charge_count(Side::White, SpellId::Shield), 0);
+    assert_eq!(game.hand(Side::White).hand[0], None, "used only card, redrawn empty hand");
 
     // Shielded king is NOT in check!
     assert!(!game.in_check(), "shielded king does not count as attacked");
@@ -201,7 +202,7 @@ fn shielded_piece_cannot_be_captured() {
     // White pawn at d4, Black pawn at c5.
     let fen = "7k/8/8/2p5/3P4/8/8/7K w - - 0 1";
     let mut game = game_with_fen(fen);
-    game.set_charges(Side::White, vec![(SpellId::Shield, 1)]);
+    game.set_deck(Side::White, vec![SpellId::Shield]);
 
     // White shields d4 pawn
     game.cast(SpellCast::Shield(sq("d4"))).unwrap();
@@ -222,7 +223,7 @@ fn swap_legality_effect_and_check_refusal() {
     // d1 is in check from Black rook!
     let fen = "3r3k/8/8/8/8/8/8/R3K3 w - - 0 1";
     let mut game = game_with_fen(fen);
-    game.set_charges(Side::White, vec![(SpellId::Swap, 1)]);
+    game.set_deck(Side::White, vec![SpellId::Swap]);
 
     // Swapping e1 (king) and a1 (rook) would put the king on a1 (safe) and rook on e1:
     let targets = game.cast_targets(SpellId::Swap);
@@ -231,7 +232,7 @@ fn swap_legality_effect_and_check_refusal() {
     // What if swapping puts the king on d1 (in check)?
     // Add a White bishop at d1.
     let mut game2 = game_with_fen("3r3k/8/8/8/8/8/8/3BK3 w - - 0 1");
-    game2.set_charges(Side::White, vec![(SpellId::Swap, 1)]);
+    game2.set_deck(Side::White, vec![SpellId::Swap]);
     // Swapping d1 and e1 would put king on d1, which is in check by d8 rook!
     let targets2 = game2.cast_targets(SpellId::Swap);
     assert!(
@@ -245,7 +246,6 @@ fn swap_legality_effect_and_check_refusal() {
     assert_eq!(game.pos.get(sq("a1")).unwrap().kind, PieceKind::King);
     assert_eq!(game.pos.get(sq("e1")).unwrap().kind, PieceKind::Rook);
     assert_eq!(game.pos.side_to_move, Side::Black, "swap ends turn");
-    assert_eq!(game.charge_count(Side::White, SpellId::Swap), 0);
 }
 
 #[test]
@@ -253,14 +253,13 @@ fn pickups_collected_by_moving_and_capturing() {
     // White knight at b1, Black pawn at c2
     let fen = "7k/8/8/8/8/8/2p5/1N5K w - - 0 1";
     let mut game = game_with_fen(fen);
-    game.set_pickups(vec![(sq("a3"), Pickup::SpellCharge(SpellId::Freeze)), (sq("c2"), Pickup::RunItem)]);
+    game.set_pickups(vec![(sq("a3"), Pickup::RunItem), (sq("c2"), Pickup::RunItem)]);
 
-    assert_eq!(game.charge_count(Side::White, SpellId::Freeze), 0);
     assert_eq!(game.run_items_collected[Side::White.index()], 0);
 
-    // 1. Moving onto empty square a3 collects SpellCharge(Freeze)
+    // 1. Moving onto empty square a3 collects RunItem
     game.play(Move::new(sq("b1"), sq("a3"), MoveKind::Normal)).unwrap();
-    assert_eq!(game.charge_count(Side::White, SpellId::Freeze), 1);
+    assert_eq!(game.run_items_collected[Side::White.index()], 1);
     assert_eq!(game.pickups.len(), 1, "collected pickup removed");
 
     // Black makes dummy move
@@ -268,7 +267,7 @@ fn pickups_collected_by_moving_and_capturing() {
 
     // 2. Capturing on c2 collects RunItem
     game.play(Move::new(sq("a3"), sq("c2"), MoveKind::Normal)).unwrap();
-    assert_eq!(game.run_items_collected[Side::White.index()], 1);
+    assert_eq!(game.run_items_collected[Side::White.index()], 2);
     assert!(game.pickups.is_empty(), "all pickups collected");
 }
 
@@ -276,7 +275,7 @@ fn pickups_collected_by_moving_and_capturing() {
 fn bridge_legality_and_effect() {
     let fen = "7k/8/8/8/8/8/4P3/4K3 w - - 0 1";
     let mut game = game_with_fen(fen);
-    game.set_charges(Side::White, vec![(SpellId::Bridge, 1)]);
+    game.set_deck(Side::White, vec![SpellId::Bridge]);
 
     // e2 pawn:
     // e3 is north (orthogonal). Let's set it to ShallowWater.
@@ -299,7 +298,6 @@ fn bridge_legality_and_effect() {
     assert_eq!(game.terrain.get(sq("e3")).kind, TileKind::Bridge);
     assert!(!game.terrain.get(sq("e3")).is_water());
     assert!(!game.terrain.get(sq("e3")).is_blocked());
-    assert_eq!(game.charge_count(Side::White, SpellId::Bridge), 0);
     assert_eq!(game.pos.side_to_move, Side::Black, "bridge ends turn");
 }
 
@@ -307,7 +305,7 @@ fn bridge_legality_and_effect() {
 fn dig_tunnel_legality_and_effect() {
     let fen = "7k/8/8/8/8/8/8/4K3 w - - 0 1";
     let mut game = game_with_fen(fen);
-    game.set_charges(Side::White, vec![(SpellId::DigTunnel, 1)]);
+    game.set_deck(Side::White, vec![SpellId::DigTunnel]);
 
     // Chebyshev dist <= 2 from e1 (4, 0):
     // c1 is (2, 0) -> dist 2.
@@ -321,7 +319,6 @@ fn dig_tunnel_legality_and_effect() {
 
     // Cast dig tunnel on c1 and g1:
     game.cast(SpellCast::DigTunnel(sq("c1"), sq("g1"))).expect("cast dig tunnel");
-    assert_eq!(game.charge_count(Side::White, SpellId::DigTunnel), 0);
     assert_eq!(game.pos.side_to_move, Side::Black, "dig tunnel ends turn");
 
     // Check cave features
@@ -351,7 +348,7 @@ fn dig_tunnel_legality_and_effect() {
 fn rewind_undoes_move_pair_and_spends_charge() {
     let fen = "7k/8/8/8/8/8/8/R3K3 w - - 0 1";
     let mut game = game_with_fen(fen);
-    game.set_charges(Side::White, vec![(SpellId::Rewind, 1)]);
+    game.set_deck(Side::White, vec![SpellId::Rewind, SpellId::RaiseEarth]);
 
     // With 0 moves, rewind is illegal
     assert!(game.cast_targets(SpellId::Rewind).is_empty());
@@ -380,10 +377,103 @@ fn rewind_undoes_move_pair_and_spends_charge() {
     assert_eq!(game.pos.get(sq("h8")).unwrap().kind, PieceKind::King);
     assert!(game.pos.get(sq("g8")).is_none());
 
-    // Rewind charge is spent and not restored
-    assert_eq!(game.charge_count(Side::White, SpellId::Rewind), 0);
+    // Rewind slot is used
+    assert!(game.hand(Side::White).used[0]);
     // Does NOT end turn: it is White's turn again
     assert_eq!(game.pos.side_to_move, Side::White);
+}
+
+#[test]
+fn drawing_happens_as_soon_as_every_non_empty_slot_is_used() {
+    let fen = "7k/8/8/8/8/8/8/7K w - - 0 1";
+    let mut game = game_with_fen(fen);
+
+    // Deck of 5 cards: [Shield, Shield, Shield, RaiseEarth, LowerEarth]
+    let deck =
+        vec![SpellId::Shield, SpellId::Shield, SpellId::Shield, SpellId::RaiseEarth, SpellId::LowerEarth];
+    game.set_deck(Side::White, deck);
+
+    // Initial hand draws 3 cards from front:
+    let hand = game.hand(Side::White);
+    assert_eq!(hand.hand, [Some(SpellId::Shield), Some(SpellId::Shield), Some(SpellId::Shield)]);
+    assert_eq!(hand.used, [false, false, false]);
+    assert_eq!(game.deck_len(Side::White), 2);
+
+    // Cast 1st Shield on h1 (quick spell, does not end turn)
+    game.cast(SpellCast::Shield(sq("h1"))).unwrap();
+    let hand = game.hand(Side::White);
+    assert_eq!(hand.used, [true, false, false], "slot 0 used");
+    assert_eq!(game.deck_len(Side::White), 2, "deck still has 2 cards");
+
+    // Cast 2nd Shield on h1
+    game.cast(SpellCast::Shield(sq("h1"))).unwrap();
+    let hand = game.hand(Side::White);
+    assert_eq!(hand.used, [true, true, false], "slot 0 and 1 used");
+
+    // Cast 3rd Shield on h1: all non-empty slots are now used!
+    // As soon as every non-empty slot is used, hand is cleared and up to 3 cards are drawn.
+    game.cast(SpellCast::Shield(sq("h1"))).unwrap();
+    let hand = game.hand(Side::White);
+    assert_eq!(
+        hand.hand,
+        [Some(SpellId::RaiseEarth), Some(SpellId::LowerEarth), None],
+        "remaining 2 cards drawn, 3rd slot stays None"
+    );
+    assert_eq!(hand.used, [false, false, false], "new hand has unused slots");
+    assert_eq!(game.deck_len(Side::White), 0, "deck is now empty");
+}
+
+#[test]
+fn discard_hand_rules() {
+    let fen = "7k/8/8/8/8/8/8/7K w - - 0 1";
+    let mut game = game_with_fen(fen);
+
+    // 1. Cannot discard with empty hand
+    assert!(game.discard_hand(Side::White).is_err());
+    assert!(!game.can_discard_hand(Side::White));
+
+    // Deck with 5 cards: [RaiseEarth, LowerEarth, Shield, Swap, Freeze]
+    let deck =
+        vec![SpellId::RaiseEarth, SpellId::LowerEarth, SpellId::Shield, SpellId::Swap, SpellId::Freeze];
+    game.set_deck(Side::White, deck);
+    assert!(game.can_discard_hand(Side::White));
+
+    let hash_before = game.pos.hash();
+    let turn_before = game.pos.side_to_move;
+
+    // Discard hand: moves [RaiseEarth, LowerEarth, Shield] to discarded,
+    // and draws [Swap, Freeze, None] from deck!
+    game.discard_hand(Side::White).expect("discard should succeed");
+
+    assert_eq!(
+        game.hand(Side::White).discarded,
+        vec![SpellId::RaiseEarth, SpellId::LowerEarth, SpellId::Shield],
+        "hand moved to discarded"
+    );
+    assert_eq!(
+        game.hand(Side::White).hand,
+        [Some(SpellId::Swap), Some(SpellId::Freeze), None],
+        "drew new cards from deck"
+    );
+    assert_eq!(game.hand(Side::White).used, [false, false, false]);
+    assert_eq!(game.deck_len(Side::White), 0);
+
+    // Does not end turn and does not change position hash:
+    assert_eq!(game.pos.side_to_move, turn_before);
+    assert_eq!(game.pos.hash(), hash_before);
+
+    // 2. Cannot discard when deck is empty
+    assert!(!game.can_discard_hand(Side::White));
+    assert!(game.discard_hand(Side::White).is_err());
+
+    // 3. Cannot discard when any slot has already been used
+    let mut game2 = game_with_fen(fen);
+    game2.set_deck(Side::White, vec![SpellId::Shield, SpellId::RaiseEarth, SpellId::Swap, SpellId::Freeze]);
+    // Cast quick spell Shield: slot 0 becomes used
+    game2.cast(SpellCast::Shield(sq("h1"))).unwrap();
+    assert!(game2.hand(Side::White).used[0]);
+    assert!(!game2.can_discard_hand(Side::White));
+    assert!(game2.discard_hand(Side::White).is_err());
 }
 
 #[test]

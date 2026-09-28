@@ -49,9 +49,11 @@ pub enum Action {
     Deselect,
     /// Turn the view by this many eighths of a full turn.
     Turn(i8),
-    /// Arm the spell card at this 0-based index.
-    ArmSpell(usize),
-    /// Dev cheat: give one charge of every castable spell.
+    /// Arm the hand slot at this 0-based index.
+    ArmSlot(usize),
+    /// Discard current hand and draw a new one.
+    Discard,
+    /// Dev cheat: refill hand with 3 random castable spells.
     CheatSpells,
     /// Dev cheat: win current run match.
     CheatWin,
@@ -483,11 +485,10 @@ fn hotkeys(
         (KeyCode::Digit1, Action::NewRun(8)),
         (KeyCode::Digit2, Action::NewRun(16)),
         (KeyCode::Digit3, Action::NewRun(32)),
-        (KeyCode::Digit5, Action::ArmSpell(0)),
-        (KeyCode::Digit6, Action::ArmSpell(1)),
-        (KeyCode::Digit7, Action::ArmSpell(2)),
-        (KeyCode::Digit8, Action::ArmSpell(3)),
-        (KeyCode::Digit9, Action::ArmSpell(4)),
+        (KeyCode::Digit5, Action::ArmSlot(0)),
+        (KeyCode::Digit6, Action::ArmSlot(1)),
+        (KeyCode::Digit7, Action::ArmSlot(2)),
+        (KeyCode::KeyD, Action::Discard),
         (KeyCode::KeyN, Action::NewRun(state.size)),
         (KeyCode::KeyH, Action::ToggleSandbox),
         (KeyCode::KeyF, Action::SwapSides),
@@ -554,18 +555,14 @@ fn apply_actions(
             }
             Action::Undo => state.undo(),
             Action::Turn(eighths) => orbit.target_yaw += eighths as f32 * FRAC_PI_4,
-            Action::ArmSpell(index) => {
-                let spells = state.castable_spells();
-                if let Some(&(spell, _)) = spells.get(index) {
-                    if state.armed_spell == Some(spell) {
-                        state.disarm();
-                    } else {
-                        state.arm_spell(spell);
-                    }
-                }
+            Action::ArmSlot(slot) => {
+                state.arm_slot(slot);
+            }
+            Action::Discard => {
+                state.discard();
             }
             Action::CheatSpells => {
-                const ALL_SPELLS: [tc_core::SpellId; 8] = [
+                const ALL_CASTABLE: [tc_core::SpellId; 8] = [
                     tc_core::SpellId::RaiseEarth,
                     tc_core::SpellId::LowerEarth,
                     tc_core::SpellId::Freeze,
@@ -575,17 +572,15 @@ fn apply_actions(
                     tc_core::SpellId::Swap,
                     tc_core::SpellId::Rewind,
                 ];
-                for spell in ALL_SPELLS {
-                    if spell.is_castable() {
-                        if let Some(entry) =
-                            state.game.charges[Side::White.index()].iter_mut().find(|(s, _)| *s == spell)
-                        {
-                            entry.1 = entry.1.saturating_add(1);
-                        } else {
-                            state.game.charges[Side::White.index()].push((spell, 1));
-                        }
-                    }
-                }
+                let mut seed = time.elapsed().as_nanos() as u64 ^ state.seed;
+                let mut pick = || {
+                    seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+                    ALL_CASTABLE[(seed as usize) % ALL_CASTABLE.len()]
+                };
+                let hand = &mut state.game.hands[Side::White.index()];
+                hand.hand = [Some(pick()), Some(pick()), Some(pick())];
+                hand.used = [false, false, false];
+                state.disarm();
                 state.pieces_dirty = true;
             }
             Action::CheatWin => {

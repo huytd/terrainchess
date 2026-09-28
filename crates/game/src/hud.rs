@@ -54,12 +54,15 @@ struct RunOverOverlay;
 struct NewRunButton;
 
 #[derive(Component)]
-struct SpellBar;
+struct HandBar;
 
 #[derive(Component)]
-struct SpellCard {
-    spell: tc_core::SpellId,
+struct HandCard {
+    slot_idx: usize,
 }
+
+#[derive(Component)]
+struct DiscardButton;
 
 fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
     // Floor badge in the top-left corner
@@ -261,9 +264,9 @@ fn sync_overlays(
                                     ItemKind::Relic { .. } => "Relic".to_string(),
                                     ItemKind::Spell { charges, .. } => {
                                         if *charges == 1 {
-                                            "Spell - 1 charge".to_string()
+                                            "Spell - 1 card".to_string()
                                         } else {
-                                            format!("Spell - {charges} charges")
+                                            format!("Spell - {charges} cards")
                                         }
                                     }
                                 };
@@ -446,32 +449,37 @@ fn spell_name(spell: tc_core::SpellId) -> &'static str {
     }
 }
 
-fn sync_spell_bar(
+fn sync_hand_bar(
     mut commands: Commands,
     state: Res<GameState>,
     run: Res<Run>,
     title_menu: Res<TitleMenu>,
     atlas: Res<Atlas>,
-    mut last_key: Local<Option<(bool, Vec<(tc_core::SpellId, u8)>, Option<tc_core::SpellId>)>>,
-    spell_bar_query: Query<Entity, With<SpellBar>>,
+    mut last_key: Local<Option<(bool, [Option<tc_core::SpellId>; 3], [bool; 3], usize, bool, Option<usize>)>>,
+    hand_bar_query: Query<Entity, With<HandBar>>,
 ) {
+    let side = state.game.pos.side_to_move;
     let show = !title_menu.open
-        && !run.sandbox
         && run.phase == RunPhase::Playing
-        && state.game.pos.side_to_move == Side::White
         && !state.ai_to_move()
         && state.outcome.is_none()
-        && !state.castable_spells().is_empty();
+        && (run.sandbox || side == Side::White);
 
-    let spells = if show { state.castable_spells() } else { Vec::new() };
-    let current_key = (show, spells.clone(), state.armed_spell);
+    let hand = state.game.hand(side);
+    let hand_cards = hand.hand;
+    let hand_used = hand.used;
+    let deck_len = state.game.deck_len(side);
+    let can_discard = state.game.can_discard_hand(side);
+    let armed_slot = state.armed_slot;
 
-    if *last_key == Some(current_key.clone()) {
+    let current_key = (show, hand_cards, hand_used, deck_len, can_discard, armed_slot);
+
+    if *last_key == Some(current_key) {
         return;
     }
     *last_key = Some(current_key);
 
-    for e in &spell_bar_query {
+    for e in &hand_bar_query {
         commands.entity(e).despawn();
     }
 
@@ -481,7 +489,7 @@ fn sync_spell_bar(
 
     commands
         .spawn((
-            SpellBar,
+            HandBar,
             GlobalZIndex(10),
             Node {
                 position_type: PositionType::Absolute,
@@ -491,92 +499,224 @@ fn sync_spell_bar(
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::FlexEnd,
                 flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(8.0),
+                column_gap: Val::Px(10.0),
                 padding: UiRect::horizontal(Val::Px(12.0)),
                 ..default()
             },
         ))
         .with_children(|row| {
-            for (spell, count) in spells {
-                let is_armed = state.armed_spell == Some(spell);
-                let (top, tint) =
-                    if is_armed { (Val::Px(-8.0), GOLD_TINT) } else { (Val::Px(0.0), Color::WHITE) };
+            for slot_idx in 0..3 {
+                let card_opt = hand_cards[slot_idx];
+                let is_used = hand_used[slot_idx];
+                let is_armed = armed_slot == Some(slot_idx);
 
-                row.spawn((
-                    Button,
-                    Interaction::default(),
-                    SpellCard { spell },
-                    Node {
-                        width: Val::Px(84.0),
-                        height: Val::Px(112.0),
-                        position_type: PositionType::Relative,
-                        top,
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        justify_content: JustifyContent::FlexStart,
-                        padding: UiRect {
-                            left: Val::Px(12.0),
-                            right: Val::Px(12.0),
-                            top: Val::Px(22.0),
+                if let Some(spell) = card_opt {
+                    if !is_used {
+                        let (top, tint) =
+                            if is_armed { (Val::Px(-8.0), GOLD_TINT) } else { (Val::Px(0.0), Color::WHITE) };
+
+                        row.spawn((
+                            Button,
+                            Interaction::default(),
+                            HandCard { slot_idx },
+                            Node {
+                                width: Val::Px(84.0),
+                                height: Val::Px(112.0),
+                                position_type: PositionType::Relative,
+                                top,
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::FlexStart,
+                                padding: UiRect {
+                                    left: Val::Px(6.0),
+                                    right: Val::Px(6.0),
+                                    top: Val::Px(16.0),
+                                    bottom: Val::Px(8.0),
+                                },
+                                row_gap: Val::Px(4.0),
+                                overflow: Overflow::clip(),
+                                ..default()
+                            },
+                            ImageNode {
+                                image: atlas.image.clone(),
+                                rect: Some(atlas.rect("card_uncommon")),
+                                color: tint,
+                                image_mode: NodeImageMode::Stretch,
+                                ..default()
+                            },
+                        ))
+                        .with_children(|card| {
+                            card.spawn((
+                                Text::new(spell_name(spell)),
+                                TextFont { font_size: FontSize::Px(12.0), ..default() },
+                                TextColor(INK_WOOD),
+                                TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
+                            ));
+
+                            if spell.is_quick() {
+                                card.spawn((
+                                    Text::new("Quick"),
+                                    TextFont { font_size: FontSize::Px(11.0), ..default() },
+                                    TextColor(INK_WOOD),
+                                    TextLayout {
+                                        justify: Justify::Center,
+                                        linebreak: LineBreak::WordBoundary,
+                                    },
+                                ));
+                            }
+
+                            card.spawn((
+                                Text::new(format!("[{}]", slot_idx + 5)),
+                                TextFont { font_size: FontSize::Px(11.0), ..default() },
+                                TextColor(Color::srgba(0.25, 0.18, 0.12, 0.60)),
+                                TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
+                                Node { margin: UiRect { top: Val::Auto, ..default() }, ..default() },
+                            ));
+                        });
+                    } else {
+                        row.spawn((
+                            Node {
+                                width: Val::Px(84.0),
+                                height: Val::Px(112.0),
+                                position_type: PositionType::Relative,
+                                top: Val::Px(0.0),
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::FlexStart,
+                                padding: UiRect {
+                                    left: Val::Px(6.0),
+                                    right: Val::Px(6.0),
+                                    top: Val::Px(16.0),
+                                    bottom: Val::Px(8.0),
+                                },
+                                row_gap: Val::Px(4.0),
+                                overflow: Overflow::clip(),
+                                ..default()
+                            },
+                            ImageNode {
+                                image: atlas.image.clone(),
+                                rect: Some(atlas.rect("card_uncommon")),
+                                color: Color::srgba(1.0, 1.0, 1.0, 0.40),
+                                image_mode: NodeImageMode::Stretch,
+                                ..default()
+                            },
+                        ))
+                        .with_children(|card| {
+                            card.spawn((
+                                Text::new(spell_name(spell)),
+                                TextFont { font_size: FontSize::Px(12.0), ..default() },
+                                TextColor(Color::srgba(0.25, 0.18, 0.12, 0.40)),
+                                TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
+                            ));
+
+                            card.spawn((
+                                Text::new("Used"),
+                                TextFont { font_size: FontSize::Px(13.0), ..default() },
+                                TextColor(Color::srgba(0.25, 0.18, 0.12, 0.50)),
+                                TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
+                                Node { margin: UiRect { top: Val::Auto, ..default() }, ..default() },
+                            ));
+                        });
+                    }
+                } else {
+                    row.spawn((
+                        Node {
+                            width: Val::Px(84.0),
+                            height: Val::Px(112.0),
+                            position_type: PositionType::Relative,
+                            top: Val::Px(0.0),
+                            overflow: Overflow::clip(),
                             ..default()
                         },
-                        row_gap: Val::Px(6.0),
-                        overflow: Overflow::clip(),
-                        ..default()
-                    },
-                    ImageNode {
-                        image: atlas.image.clone(),
-                        rect: Some(atlas.rect("card_uncommon")),
-                        color: tint,
-                        image_mode: NodeImageMode::Stretch,
-                        ..default()
-                    },
-                ))
-                .with_children(|card| {
-                    // Spell name (12 px, wrapped)
-                    card.spawn((
-                        Text::new(spell_name(spell)),
-                        TextFont { font_size: FontSize::Px(12.0), ..default() },
-                        TextColor(INK_WOOD),
-                        TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
+                        ImageNode {
+                            image: atlas.image.clone(),
+                            rect: Some(atlas.rect("card_uncommon")),
+                            color: Color::srgba(1.0, 1.0, 1.0, 0.20),
+                            image_mode: NodeImageMode::Stretch,
+                            ..default()
+                        },
                     ));
-
-                    // Quick tag if quick spell
-                    if spell.is_quick() {
-                        card.spawn((
-                            Text::new("Quick"),
-                            TextFont { font_size: FontSize::Px(11.0), ..default() },
-                            TextColor(INK_WOOD),
-                            TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
-                        ));
-                    }
-
-                    // Charges "xN"
-                    card.spawn((
-                        Text::new(format!("x{count}")),
-                        TextFont { font_size: FontSize::Px(14.0), ..default() },
-                        TextColor(INK_WOOD),
-                        TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
-                        Node { margin: UiRect { top: Val::Auto, ..default() }, ..default() },
-                    ));
-                });
+                }
             }
+
+            row.spawn(Node {
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::FlexEnd,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(6.0),
+                ..default()
+            })
+            .with_children(|sidebar| {
+                sidebar
+                    .spawn((
+                        Node {
+                            min_width: Val::Px(96.0),
+                            min_height: Val::Px(32.0),
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        ImageNode {
+                            image: atlas.image.clone(),
+                            rect: Some(atlas.rect("panel_wood")),
+                            image_mode: NodeImageMode::Stretch,
+                            ..default()
+                        },
+                    ))
+                    .with_child((
+                        Text::new(format!("Deck {deck_len}")),
+                        TextFont { font_size: FontSize::Px(13.0), ..default() },
+                        TextColor(INK_WOOD),
+                        TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
+                    ));
+
+                let (btn_color, text_color) = if can_discard {
+                    (Color::WHITE, INK_WOOD)
+                } else {
+                    (Color::srgba(1.0, 1.0, 1.0, 0.40), Color::srgba(0.25, 0.18, 0.12, 0.40))
+                };
+
+                sidebar
+                    .spawn((
+                        Button,
+                        Interaction::default(),
+                        DiscardButton,
+                        Node {
+                            min_width: Val::Px(96.0),
+                            min_height: Val::Px(40.0),
+                            padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        ImageNode {
+                            image: atlas.image.clone(),
+                            rect: Some(atlas.rect("panel_wood")),
+                            color: btn_color,
+                            image_mode: NodeImageMode::Stretch,
+                            ..default()
+                        },
+                    ))
+                    .with_child((
+                        Text::new("Discard"),
+                        TextFont { font_size: FontSize::Px(14.0), ..default() },
+                        TextColor(text_color),
+                        TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
+                    ));
+            });
         });
 }
 
-fn handle_spell_card_interaction(
-    mut card_query: Query<(&Interaction, &mut Node, &SpellCard), (Changed<Interaction>, With<Button>)>,
+fn handle_hand_card_interaction(
+    mut card_query: Query<(&Interaction, &mut Node, &HandCard), (Changed<Interaction>, With<Button>)>,
     mut state: ResMut<GameState>,
 ) {
     for (interaction, mut node, card) in &mut card_query {
-        let is_armed = state.armed_spell == Some(card.spell);
+        let is_armed = state.armed_slot == Some(card.slot_idx);
         match *interaction {
             Interaction::Pressed => {
-                if is_armed {
-                    state.disarm();
-                } else {
-                    state.arm_spell(card.spell);
-                }
+                state.arm_slot(card.slot_idx);
             }
             Interaction::Hovered => {
                 if !is_armed {
@@ -588,6 +728,17 @@ fn handle_spell_card_interaction(
                     node.top = Val::Px(0.0);
                 }
             }
+        }
+    }
+}
+
+fn handle_discard_button_interaction(
+    button_query: Query<&Interaction, (Changed<Interaction>, With<DiscardButton>)>,
+    mut state: ResMut<GameState>,
+) {
+    for interaction in &button_query {
+        if *interaction == Interaction::Pressed {
+            state.discard();
         }
     }
 }
@@ -793,7 +944,7 @@ fn sync_title_menu(
 
             // Control hints under it (keys, mouse, touch in two short lines, 13 px)
             parent.spawn((
-                Text::new("Mouse: Left-click select/move  |  Right-drag orbit  |  Wheel zoom  |  WASD pan\nTouch: Tap select  |  Drag pan  |  Pinch zoom  |  Keys: 5-9 Spells  |  M Mute  |  Esc Menu"),
+                Text::new("Mouse: Left-click select/move  |  Right-drag orbit  |  Wheel zoom  |  WASD pan\nTouch: Tap select  |  Drag pan  |  Pinch zoom  |  Keys: 5-7 Spells  |  D Discard  |  M Mute  |  Esc Menu"),
                 TextFont { font_size: FontSize::Px(13.0), ..default() },
                 TextColor(INK_WOOD),
                 TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
@@ -856,8 +1007,9 @@ impl Plugin for HudPlugin {
                 handle_card_interaction,
                 handle_new_run_button,
                 handle_title_buttons,
-                handle_spell_card_interaction,
-                sync_spell_bar,
+                handle_hand_card_interaction,
+                handle_discard_button_interaction,
+                sync_hand_bar,
             )
                 .chain(),
         );

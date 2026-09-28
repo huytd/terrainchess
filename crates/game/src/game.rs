@@ -15,6 +15,8 @@ pub enum GameEvent {
     Pickup { at: Sq },
     Selected { sq: Sq },
     Cleared { at: Sq },
+    Discarded { side: Side },
+    HandDrawn { side: Side },
 }
 
 #[derive(Resource)]
@@ -36,7 +38,9 @@ pub struct GameState {
     pub ai_side: Option<Side>,
     /// AI strength as a run floor (0 = gentle, 7 = boss).
     pub ai_level: u8,
-    /// Spell armed by clicking its card in the spell bar or pressing 5–9.
+    /// Hand slot armed by clicking its card in the hand bar or pressing 5–7.
+    pub armed_slot: Option<usize>,
+    /// Spell armed by clicking its card in the hand bar or pressing 5–7.
     pub armed_spell: Option<SpellId>,
     /// For Swap: first square selected.
     pub swap_first: Option<Sq>,
@@ -55,7 +59,8 @@ impl GameState {
         let size = setup.r#gen.size;
         let mut game = Match::new(terrain, setup.rules.clone(), Position::start(size));
         game.set_pickups(setup.pickups.clone());
-        game.set_charges(setup.player, setup.charges.clone());
+        game.set_deck(setup.player, setup.player_deck.clone());
+        game.set_deck(setup.player.opposite(), setup.enemy_deck.clone());
         game.veteran = setup.veteran;
         GameState {
             size,
@@ -69,6 +74,7 @@ impl GameState {
             animate: None,
             ai_side: Some(Side::Black),
             ai_level: setup.ai_level,
+            armed_slot: None,
             armed_spell: None,
             swap_first: None,
             events: Vec::new(),
@@ -78,7 +84,9 @@ impl GameState {
 
     pub fn new(size: u8, seed: u64, ai_side: Option<Side>, ai_level: u8) -> Self {
         let (terrain, seed) = generate(seed, &GenParams::for_floor(size, 2));
-        let game = Match::new(terrain, Rules::standard(size), Position::start(size));
+        let mut game = Match::new(terrain, Rules::standard(size), Position::start(size));
+        game.set_deck(Side::White, tc_core::filler_deck(seed));
+        game.set_deck(Side::Black, tc_core::filler_deck(seed ^ 0x454E_454D_595F_4445));
         GameState {
             size,
             seed,
@@ -91,6 +99,7 @@ impl GameState {
             animate: None,
             ai_side,
             ai_level,
+            armed_slot: None,
             armed_spell: None,
             swap_first: None,
             events: Vec::new(),
@@ -108,23 +117,39 @@ impl GameState {
         self.outcome.is_none() && self.ai_side == Some(self.game.pos.side_to_move)
     }
 
-    /// Returns the player's castable spells that have charges remaining.
-    pub fn castable_spells(&self) -> Vec<(SpellId, u8)> {
-        let side = Side::White;
-        let mut list = Vec::new();
-        for &(spell, count) in self.game.charges(side) {
-            if spell.is_castable() && count > 0 && !list.iter().any(|(s, _)| *s == spell) {
-                list.push((spell, count));
-            }
+    pub fn arm_slot(&mut self, slot_idx: usize) {
+        if self.armed_slot == Some(slot_idx) {
+            self.disarm();
+            return;
         }
-        list
+        let side = self.game.pos.side_to_move;
+        let hand = self.game.hand(side);
+        if slot_idx < 3
+            && !hand.used[slot_idx]
+            && let Some(spell) = hand.hand[slot_idx]
+        {
+            if spell == SpellId::Rewind {
+                self.cast(SpellCast::Rewind);
+                return;
+            }
+            self.armed_slot = Some(slot_idx);
+            self.armed_spell = Some(spell);
+            self.swap_first = None;
+            self.selected = None;
+            self.pieces_dirty = true;
+        }
     }
 
+    #[allow(dead_code)]
     pub fn arm_spell(&mut self, spell: SpellId) {
         if spell == SpellId::Rewind {
             self.cast(SpellCast::Rewind);
             return;
         }
+        let side = self.game.pos.side_to_move;
+        let hand = self.game.hand(side);
+        let slot = (0..3).find(|&i| hand.hand[i] == Some(spell) && !hand.used[i]);
+        self.armed_slot = slot;
         self.armed_spell = Some(spell);
         self.swap_first = None;
         self.selected = None;
@@ -132,9 +157,19 @@ impl GameState {
     }
 
     pub fn disarm(&mut self) {
+        self.armed_slot = None;
         self.armed_spell = None;
         self.swap_first = None;
         self.pieces_dirty = true;
+    }
+
+    pub fn discard(&mut self) {
+        let side = self.game.pos.side_to_move;
+        if self.game.discard_hand(side).is_ok() {
+            self.events.push(GameEvent::Discarded { side });
+            self.disarm();
+            self.pieces_dirty = true;
+        }
     }
 
     /// Target squares for the currently armed spell.
@@ -242,6 +277,11 @@ impl GameState {
     pub fn cast(&mut self, cast: SpellCast) {
         let before = self.game.clone();
         let spell = cast.spell_id();
+        let side = before.pos.side_to_move;
+        let hand = before.hand(side);
+        let unused_non_empty = (0..3).filter(|&i| hand.hand[i].is_some() && !hand.used[i]).count();
+        let will_redraw = unused_non_empty == 1;
+
         let mut squares = match cast {
             SpellCast::RaiseEarth(sq)
             | SpellCast::LowerEarth(sq)
@@ -266,6 +306,9 @@ impl GameState {
         };
 
         if self.game.cast(cast).is_ok() {
+            if will_redraw {
+                self.events.push(GameEvent::HandDrawn { side });
+            }
             if spell == SpellId::Rewind {
                 for sq in tc_core::board::squares(self.size) {
                     if self.game.pos.get(sq).is_some() && self.game.pos.get(sq) != before.pos.get(sq) {

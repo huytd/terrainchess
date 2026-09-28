@@ -57,7 +57,8 @@ pub struct MatchSetup {
     pub player: Side,
     pub relics: Vec<RelicEffect>,
     pub pickups: Vec<(Sq, Pickup)>,
-    pub charges: Vec<(SpellId, u8)>,
+    pub player_deck: Vec<SpellId>,
+    pub enemy_deck: Vec<SpellId>,
     pub enemy_items: Vec<ItemId>,
     pub veteran: [bool; 2],
 }
@@ -232,17 +233,59 @@ impl RunState {
             }
         }
 
-        let mut charges: Vec<(SpellId, u8)> = Vec::new();
+        let mut player_deck = Vec::with_capacity(15);
         for id in &self.owned {
             if let Some(crate::item::Item { kind: ItemKind::Spell { spell, charges: c, .. }, .. }) =
                 find_item(id)
             {
-                if let Some(entry) = charges.iter_mut().find(|(s, _)| *s == *spell) {
-                    entry.1 = entry.1.saturating_add(*c);
-                } else {
-                    charges.push((*spell, *c));
+                for _ in 0..*c {
+                    if player_deck.len() < 15 {
+                        player_deck.push(*spell);
+                    }
                 }
             }
+        }
+
+        const FILLER: [SpellId; 5] =
+            [SpellId::RaiseEarth, SpellId::LowerEarth, SpellId::Shield, SpellId::Swap, SpellId::Freeze];
+        let mut filler_idx = 0;
+        while player_deck.len() < 15 {
+            player_deck.push(FILLER[filler_idx % FILLER.len()]);
+            filler_idx += 1;
+        }
+
+        let mut player_rng = Rng::new(seed);
+        for i in (1..player_deck.len()).rev() {
+            let j = player_rng.below((i + 1) as u32) as usize;
+            player_deck.swap(i, j);
+        }
+
+        const ALL_CASTABLE: [SpellId; 8] = [
+            SpellId::RaiseEarth,
+            SpellId::LowerEarth,
+            SpellId::Freeze,
+            SpellId::Bridge,
+            SpellId::DigTunnel,
+            SpellId::Shield,
+            SpellId::Swap,
+            SpellId::Rewind,
+        ];
+        let mut enemy_deck_rng = Rng::new(seed ^ 0x454E_454D_595F_4445);
+        let mut enemy_deck = Vec::with_capacity(15);
+        for _ in 0..enemy_items.len() {
+            if enemy_deck.len() < 15 {
+                let spell = ALL_CASTABLE[enemy_deck_rng.below(ALL_CASTABLE.len() as u32) as usize];
+                enemy_deck.push(spell);
+            }
+        }
+        let mut enemy_filler_idx = 0;
+        while enemy_deck.len() < 15 {
+            enemy_deck.push(FILLER[enemy_filler_idx % FILLER.len()]);
+            enemy_filler_idx += 1;
+        }
+        for i in (1..enemy_deck.len()).rev() {
+            let j = enemy_deck_rng.below((i + 1) as u32) as usize;
+            enemy_deck.swap(i, j);
         }
 
         let ai_level = (self.floor + 1).min(7);
@@ -255,7 +298,8 @@ impl RunState {
             player,
             relics: relics.clone(),
             pickups: Vec::new(),
-            charges: charges.clone(),
+            player_deck,
+            enemy_deck,
             enemy_items,
             veteran,
         };
@@ -429,17 +473,6 @@ fn place_pickups(
         selected_squares.push(sq);
     }
 
-    const ALL_SPELLS: [SpellId; 8] = [
-        SpellId::RaiseEarth,
-        SpellId::LowerEarth,
-        SpellId::Freeze,
-        SpellId::Bridge,
-        SpellId::DigTunnel,
-        SpellId::Shield,
-        SpellId::Swap,
-        SpellId::Rewind,
-    ];
-
     let mut run_item_indices = Vec::new();
     if cartographer && !selected_squares.is_empty() {
         let idx = rng.below(selected_squares.len() as u32) as usize;
@@ -453,15 +486,11 @@ fn place_pickups(
         run_item_indices.push(idx);
     }
 
-    let mut pickups = Vec::with_capacity(selected_squares.len());
+    let mut pickups = Vec::new();
     for (i, sq) in selected_squares.into_iter().enumerate() {
-        let pickup = if run_item_indices.contains(&i) {
-            Pickup::RunItem
-        } else {
-            let spell = ALL_SPELLS[rng.below(ALL_SPELLS.len() as u32) as usize];
-            Pickup::SpellCharge(spell)
-        };
-        pickups.push((sq, pickup));
+        if run_item_indices.contains(&i) {
+            pickups.push((sq, Pickup::RunItem));
+        }
     }
 
     pickups

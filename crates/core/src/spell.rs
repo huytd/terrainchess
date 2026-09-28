@@ -61,3 +61,51 @@ impl SpellCast {
         matches!(self, SpellCast::Shield(_) | SpellCast::Rewind)
     }
 }
+
+/// Spell deck, hand of up to 3 cards, slot usage, and discard pile.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SpellHand {
+    pub deck: Vec<SpellId>,
+    pub hand: [Option<SpellId>; 3],
+    pub used: [bool; 3],
+    pub discarded: Vec<SpellId>,
+}
+
+impl SpellHand {
+    /// Creates a hand from an already shuffled deck, empties the hand and draws up to 3 cards.
+    pub fn new(deck: Vec<SpellId>) -> Self {
+        let mut sh = SpellHand { deck, hand: [None; 3], used: [false; 3], discarded: Vec::new() };
+        sh.draw();
+        sh
+    }
+
+    /// Clears the hand and draws up to 3 cards from the front of the deck.
+    pub fn draw(&mut self) {
+        self.hand = [None; 3];
+        self.used = [false; 3];
+        for i in 0..3 {
+            if !self.deck.is_empty() {
+                self.hand[i] = Some(self.deck.remove(0));
+            } else {
+                self.hand[i] = None;
+            }
+        }
+    }
+}
+
+/// Generates a fresh 15-card filler deck cycling RaiseEarth, LowerEarth, Shield, Swap, Freeze,
+/// shuffled deterministically from the given seed.
+pub fn filler_deck(seed: u64) -> Vec<SpellId> {
+    const FILLER: [SpellId; 5] =
+        [SpellId::RaiseEarth, SpellId::LowerEarth, SpellId::Shield, SpellId::Swap, SpellId::Freeze];
+    let mut deck = Vec::with_capacity(15);
+    for i in 0..15 {
+        deck.push(FILLER[i % FILLER.len()]);
+    }
+    let mut rng = crate::rng::Rng::new(seed);
+    for i in (1..deck.len()).rev() {
+        let j = rng.below((i + 1) as u32) as usize;
+        deck.swap(i, j);
+    }
+    deck
+}

@@ -134,6 +134,8 @@ The board size can be set in the menu for a new run. Inside a run, the size can 
    - *Swap*: switch two of your own pieces
    - *Rewind* (rare): undo the last full move
 
+   Each side plays with a 15-card spell deck and a hand of up to 3 cards. Casting a spell marks that card as used (spent); as soon as every non-empty slot in the hand is used, the hand clears and draws up to 3 cards from the deck. A player may also discard their entire hand without spending a turn as long as no cards in the current hand have been used and the deck is not empty, immediately drawing up to 3 new cards.
+
 ### In-match pickups
 
 Some tiles hold pickups (chests, glowing orbs). A piece that moves onto one collects it:

@@ -322,42 +322,12 @@ fn pickup_placement_is_deterministic_and_only_on_valid_squares() {
     for size in [8u8, 16, 32] {
         let run = RunState::new(12345, size);
         let setup = run.match_setup();
-        let expected_count = match size {
-            8 => 2,
-            16 => 4,
-            32 => 8,
-            _ => 0,
-        };
-        assert_eq!(setup.pickups.len(), expected_count);
+        // Floor 0 without cartographer places no RunItem pickups (spell charges are no longer placed)
+        assert!(setup.pickups.is_empty());
 
         // Deterministic: second setup with same run state produces identical pickups
         let setup2 = run.match_setup();
         assert_eq!(setup.pickups, setup2.pickups);
-
-        let (terrain, _) = setup.terrain();
-        let home = Position::home_rows(size);
-        let start_pos = Position::start(size);
-
-        for (sq, pickup) in &setup.pickups {
-            // Must be non-home square
-            assert!(sq.y >= home && sq.y < size - home, "pickup at {:?} must be on non-home rows", sq);
-            // Must be empty in starting position
-            assert!(start_pos.get(*sq).is_none(), "pickup at {:?} must not spawn on a starting piece", sq);
-            // Must be a tile that a piece can stand on
-            let tile = terrain.get(*sq);
-            assert!(!tile.is_blocked(), "pickup at {:?} cannot be on blocked tile", sq);
-            assert_ne!(tile.kind, TileKind::DeepWater, "pickup at {:?} cannot be in deep water", sq);
-
-            // On floor 0, every pickup must be a SpellCharge of a castable spell
-            match pickup {
-                Pickup::SpellCharge(spell) => {
-                    assert!(spell.is_castable(), "spell {:?} must be castable", spell);
-                }
-                Pickup::RunItem => {
-                    panic!("floor 0 should not spawn RunItem");
-                }
-            }
-        }
     }
 
     // From floor 2 onwards, RunItem has a 30% chance to spawn for one of the pickups
@@ -370,6 +340,16 @@ fn pickup_placement_is_deterministic_and_only_on_valid_squares() {
         assert!(run_items <= 1, "at most one pickup should be a RunItem");
         if run_items == 1 {
             found_run_item = true;
+            let (sq, pickup) = setup.pickups[0];
+            assert_eq!(pickup, Pickup::RunItem);
+            let (terrain, _) = setup.terrain();
+            let home = Position::home_rows(8);
+            let start_pos = Position::start(8);
+            assert!(sq.y >= home && sq.y < 8 - home, "pickup must be on non-home rows");
+            assert!(start_pos.get(sq).is_none(), "pickup must not spawn on starting piece");
+            let tile = terrain.get(sq);
+            assert!(!tile.is_blocked(), "pickup cannot be on blocked tile");
+            assert_ne!(tile.kind, TileKind::DeepWater, "pickup cannot be in deep water");
         }
     }
     assert!(
@@ -406,19 +386,24 @@ fn bonus_picks_from_run_items() {
 }
 
 #[test]
-fn player_charges_from_owned_spell_items() {
+fn player_deck_from_owned_spell_items() {
     let mut run = RunState::new(99, 8);
     let initial_setup = run.match_setup();
-    assert!(initial_setup.charges.is_empty());
+    assert_eq!(initial_setup.player_deck.len(), 15);
+    assert_eq!(initial_setup.enemy_deck.len(), 15);
 
     // Add raise_earth (2 charges in spells.ron) and shield (1 charge)
     run.owned.push("raise_earth".into());
     run.owned.push("shield".into());
 
     let setup = run.match_setup();
-    assert_eq!(setup.charges.len(), 2);
-    assert!(setup.charges.contains(&(SpellId::RaiseEarth, 2)));
-    assert!(setup.charges.contains(&(SpellId::Shield, 1)));
+    assert_eq!(setup.player_deck.len(), 15);
+    assert_eq!(setup.enemy_deck.len(), 15);
+
+    let count_raise = setup.player_deck.iter().filter(|&&s| s == SpellId::RaiseEarth).count();
+    let count_shield = setup.player_deck.iter().filter(|&&s| s == SpellId::Shield).count();
+    assert!(count_raise >= 2, "must have at least 2 RaiseEarth from owned item");
+    assert!(count_shield >= 1, "must have at least 1 Shield from owned item");
 }
 
 #[test]
@@ -457,17 +442,16 @@ fn tide_charm_converts_shallow_water_on_player_half_to_sand() {
 #[test]
 fn cartographer_relic_guarantees_extra_run_item_pickup() {
     let size = 8u8;
-    // On floor 0 without cartographer: 2 pickups, none is RunItem
+    // On floor 0 without cartographer: 0 pickups (spell charges no longer placed)
     let run = RunState::new(12345, size);
     let setup = run.match_setup();
-    assert_eq!(setup.pickups.len(), 2);
-    assert!(!setup.pickups.iter().any(|(_, p)| matches!(p, Pickup::RunItem)));
+    assert_eq!(setup.pickups.len(), 0);
 
-    // On floor 0 with cartographer: 3 pickups (2 + 1), and at least one is RunItem
+    // On floor 0 with cartographer: 1 pickup (guaranteed RunItem)
     let mut run_carto = RunState::new(12345, size);
     run_carto.owned.push("cartographer".into());
     let setup_carto = run_carto.match_setup();
-    assert_eq!(setup_carto.pickups.len(), 3);
+    assert_eq!(setup_carto.pickups.len(), 1);
     assert!(
         setup_carto.pickups.iter().any(|(_, p)| matches!(p, Pickup::RunItem)),
         "cartographer must guarantee a RunItem pickup from floor 0"
@@ -531,4 +515,29 @@ fn enemy_enhancements_from_floor_3_on() {
     run7_b.floor = 7;
     let setup7_b = run7_b.match_setup();
     assert_eq!(setup7.enemy_items, setup7_b.enemy_items, "enemy items must be deterministic");
+}
+
+#[test]
+fn spell_item_descriptions_and_deck_generation() {
+    use tc_run::ItemKind;
+
+    for item in catalog() {
+        if let ItemKind::Spell { charges, .. } = item.kind {
+            let expected = if charges == 1 {
+                "Adds 1 card to your spell deck."
+            } else {
+                "Adds 2 cards to your spell deck."
+            };
+            assert_eq!(item.description, expected, "description mismatch for {}", item.id);
+        }
+    }
+
+    // Verify 15-card player deck and enemy deck generation across floors
+    for floor in 0..8 {
+        let mut run = RunState::new(12345, 8);
+        run.floor = floor;
+        let setup = run.match_setup();
+        assert_eq!(setup.player_deck.len(), 15, "player deck must have exactly 15 cards");
+        assert_eq!(setup.enemy_deck.len(), 15, "enemy deck must have exactly 15 cards");
+    }
 }
