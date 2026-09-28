@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
-"""Turn the generated sprite sheet into the game's atlas (see SPRITES.md §0).
+"""Turn the generated sprite sheet and environment sheets into the game's atlas (see SPRITES.md §0).
 
     python3 tools/process_sprites.py [--palette] [--preview out.png]
 
-Reads  assets/spritesheet.jpg  (2048², magenta background)
-Writes assets/atlas.png        (packed, transparent, 1 logical px = 1 px)
-       assets/atlas.ron        (sprite name -> rect + anchor, read by the game)
+Reads  assets/spritesheet.jpg         (2048², magenta background)
+       assets/environment_sky.jpg     (2000², magenta background)
+       assets/environment_ground.jpg  (2000², 8×8 grid of 250 px cells)
+Writes assets/atlas.png               (packed, transparent, 1 logical px = 1 px)
+       assets/atlas.ron               (sprite name -> rect + anchor, read by the game)
 
 The generated sheet came out as a 16×16 grid of 128 px cells instead of the
 32×32 grid of 64 px cells in SPRITES.md, and some rows ignore the grid, so
@@ -32,6 +34,8 @@ from PIL import Image
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "assets", "spritesheet.jpg")
+SRC_SKY = os.path.join(ROOT, "assets", "environment_sky.jpg")
+SRC_GROUND = os.path.join(ROOT, "assets", "environment_ground.jpg")
 OUT_PNG = os.path.join(ROOT, "assets", "atlas.png")
 OUT_RON = os.path.join(ROOT, "assets", "atlas.ron")
 
@@ -43,6 +47,13 @@ SCALE = TILE / CELL
 def cell(r, c, w=1, h=1):
     """Source box of grid cells (0-based row/col)."""
     return (c * CELL, r * CELL, (c + w) * CELL, (r + h) * CELL)
+
+
+def gcell(r, c):
+    """Source box of 250 px grid cells (1-based row/col) in environment_ground.jpg."""
+    x0 = 250 * (c - 1)
+    y0 = 250 * (r - 1)
+    return (x0, y0, x0 + 250, y0 + 250)
 
 
 # --- Region table ---------------------------------------------------------------
@@ -132,6 +143,47 @@ SPRITES = [
     ("ov_ring", (822, 1668, 918, 1760), None, CENTER),
 ]
 
+HORIZON_STRIPS = [
+    ("sky_far", (3, 35, 997, 165)),
+    ("sky_mid", (3, 520, 997, 750)),
+    ("sky_near", (3, 761, 997, 998)),
+]
+
+CLOUDS = [
+    ("cloud_0", (28, 1006, 472, 1150)),
+    ("cloud_1", (564, 1025, 932, 1136)),
+    ("cloud_2", (1077, 1009, 1421, 1144)),
+    ("cloud_3", (1546, 1008, 1704, 1150)),
+    ("cloud_4", (134, 1165, 366, 1244)),
+    ("cloud_5", (625, 1177, 876, 1230)),
+    ("cloud_6", (1132, 1165, 1370, 1244)),
+    ("cloud_7", (1575, 1167, 1673, 1240)),
+]
+
+ENV_TILES = [
+    ("sea_deep_0", 1, 1),
+    ("sea_deep_1", 1, 2),
+    ("sea_shallow_0", 1, 3),
+    ("sea_shallow_1", 1, 4),
+    ("shore_0", 1, 5),
+    ("shore_1", 1, 6),
+    ("sand_wet", 2, 1),
+    ("sand_dry", 2, 4),
+    ("sand_shells", 2, 5),
+]
+
+ENV_SPRITES = [
+    *[(f"decal_{i}", gcell(3, i + 1), None, CENTER) for i in range(8)],
+    ("gull_0", gcell(4, 1), 14, CENTER),
+    ("gull_1", gcell(4, 2), 14, CENTER),
+    ("crow_0", gcell(4, 3), 14, CENTER),
+    ("crow_1", gcell(4, 4), 14, CENTER),
+    ("sparrow_0", gcell(5, 5), 14, CENTER),
+    ("sparrow_1", gcell(5, 6), 14, CENTER),
+    ("butterfly_0", gcell(4, 7), 14, CENTER),
+    ("butterfly_1", gcell(4, 8), 14, CENTER),
+]
+
 # The sheet has no full-body Ashen King, so one is assembled in source pixels: the
 # portrait bust (crown, head, ermine cape) over the bishop's robe and sun staff.
 WHITE_KING = {
@@ -159,10 +211,13 @@ def palette_array():
     return np.array(cols, dtype=np.float32)
 
 
-def key_mask(rgb):
+def key_mask(rgb, env=False):
     """True where the pixel is foreground (not magenta background)."""
     r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-    bg = (r > 170) & (b > 170) & (g < 110) & (np.abs(r - b) < 70)
+    if env:
+        bg = (r > 120) & (b > 120) & (g < 110) & (np.abs(r - b) < 90)
+    else:
+        bg = (r > 170) & (b > 170) & (g < 110) & (np.abs(r - b) < 70)
     fg = ~bg
     # Erode by one pixel: JPEG leaves a magenta-tinted fringe around sprites.
     e = fg.copy()
@@ -248,8 +303,10 @@ def wall_sprites(out):
     return walls
 
 
-def process(src, palette):
+def process(src, src_sky, src_ground, palette):
     rgb_all = np.asarray(src.convert("RGB")).astype(np.float32)
+    rgb_sky = np.asarray(src_sky.convert("RGB")).astype(np.float32)
+    rgb_ground = np.asarray(src_ground.convert("RGB")).astype(np.float32)
     out = {}  # name -> (RGBA float array, anchor)
 
     def crop(box):
@@ -267,8 +324,8 @@ def process(src, palette):
         rgb = crop((x0 + 3, y0, x1 - 3, y1))  # drop the grid line at the sides
         out[name] = (downscale(rgb, key_mask(rgb).astype(np.float32), TILE, TILE), (0.5, 0.0))  # anchored at its top edge
 
-    def trimmed(rgb, target_h):
-        mask = key_mask(rgb)
+    def trimmed(rgb, target_h, env=False):
+        mask = key_mask(rgb, env=env)
         boxes = components(mask, 60)
         if not boxes:
             raise SystemExit("empty sprite region")
@@ -288,6 +345,31 @@ def process(src, palette):
     for name, box, target_h, anchor in SPRITES:
         out[name] = (trimmed(crop(box), target_h), anchor)
     out["white_king"] = (trimmed(white_king(crop), PIECE_H["king"]), BOTTOM)
+
+    # Environment sky: horizon strips
+    for name, (x0, y0, x1, y1) in HORIZON_STRIPS:
+        rgb = rgb_sky[y0:y1, x0:x1]
+        mask = key_mask(rgb, env=True)
+        h, w = mask.shape
+        out[name] = (
+            downscale(rgb, mask.astype(np.float32), max(1, round(w * SCALE)), max(1, round(h * SCALE))),
+            CENTER,
+        )
+
+    # Environment sky: clouds
+    for name, (x0, y0, x1, y1) in CLOUDS:
+        out[name] = (trimmed(rgb_sky[y0:y1, x0:x1], None, env=True), CENTER)
+
+    # Environment ground: tiles
+    for name, r, c in ENV_TILES:
+        x0, y0, x1, y1 = gcell(r, c)
+        rgb = rgb_ground[y0 + 10 : y1 - 10, x0 + 10 : x1 - 10]
+        out[name] = (downscale(rgb, np.ones(rgb.shape[:2], np.float32), TILE, TILE), CENTER)
+
+    # Environment ground: sprites
+    for name, box, target_h, anchor in ENV_SPRITES:
+        x0, y0, x1, y1 = box
+        out[name] = (trimmed(rgb_ground[y0:y1, x0:x1], target_h, env=True), anchor)
 
     out.update(wall_sprites(out))
 
@@ -337,7 +419,7 @@ def main():
     ap.add_argument("--preview", help="also write a 4× preview of the atlas here")
     args = ap.parse_args()
 
-    sprites = process(Image.open(SRC), args.palette)
+    sprites = process(Image.open(SRC), Image.open(SRC_SKY), Image.open(SRC_GROUND), args.palette)
     atlas, rects = pack(sprites)
     atlas.save(OUT_PNG)
     write_ron(rects, atlas.size, OUT_RON)

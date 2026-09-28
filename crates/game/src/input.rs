@@ -1,14 +1,15 @@
 //! Orbit camera (perspective) and board interaction, by mouse, keyboard or touch.
 //!
-//! Mouse: click to select / move, right-drag to turn the board, middle-drag or WASD to
-//! pan, wheel to zoom, Q / E to turn by 45°. Touch: tap to select / move, drag to pan,
-//! pinch to zoom, twist two fingers to turn.
+//! Mouse: click to select / move, right-drag to turn and tilt the board, middle-drag or WASD to
+//! pan, wheel to zoom, Q / E to turn by 45°, Z / X to tilt. Touch: tap to select / move,
+//! drag to pan, pinch to zoom, twist two fingers to turn, two-finger vertical drag to tilt.
 
 use std::f32::consts::{FRAC_PI_4, PI};
 
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::input::touch::Touches;
+use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -28,8 +29,9 @@ const HUD_TOP: f32 = 30.0;
 const HUD_BOTTOM: f32 = 60.0;
 /// A touch that moves further than this (screen px) is a drag, not a tap.
 const TAP_SLOP: f32 = 12.0;
-/// Camera tilt above the board.
-const PITCH: f32 = 35.0 * PI / 180.0;
+/// Minimum and maximum camera tilt above the board.
+const MIN_PITCH: f32 = 12.0 * PI / 180.0;
+const MAX_PITCH: f32 = 70.0 * PI / 180.0;
 /// Starting view: from White's side with a1 as the nearest corner.
 const START_YAW: f32 = -FRAC_PI_4;
 
@@ -58,13 +60,14 @@ struct Gesture {
 #[derive(Component)]
 pub struct MainCamera;
 
-/// Where the camera looks and from which side. The camera circles `focus` at a fixed
-/// tilt; `yaw` eases toward `target_yaw` so turns animate.
+/// Where the camera looks and from which side. The camera circles `focus`; `yaw` eases
+/// toward `target_yaw` so turns animate.
 #[derive(Resource)]
 struct Orbit {
     focus: Vec3,
     yaw: f32,
     target_yaw: f32,
+    pitch: f32,
     distance: f32,
     /// Window height in logical px, for converting drags to world distances.
     view_h: f32,
@@ -72,7 +75,14 @@ struct Orbit {
 
 impl Default for Orbit {
     fn default() -> Self {
-        Orbit { focus: Vec3::ZERO, yaw: START_YAW, target_yaw: START_YAW, distance: 20.0, view_h: 800.0 }
+        Orbit {
+            focus: Vec3::ZERO,
+            yaw: START_YAW,
+            target_yaw: START_YAW,
+            pitch: 30.0 * PI / 180.0,
+            distance: 20.0,
+            view_h: 800.0,
+        }
     }
 }
 
@@ -95,7 +105,7 @@ impl Orbit {
         let k = self.px_per_unit();
         self.focus -= right * delta.x / k;
         // The ground is foreshortened on screen by the tilt.
-        self.focus += forward * delta.y / (k * PITCH.sin());
+        self.focus += forward * delta.y / (k * self.pitch.sin());
     }
 
     /// Zoom in by `factor` (above 1) or out (below 1).
@@ -122,6 +132,11 @@ fn setup_camera(mut commands: Commands) {
         Projection::Perspective(PerspectiveProjection { fov: FOV, ..default() }),
         Tonemapping::None,
         Msaa::Off,
+        DistanceFog {
+            color: Color::srgb_u8(0xA9, 0xB8, 0xC4),
+            falloff: FogFalloff::Linear { start: 0.0, end: 100.0 },
+            ..default()
+        },
     ));
 }
 
@@ -140,7 +155,8 @@ fn fit_camera(
     // Size the board for its widest view (a diagonal), with room for tall pieces.
     let n = state.size as f32;
     let span = n * std::f32::consts::SQRT_2;
-    let px_per_unit = (win.x / (span + 1.0)).min((win.y - HUD_TOP - HUD_BOTTOM) / (span * PITCH.sin() + 3.0));
+    let px_per_unit =
+        (win.x / (span + 1.0)).min((win.y - HUD_TOP - HUD_BOTTOM) / (span * orbit.pitch.sin() + 3.0));
     // The near side of the board looks bigger in perspective; leave it some room.
     orbit.view_h = win.y;
     orbit.distance =
@@ -159,7 +175,11 @@ fn apply_orbit(
     orbit.view_h = window.height().max(1.0);
     let ease = (time.delta_secs() * 12.0).min(1.0);
     orbit.yaw += (orbit.target_yaw - orbit.yaw) * ease;
-    let dir = Vec3::new(orbit.yaw.sin() * PITCH.cos(), PITCH.sin(), orbit.yaw.cos() * PITCH.cos());
+    let dir = Vec3::new(
+        orbit.yaw.sin() * orbit.pitch.cos(),
+        orbit.pitch.sin(),
+        orbit.yaw.cos() * orbit.pitch.cos(),
+    );
     **camera =
         Transform::from_translation(orbit.focus + dir * orbit.distance).looking_at(orbit.focus, Vec3::Y);
 }
@@ -177,6 +197,7 @@ fn mouse_camera(
     }
     if mouse.pressed(MouseButton::Right) {
         orbit.turn(-motion.delta.x * 0.01);
+        orbit.pitch = (orbit.pitch + motion.delta.y * 0.005).clamp(MIN_PITCH, MAX_PITCH);
     }
     if mouse.pressed(MouseButton::Middle) {
         orbit.pan(motion.delta);
@@ -198,6 +219,18 @@ fn mouse_camera(
     }
     // Keys move the view, which is the opposite of dragging the board.
     orbit.pan(-dir * Vec2::new(1.0, -1.0) * 400.0 * time.delta_secs());
+
+    let mut key_tilt = 0.0;
+    if keys.pressed(KeyCode::KeyZ) {
+        key_tilt -= 1.0;
+    }
+    if keys.pressed(KeyCode::KeyX) {
+        key_tilt += 1.0;
+    }
+    if key_tilt != 0.0 {
+        let tilt_speed = 60.0 * PI / 180.0;
+        orbit.pitch = (orbit.pitch + key_tilt * tilt_speed * time.delta_secs()).clamp(MIN_PITCH, MAX_PITCH);
+    }
 }
 
 fn touch_gestures(
@@ -232,7 +265,9 @@ fn touch_gestures(
                 orbit.zoom_by(now.length() / before.length());
                 orbit.turn(before.angle_to(now));
             }
-            orbit.pan((a.delta() + b.delta()) / 2.0);
+            let avg_delta = (a.delta() + b.delta()) / 2.0;
+            orbit.pan(Vec2::new(avg_delta.x, 0.0));
+            orbit.pitch = (orbit.pitch + avg_delta.y * 0.005).clamp(MIN_PITCH, MAX_PITCH);
         }
         _ => {}
     }

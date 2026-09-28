@@ -25,9 +25,9 @@ use crate::input::MainCamera;
 /// World height of one terrain level.
 pub const LEVEL: f32 = 0.4;
 /// Column height below level 0, so the board reads as a slab.
-const BASE: f32 = 0.3;
+pub(crate) const BASE: f32 = 0.3;
 /// World size of one sprite pixel (ground tiles are 32 px across a square).
-const PX: f32 = 1.0 / 30.0;
+pub(crate) const PX: f32 = 1.0 / 30.0;
 /// Makes a material skip the depth test, so move markers stay visible behind pieces and
 /// taller columns. (A second camera layered over the scene did the same, but some WebGL2
 /// drivers lost the scene underneath.)
@@ -55,13 +55,13 @@ const LIFT_TINT: f32 = 0.004;
 const LIFT_MARK: f32 = 0.008;
 
 /// Height of a square's top face.
-pub fn top_y(height: u8) -> f32 {
+pub fn top_y(height: i8) -> f32 {
     height as f32 * LEVEL
 }
 
 /// Centre of a square's top face.
 pub fn square_top(sq: Sq, height: u8) -> Vec3 {
-    Vec3::new(sq.x as f32, top_y(height), -(sq.y as f32))
+    Vec3::new(sq.x as f32, top_y(height as i8), -(sq.y as f32))
 }
 
 /// Middle of the board at ground level.
@@ -144,7 +144,7 @@ struct WaterFrame(usize);
 
 /// Upright card that turns about the vertical axis to face the camera.
 #[derive(Component)]
-struct Billboard;
+pub(crate) struct Billboard;
 
 /// Hop from one spot to another along a small arc.
 #[derive(Component)]
@@ -159,11 +159,11 @@ const HOP_SECS: f32 = 0.22;
 
 /// Shared materials and card meshes.
 #[derive(Resource)]
-struct Look {
-    terrain: Handle<StandardMaterial>,
-    cards: Handle<StandardMaterial>,
+pub(crate) struct Look {
+    pub(crate) terrain: Handle<StandardMaterial>,
+    pub(crate) cards: Handle<StandardMaterial>,
     /// Card meshes by sprite name and horizontal flip.
-    card_meshes: HashMap<(String, bool), Handle<Mesh>>,
+    pub(crate) card_meshes: HashMap<(String, bool), Handle<Mesh>>,
 }
 
 fn setup_look(mut commands: Commands, atlas: Res<Atlas>, mut materials: ResMut<Assets<StandardMaterial>>) {
@@ -183,9 +183,9 @@ fn setup_look(mut commands: Commands, atlas: Res<Atlas>, mut materials: ResMut<A
     commands.insert_resource(Look { terrain, cards, card_meshes: HashMap::new() });
 }
 
-/// A per-square number for picking tile variants without flicker.
-fn hash(sq: Sq, salt: u32) -> u32 {
-    let mut h = (sq.x as u32).wrapping_mul(73_856_093) ^ (sq.y as u32).wrapping_mul(19_349_663) ^ salt;
+/// A per-cell number for picking tile variants without flicker.
+pub(crate) fn hash(x: i32, y: i32, salt: u32) -> u32 {
+    let mut h = (x as u32).wrapping_mul(73_856_093) ^ (y as u32).wrapping_mul(19_349_663) ^ salt;
     h ^= h >> 13;
     h = h.wrapping_mul(0x5bd1_e995);
     h ^ (h >> 15)
@@ -203,18 +203,18 @@ fn cave_color(link: u8) -> Color {
 
 /// Collects textured, vertex-shaded quads into one mesh.
 #[derive(Default)]
-struct Quads {
-    pos: Vec<[f32; 3]>,
-    normal: Vec<[f32; 3]>,
-    uv: Vec<[f32; 2]>,
-    color: Vec<[f32; 4]>,
-    idx: Vec<u32>,
+pub(crate) struct Quads {
+    pub(crate) pos: Vec<[f32; 3]>,
+    pub(crate) normal: Vec<[f32; 3]>,
+    pub(crate) uv: Vec<[f32; 2]>,
+    pub(crate) color: Vec<[f32; 4]>,
+    pub(crate) idx: Vec<u32>,
 }
 
 impl Quads {
     /// Corners in order bottom-left, bottom-right, top-right, top-left as seen from
     /// outside, with texture coordinates to match. `shade` darkens the texture.
-    fn add(&mut self, corners: [Vec3; 4], uv: [[f32; 2]; 4], shade: f32) {
+    pub(crate) fn add(&mut self, corners: [Vec3; 4], uv: [[f32; 2]; 4], shade: f32) {
         let n = (corners[1] - corners[0]).cross(corners[3] - corners[0]).normalize_or_zero();
         let c = Color::srgb(shade, shade, shade).to_linear().to_f32_array();
         let base = self.pos.len() as u32;
@@ -227,7 +227,7 @@ impl Quads {
         self.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
-    fn mesh(self) -> Mesh {
+    pub(crate) fn mesh(self) -> Mesh {
         Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.pos)
             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normal)
@@ -238,12 +238,12 @@ impl Quads {
 }
 
 /// Texture corners for a whole sprite, matching `Quads::add` corner order.
-fn full_uv(uv: Uv) -> [[f32; 2]; 4] {
+pub(crate) fn full_uv(uv: Uv) -> [[f32; 2]; 4] {
     [uv.at(0.0, 1.0), uv.at(1.0, 1.0), uv.at(1.0, 0.0), uv.at(0.0, 0.0)]
 }
 
 /// A flat quad lying on a top face, centred at `c`.
-fn flat(c: Vec3, size: Vec2) -> [Vec3; 4] {
+pub(crate) fn flat(c: Vec3, size: Vec2) -> [Vec3; 4] {
     let (hx, hz) = (size.x / 2.0, size.y / 2.0);
     [
         c + Vec3::new(-hx, 0.0, hz),
@@ -255,7 +255,7 @@ fn flat(c: Vec3, size: Vec2) -> [Vec3; 4] {
 
 /// Walls of one column side from `lo` up to `hi`: grass lip under the top edge, stone
 /// below. `a` → `b` runs left to right along the bottom as seen from outside.
-fn wall(q: &mut Quads, atlas: &Atlas, a: Vec3, b: Vec3, lo: f32, hi: f32, shade: f32) {
+pub(crate) fn wall(q: &mut Quads, atlas: &Atlas, a: Vec3, b: Vec3, lo: f32, hi: f32, shade: f32) {
     let mut top = hi;
     let mut first = true;
     while top > lo + 1e-4 {
@@ -299,8 +299,9 @@ fn spawn_terrain(
 
         // Top face, with a light checker and brighter high ground.
         let name = match tile.kind {
-            TileKind::Grass => ["grass_0", "grass_1", "grass_0", "grass_dark"][hash(sq, 1) as usize % 4],
-            TileKind::Stone => ["cobble", "flagstone"][hash(sq, 2) as usize % 2],
+            TileKind::Grass => ["grass_0", "grass_1", "grass_0", "grass_dark"]
+                [hash(sq.x as i32, sq.y as i32, 1) as usize % 4],
+            TileKind::Stone => ["cobble", "flagstone"][hash(sq.x as i32, sq.y as i32, 2) as usize % 2],
             TileKind::Sand => "sand",
             TileKind::ShallowWater => "shallow_0",
             TileKind::DeepWater => "deep",
@@ -326,7 +327,7 @@ fn spawn_terrain(
             ((-1, 0), Vec3::new(x - 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z + 0.5), 0.62),
         ] {
             let lo = match sq.offset(dx, dy, size) {
-                Some(n) => top_y(t.height(n)),
+                Some(n) => top_y(t.height(n) as i8),
                 None => -BASE,
             };
             wall(&mut solid, &atlas, a, b, lo, top.y, shade + 0.03 * tile.height as f32);
@@ -351,8 +352,10 @@ fn spawn_terrain(
             }
             Feature::Obstacle(kind) => {
                 let name = match kind {
-                    Obstacle::Rock => ["rock", "rock_mossy"][hash(sq, 4) as usize % 2],
-                    Obstacle::Tree => ["pine", "pine", "dead_tree"][hash(sq, 5) as usize % 3],
+                    Obstacle::Rock => ["rock", "rock_mossy"][hash(sq.x as i32, sq.y as i32, 4) as usize % 2],
+                    Obstacle::Tree => {
+                        ["pine", "pine", "dead_tree"][hash(sq.x as i32, sq.y as i32, 5) as usize % 3]
+                    }
                 };
                 let mesh = card_mesh(&mut look, &mut meshes, &atlas, name, false);
                 commands.spawn((
@@ -374,7 +377,7 @@ fn spawn_terrain(
 }
 
 /// An upright card for a sprite, feet at the origin, facing +Z.
-fn card_mesh(
+pub(crate) fn card_mesh(
     look: &mut Look,
     meshes: &mut Assets<Mesh>,
     atlas: &Atlas,

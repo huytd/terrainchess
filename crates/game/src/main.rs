@@ -8,6 +8,7 @@ mod atlas;
 mod board_view;
 mod game;
 mod input;
+mod scenery;
 
 use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
@@ -30,12 +31,13 @@ fn main() {
                     ..default()
                 }),
         )
-        .insert_resource(ClearColor(Color::srgb_u8(0x1A, 0x1C, 0x2C)))
+        .insert_resource(ClearColor(Color::srgb_u8(0xA9, 0xB8, 0xC4)))
         .add_plugins((
             atlas::AtlasPlugin,
             ai::AiPlugin,
             game::GamePlugin,
             board_view::BoardViewPlugin,
+            scenery::SceneryPlugin,
             input::InputPlugin,
         ))
         .run();
