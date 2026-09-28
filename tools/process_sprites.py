@@ -36,6 +36,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SRC = os.path.join(ROOT, "assets", "spritesheet.jpg")
 SRC_SKY = os.path.join(ROOT, "assets", "environment_sky.jpg")
 SRC_GROUND = os.path.join(ROOT, "assets", "environment_ground.jpg")
+SRC_GUI = os.path.join(ROOT, "assets", "gui.jpg")
 OUT_PNG = os.path.join(ROOT, "assets", "atlas.png")
 OUT_RON = os.path.join(ROOT, "assets", "atlas.ron")
 
@@ -206,6 +207,100 @@ ENV_SPRITES = [
     ("butterfly_1", gcell(4, 8), 14, CENTER),
 ]
 
+GUI_BOXES = [
+    # Card frames (row 1)
+    ("gui_card_common", (7, 7, 242, 328)),
+    ("gui_card_plain", (256, 7, 492, 328)),
+    ("gui_card_uncommon", (506, 4, 742, 328)),
+    ("gui_card_rare", (755, 4, 993, 328)),
+    ("gui_card_spell", (1005, 3, 1242, 328)),
+    ("gui_card_back", (1253, 6, 1492, 331)),
+    ("gui_card_used", (1504, 5, 1742, 330)),
+    ("gui_card_highlight", (1755, 6, 1991, 329)),
+    # Card art (each box 242 x 216)
+    # row y 337-553:
+    ("art_mountaineer_rooks", (4, 337, 246, 553)),
+    ("art_amphibious_knights", (254, 337, 496, 553)),
+    ("art_surefooted_pawns", (504, 337, 746, 553)),
+    ("art_momentum_bishops", (754, 337, 996, 553)),
+    ("art_long_jump_knights", (1004, 337, 1246, 553)),
+    ("art_daring_queens", (1254, 337, 1496, 553)),
+    ("art_tunneler_bishops", (1504, 337, 1746, 553)),
+    ("art_veteran", (1754, 337, 1996, 553)),
+    # row y 558-774:
+    ("art_tectonic_pact", (4, 558, 246, 774)),
+    ("art_calm_terrain", (254, 558, 496, 774)),
+    ("art_tide_charm", (504, 558, 746, 774)),
+    ("art_cartographer", (754, 558, 996, 774)),
+    ("art_chest", (1004, 558, 1246, 774)),
+    ("art_scroll", (1254, 558, 1496, 774)),
+    ("art_swap", (1504, 558, 1746, 774)),
+    ("art_rewind", (1754, 558, 1996, 774)),
+    # row y 779-994:
+    ("art_raise_earth", (4, 779, 246, 994)),
+    ("art_lower_earth", (254, 779, 496, 994)),
+    ("art_freeze", (504, 779, 746, 994)),
+    ("art_bridge", (754, 779, 996, 994)),
+    ("art_dig_tunnel", (1004, 779, 1246, 994)),
+    ("art_shield", (1254, 779, 1496, 994)),
+    # Small icons:
+    ("icon_fire", (1504, 779, 1622, 884)),
+    ("icon_gem", (1629, 779, 1746, 884)),
+    ("icon_bolt", (1754, 779, 1871, 884)),
+    ("icon_feather", (1878, 779, 1996, 884)),
+    ("icon_skull", (1504, 889, 1622, 996)),
+    ("icon_sun", (1629, 889, 1746, 996)),
+    ("icon_moon", (1754, 889, 1871, 996)),
+    ("icon_star_small", (1878, 889, 1996, 996)),
+    ("icon_star", (1014, 1766, 1111, 1863)),
+    ("icon_heart", (1141, 1771, 1234, 1858)),
+    ("icon_coin", (1267, 1764, 1357, 1862)),
+    ("icon_potion", (1400, 1762, 1475, 1865)),
+    ("icon_sword", (1512, 1763, 1612, 1865)),
+    ("icon_gear", (1638, 1762, 1738, 1864)),
+    ("icon_alert", (1796, 1763, 1830, 1863)),
+    ("icon_close", (1894, 1768, 1981, 1859)),
+    ("icon_leaf", (1028, 1895, 1096, 1982)),
+    ("icon_next", (1145, 1895, 1228, 1981)),
+    # Buttons (each 242 x 124):
+    # row y 1003-1127:
+    ("btn_wood", (4, 1003, 246, 1127)),
+    ("btn_wood_hover", (254, 1003, 496, 1127)),
+    ("btn_wood_pressed", (504, 1003, 746, 1127)),
+    ("btn_wood_disabled", (754, 1003, 996, 1127)),
+    ("btn_gold", (1004, 1003, 1246, 1127)),
+    ("btn_gold_hover", (1254, 1003, 1496, 1127)),
+    ("btn_gold_pressed", (1504, 1003, 1746, 1127)),
+    ("btn_gold_disabled", (1754, 1003, 1996, 1127)),
+    # row y 1137-1261:
+    ("btn_stone", (4, 1137, 246, 1261)),
+    ("btn_stone_hover", (254, 1137, 496, 1261)),
+    ("btn_stone_pressed", (504, 1137, 746, 1261)),
+    ("btn_stone_disabled", (754, 1137, 996, 1261)),
+    # Round:
+    ("btn_round", (1514, 1131, 1652, 1270)),
+    ("btn_round_hover", (1682, 1132, 1818, 1270)),
+    ("btn_round_disabled", (1849, 1132, 1986, 1270)),
+    # Panels:
+    ("panel_gui_wood", (3, 1269, 246, 1536)),
+    ("panel_gui_parchment", (257, 1275, 493, 1531)),
+    ("panel_gui_parchment_curl", (757, 1275, 993, 1532)),
+    ("panel_gui_stone", (1004, 1269, 1246, 1536)),
+    ("panel_gui_glass", (1254, 1269, 1496, 1535)),
+    ("banner", (1505, 1340, 1995, 1473)),
+    # Hand bar:
+    ("hand_tray", (5, 1557, 494, 1739)),
+    ("deck_pile", (1019, 1555, 1152, 1738)),
+    ("card_slot_empty", (1381, 1566, 1494, 1728)),
+    ("icon_discard", (1480, 1575, 1855, 1752)),
+    ("icon_draw", (1867, 1545, 1990, 1752)),
+    # Badges:
+    ("badge_floor", (25, 1761, 225, 1986)),
+    ("badge_boss", (255, 1762, 495, 1984)),
+    ("badge_victory", (505, 1768, 745, 1982)),
+    ("badge_defeat", (766, 1760, 989, 1977)),
+]
+
 # The sheet has no full-body Ashen King, so one is assembled in source pixels: the
 # portrait bust (crown, head, ermine cape) over the bishop's robe and sun staff.
 WHITE_KING = {
@@ -233,10 +328,12 @@ def palette_array():
     return np.array(cols, dtype=np.float32)
 
 
-def key_mask(rgb, env=False):
+def key_mask(rgb, env=False, gui=False):
     """True where the pixel is foreground (not magenta background)."""
     r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
-    if env:
+    if gui:
+        bg = (r > 150) & (b > 150) & (g < 120) & (np.abs(r - b) < 80)
+    elif env:
         bg = (r > 120) & (b > 120) & (g < 110) & (np.abs(r - b) < 90)
     else:
         bg = (r > 170) & (b > 170) & (g < 110) & (np.abs(r - b) < 70)
@@ -325,10 +422,11 @@ def wall_sprites(out):
     return walls
 
 
-def process(src, src_sky, src_ground, palette):
+def process(src, src_sky, src_ground, src_gui, palette):
     rgb_all = np.asarray(src.convert("RGB")).astype(np.float32)
     rgb_sky = np.asarray(src_sky.convert("RGB")).astype(np.float32)
     rgb_ground = np.asarray(src_ground.convert("RGB")).astype(np.float32)
+    rgb_gui = np.asarray(src_gui.convert("RGB")).astype(np.float32)
     out = {}  # name -> (RGBA float array, anchor)
 
     def crop(box):
@@ -393,6 +491,16 @@ def process(src, src_sky, src_ground, palette):
         x0, y0, x1, y1 = box
         out[name] = (trimmed(rgb_ground[y0:y1, x0:x1], target_h, env=True), anchor)
 
+    # GUI sprites
+    for name, (x0, y0, x1, y1) in GUI_BOXES:
+        rgb = rgb_gui[y0:y1, x0:x1]
+        mask = key_mask(rgb, gui=True)
+        h, w = mask.shape
+        out[name] = (
+            downscale(rgb, mask.astype(np.float32), max(1, round(w * SCALE)), max(1, round(h * SCALE))),
+            CENTER,
+        )
+
     out.update(wall_sprites(out))
 
     if palette:
@@ -441,8 +549,16 @@ def main():
     ap.add_argument("--preview", help="also write a 4× preview of the atlas here")
     args = ap.parse_args()
 
-    sprites = process(Image.open(SRC), Image.open(SRC_SKY), Image.open(SRC_GROUND), args.palette)
-    atlas, rects = pack(sprites)
+    sprites = process(
+        Image.open(SRC),
+        Image.open(SRC_SKY),
+        Image.open(SRC_GROUND),
+        Image.open(SRC_GUI),
+        args.palette,
+    )
+    atlas, rects = pack(sprites, width=512)
+    if atlas.height > 2048:
+        atlas, rects = pack(sprites, width=1024)
     atlas.save(OUT_PNG)
     write_ron(rects, atlas.size, OUT_RON)
     if args.preview:
