@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::atlas::Atlas;
-use crate::board_view::{board_center, pick_piece, pick_square, square_top};
+use crate::board_view::{board_center, pick_obstacle, pick_piece, pick_square, square_top};
 use tc_core::{Outcome, PieceKind, Side};
 
 use crate::game::{GameEvent, GameState, MAX_AI_LEVEL};
@@ -388,10 +388,11 @@ fn tap_board(
         .filter(|&(_, d)| d < px_per_unit * 0.35)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(sq, _)| sq);
-    // Then a piece's sprite, which stands in front of the ground behind it, then terrain.
+    // Then a piece's sprite, which stands in front of the ground behind it, then obstacle sprite, then terrain.
     let piece = pick_piece(state, atlas, camera, cursor);
+    let obstacle = pick_obstacle(state, atlas, camera, cursor);
     let ground = || cam.viewport_to_world(gtf, cursor).ok().and_then(|ray| pick_square(state, ray));
-    let Some(sq) = marked.or(piece).or_else(ground) else {
+    let Some(sq) = marked.or(piece).or(obstacle).or_else(ground) else {
         if state.armed_spell.is_some() {
             state.disarm();
         } else {

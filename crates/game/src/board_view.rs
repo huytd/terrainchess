@@ -129,6 +129,42 @@ pub fn pick_piece(
         .map(|(sq, _)| sq)
 }
 
+/// Square of the obstacle whose sprite is under screen position `cursor`, nearest first.
+pub fn pick_obstacle(
+    state: &GameState,
+    atlas: &Atlas,
+    camera: (&Camera, &GlobalTransform),
+    cursor: Vec2,
+) -> Option<Sq> {
+    let (cam, gtf) = camera;
+    let forward = gtf.forward();
+    let stretch = 1.0 / Vec2::new(forward.x, forward.z).length().max(0.1);
+    let t = &state.game.terrain;
+    tc_core::board::squares(state.size)
+        .filter_map(|sq| {
+            let tile = t.get(sq);
+            let kind = match tile.feature {
+                Feature::Obstacle(k) => k,
+                _ => return None,
+            };
+            let name = match kind {
+                Obstacle::Rock => ["rock", "rock_mossy"][hash(sq.x as i32, sq.y as i32, 4) as usize % 2],
+                Obstacle::Tree => {
+                    ["pine", "pine", "dead_tree"][hash(sq.x as i32, sq.y as i32, 5) as usize % 3]
+                }
+            };
+            let feet = square_top(sq, tile.height);
+            let size = atlas.px(name) * PX;
+            let p = cam.world_to_viewport(gtf, feet).ok()?;
+            let head = cam.world_to_viewport(gtf, feet + Vec3::Y * size.y * stretch).ok()?;
+            let side = cam.world_to_viewport(gtf, feet + gtf.right() * size.x * 0.4).ok()?;
+            let hit = (cursor.x - p.x).abs() <= (side.x - p.x).abs() && cursor.y <= p.y && cursor.y >= head.y;
+            hit.then(|| (sq, forward.dot(feet)))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(sq, _)| sq)
+}
+
 #[derive(Component)]
 struct TerrainPart;
 
@@ -649,7 +685,7 @@ fn spawn_overlays(
     let moves = state.selected_moves();
     for mv in &moves {
         let capture = state.game.pos.get(mv.to).is_some() || mv.kind == MoveKind::EnPassant;
-        if capture {
+        if capture || mv.kind == MoveKind::Clear {
             paint.mark(mv.to, "ov_capture", 0.95, Color::WHITE);
         } else if mv.kind == MoveKind::Cave {
             paint.mark(mv.to, "ov_ring", 0.7, Color::WHITE);

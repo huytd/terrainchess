@@ -194,6 +194,7 @@ impl Match {
                 let victim_sq = Sq::new(mv.to.x, mv.from.y);
                 self.pos.get(victim_sq).map(|p| (victim_sq, p))
             }
+            MoveKind::Clear => None,
             _ => self.pos.get(mv.to).map(|p| (mv.to, p)),
         };
 
@@ -217,13 +218,19 @@ impl Match {
             }
         }
 
+        if mv.kind == MoveKind::Clear {
+            self.terrain.get_mut(mv.to).feature = Feature::None;
+        }
+
         self.pos.make_move(mv);
         if let Some((push_sq, victim_piece)) = veteran_pushed {
             self.pos.set(push_sq, Some(victim_piece));
         }
 
         // Collect pickup if the move ended on a pickup square
-        if let Some(idx) = self.pickups.iter().position(|(sq, _)| *sq == mv.to) {
+        if mv.kind != MoveKind::Clear
+            && let Some(idx) = self.pickups.iter().position(|(sq, _)| *sq == mv.to)
+        {
             let (_, pickup) = self.pickups.swap_remove(idx);
             match pickup {
                 Pickup::SpellCharge(spell) => {

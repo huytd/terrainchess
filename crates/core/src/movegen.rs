@@ -7,7 +7,7 @@ use crate::board::{DIAG, KING, KNIGHT, ORTHO, Sq};
 use crate::piece::{MoveProfile, Piece, PieceKind, Side};
 use crate::position::{KINGSIDE, Position, QUEENSIDE};
 use crate::rules::Rules;
-use crate::terrain::{Terrain, TileKind};
+use crate::terrain::{Feature, Terrain, TileKind};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum MoveKind {
@@ -20,6 +20,7 @@ pub enum MoveKind {
     },
     /// Tunnel hop from one cave entrance to a linked one.
     Cave,
+    Clear,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -35,8 +36,11 @@ impl Move {
         Move { from, to, kind, promotion: None }
     }
 
-    /// Long algebraic form, e.g. `e2e4`, `e7e8q`.
+    /// Long algebraic form, e.g. `e2e4`, `e7e8q`, or `e2e3x` for clear blocker.
     pub fn uci(&self) -> String {
+        if self.kind == MoveKind::Clear {
+            return format!("{}{}x", self.from.name(), self.to.name());
+        }
         let promo = self.promotion.map(|k| k.letter().to_string()).unwrap_or_default();
         format!("{}{}{}", self.from.name(), self.to.name(), promo)
     }
@@ -265,6 +269,15 @@ impl Ctx<'_> {
             }
         };
 
+        // Clear blocker: destroy an obstacle on any of the three forward squares.
+        for dx in [-1, 0, 1] {
+            if let Some(to) = from.offset(dx, fwd, size)
+                && matches!(self.terrain.get(to).feature, Feature::Obstacle(_))
+            {
+                out.push(Move::new(from, to, MoveKind::Clear));
+            }
+        }
+
         if let Some(one) = from.offset(0, fwd, size)
             && pos.get(one).is_none()
             && self.can_step(prof, from, one)
@@ -356,7 +369,14 @@ impl Ctx<'_> {
         pseudo.retain(|&mv| {
             let mut next = pos.clone();
             next.make_move(mv);
-            !self.in_check(&next, side)
+            if mv.kind == MoveKind::Clear {
+                let mut temp_terrain = self.terrain.clone();
+                temp_terrain.get_mut(mv.to).feature = Feature::None;
+                let temp_ctx = Ctx { terrain: &temp_terrain, rules: self.rules };
+                !temp_ctx.in_check(&next, side)
+            } else {
+                !self.in_check(&next, side)
+            }
         });
         pseudo
     }
@@ -375,7 +395,14 @@ impl Ctx<'_> {
             .map(|mv| {
                 let mut next = pos.clone();
                 next.make_move(mv);
-                self.perft(&next, depth - 1)
+                if mv.kind == MoveKind::Clear {
+                    let mut temp_terrain = self.terrain.clone();
+                    temp_terrain.get_mut(mv.to).feature = Feature::None;
+                    let temp_ctx = Ctx { terrain: &temp_terrain, rules: self.rules };
+                    temp_ctx.perft(&next, depth - 1)
+                } else {
+                    self.perft(&next, depth - 1)
+                }
             })
             .sum()
     }
@@ -388,7 +415,8 @@ impl Ctx<'_> {
         pos.side_to_move = piece.side;
         let mut out = Vec::new();
         self.pseudo_legal(&pos, &mut out);
-        let mut targets: Vec<Sq> = out.into_iter().map(|m| m.to).collect();
+        let mut targets: Vec<Sq> =
+            out.into_iter().filter(|m| m.kind != MoveKind::Clear).map(|m| m.to).collect();
         if piece.kind == PieceKind::Pawn {
             // Diagonals count too: a capture may open them.
             self.for_each_attack(&pos, from, piece, &mut |sq| {

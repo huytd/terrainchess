@@ -22,6 +22,7 @@ pub struct Position {
     pub halfmove_clock: u16,
     pub fullmove: u16,
     pub shield: Option<(Sq, Side)>,
+    pub cleared: Vec<Sq>,
 }
 
 impl Position {
@@ -35,6 +36,7 @@ impl Position {
             halfmove_clock: 0,
             fullmove: 1,
             shield: None,
+            cleared: Vec::new(),
         }
     }
 
@@ -149,6 +151,24 @@ impl Position {
         let side = self.side_to_move;
         let s = side.index();
         let piece = self.get(mv.from).expect("move from an empty square");
+
+        if mv.kind == MoveKind::Clear {
+            self.en_passant = None;
+            if !self.cleared.contains(&mv.to) {
+                self.cleared.push(mv.to);
+                self.cleared.sort();
+            }
+            self.halfmove_clock += 1;
+            if side == Side::Black {
+                self.fullmove += 1;
+            }
+            self.side_to_move = side.opposite();
+            if self.shield.is_some_and(|(_, s)| s == self.side_to_move) {
+                self.shield = None;
+            }
+            return;
+        }
+
         let captured = self.get(mv.to);
 
         self.en_passant = None;
@@ -164,6 +184,7 @@ impl Position {
                 self.set(rook_to, rook);
             }
             MoveKind::Normal | MoveKind::Cave => {}
+            MoveKind::Clear => unreachable!(),
         }
         let placed = match mv.promotion {
             Some(kind) => Piece::new(kind, side),
@@ -217,6 +238,9 @@ impl Position {
         }
         if let Some((sq, s)) = self.shield {
             h ^= mix(50_000 + s.index() as u64 * 2048 + sq.index(self.size) as u64);
+        }
+        for sq in &self.cleared {
+            h ^= mix(60_000 + sq.index(self.size) as u64);
         }
         h
     }

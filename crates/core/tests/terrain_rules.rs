@@ -1,7 +1,7 @@
 //! One fixture per terrain rule in PLAN.md §4.
 
 use tc_core::movegen::Ctx;
-use tc_core::{Feature, Move, MoveKind, Position, Rules, Sq, Terrain, TileKind};
+use tc_core::{Feature, Match, Move, MoveKind, Obstacle, PieceKind, Position, Rules, Sq, Terrain, TileKind};
 
 struct Fixture {
     terrain: Terrain,
@@ -35,6 +35,13 @@ impl Fixture {
     fn cave(mut self, squares: &[&str], link: u8) -> Self {
         for s in squares {
             self.terrain.get_mut(sq(s)).feature = Feature::Cave(link);
+        }
+        self
+    }
+
+    fn obstacle(mut self, squares: &[&str], obstacle: Obstacle) -> Self {
+        for s in squares {
+            self.terrain.get_mut(sq(s)).feature = Feature::Obstacle(obstacle);
         }
         self
     }
@@ -232,4 +239,87 @@ fn castling_needs_flat_clear_squares() {
     assert_eq!(castles(&Fixture::new(fen)), ["g1", "c1"]);
     assert_eq!(castles(&Fixture::new(fen).h(&["b1"], 1)), ["g1"]);
     assert_eq!(castles(&Fixture::new(fen).kind(&["f1"], TileKind::ShallowWater)), ["c1"]);
+}
+
+#[test]
+fn pawn_clears_rock_ahead_and_diagonally_ahead() {
+    let f = Fixture::new("7k/8/8/8/8/8/4P3/7K w - - 0 1")
+        .obstacle(&["e3"], Obstacle::Rock)
+        .obstacle(&["d3"], Obstacle::Rock)
+        .obstacle(&["f3"], Obstacle::Tree);
+    let moves = f.ctx().legal_moves(&f.pos);
+    let clears: Vec<String> = moves
+        .into_iter()
+        .filter(|m| m.from == sq("e2") && m.kind == MoveKind::Clear)
+        .map(|m| m.uci())
+        .collect();
+    assert!(clears.contains(&"e2e3x".to_string()));
+    assert!(clears.contains(&"e2d3x".to_string()));
+    assert!(clears.contains(&"e2f3x".to_string()));
+    assert_eq!(clears.len(), 3);
+}
+
+#[test]
+fn cannot_clear_behind_or_sideways() {
+    let f = Fixture::new("7k/8/8/8/8/4P3/8/7K w - - 0 1").obstacle(&["e2", "d3", "f3"], Obstacle::Rock);
+    let moves = f.ctx().legal_moves(&f.pos);
+    let clears: Vec<Move> =
+        moves.into_iter().filter(|m| m.from == sq("e3") && m.kind == MoveKind::Clear).collect();
+    assert!(clears.is_empty(), "cannot clear behind or sideways: {clears:?}");
+
+    let f = Fixture::new("7k/8/4p3/8/8/8/8/7K b - - 0 1").obstacle(&["e7", "d6", "f6"], Obstacle::Rock);
+    let moves = f.ctx().legal_moves(&f.pos);
+    let clears: Vec<Move> =
+        moves.into_iter().filter(|m| m.from == sq("e6") && m.kind == MoveKind::Clear).collect();
+    assert!(clears.is_empty(), "black pawn cannot clear behind or sideways: {clears:?}");
+}
+
+#[test]
+fn non_pawns_cannot_clear() {
+    let f = Fixture::new("7k/8/8/3NBR2/3b1q2/3r1k2/8/7K w - - 0 1").obstacle(&["d4"], Obstacle::Rock);
+    let moves = f.ctx().legal_moves(&f.pos);
+    assert!(!moves.iter().any(|m| m.kind == MoveKind::Clear));
+}
+
+#[test]
+fn clearing_makes_square_walkable_for_following_move() {
+    let mut terrain = Terrain::flat(8);
+    terrain.get_mut(sq("e3")).feature = Feature::Obstacle(Obstacle::Rock);
+    let rules = Rules::standard(8);
+    let pos = Position::from_fen("7k/8/8/8/8/8/4P3/7K w - - 0 1").unwrap();
+    let mut m = Match::new(terrain, rules, pos);
+
+    // Obstacle is present, pawn cannot move to e3
+    assert!(
+        !m.legal_moves()
+            .iter()
+            .any(|mv| mv.from == sq("e2") && mv.to == sq("e3") && mv.kind == MoveKind::Normal)
+    );
+
+    // Clear the rock
+    let clear_move = Move::new(sq("e2"), sq("e3"), MoveKind::Clear);
+    assert_eq!(clear_move.uci(), "e2e3x");
+    m.play(clear_move).unwrap();
+    assert_eq!(m.terrain.get(sq("e3")).feature, Feature::None);
+
+    // Black makes a king move
+    m.play(Move::new(sq("h8"), sq("g8"), MoveKind::Normal)).unwrap();
+
+    // Now e3 is walkable for the pawn
+    let walk_move = Move::new(sq("e2"), sq("e3"), MoveKind::Normal);
+    assert!(m.legal_moves().contains(&walk_move));
+    m.play(walk_move).unwrap();
+    assert_eq!(m.pos.get(sq("e3")).map(|p| p.kind), Some(PieceKind::Pawn));
+}
+
+#[test]
+fn clearing_is_illegal_when_it_leaves_king_in_check() {
+    let f = Fixture::new("7k/8/8/4r3/8/8/3P4/4K3 w - - 0 1").obstacle(&["e3"], Obstacle::Rock);
+    let moves = f.ctx().legal_moves(&f.pos);
+    let clear_e3 = Move::new(sq("d2"), sq("e3"), MoveKind::Clear);
+    assert!(!moves.contains(&clear_e3), "clearing e3 would open e-file and expose king to check");
+
+    let f = Fixture::new("7k/8/8/r7/8/8/3P4/4K3 w - - 0 1").obstacle(&["e3"], Obstacle::Rock);
+    let moves = f.ctx().legal_moves(&f.pos);
+    assert!(moves.contains(&clear_e3), "clearing e3 is legal when not exposing king to check");
 }

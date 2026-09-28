@@ -107,6 +107,9 @@ fn play_game_events_sfx(
             GameEvent::Check { .. } => {
                 play_sound(&mut commands, &sfx.check, muted.0);
             }
+            GameEvent::Cleared { .. } => {
+                play_sound(&mut commands, &sfx.capture, muted.0);
+            }
             GameEvent::Promoted { .. } => {}
         }
     }

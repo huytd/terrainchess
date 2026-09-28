@@ -404,6 +404,12 @@ pub fn process_game_events(state: Res<GameState>, mut spawner: FxSpawner) {
                 let spot = square_top(*king, state.game.terrain.height(*king));
                 spawner.spawn_sparkle(spot + Vec3::Y * 1.3);
             }
+            GameEvent::Cleared { at } => {
+                let spot = square_top(*at, state.game.terrain.height(*at));
+                let pos = spot + Vec3::Y * 0.2;
+                spawner.spawn_dust(pos);
+                spawner.spawn_smoke(pos);
+            }
             GameEvent::Pickup { .. } | GameEvent::Selected { .. } => {}
         }
     }

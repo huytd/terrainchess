@@ -6,7 +6,7 @@
 
 use tc_core::movegen::Ctx;
 use tc_core::rng::Rng;
-use tc_core::{Match, Move, MoveKind, Position, Rules, Terrain};
+use tc_core::{Feature, Match, Move, MoveKind, Position, Rules, Terrain};
 
 use crate::Limits;
 use crate::eval::{evaluate, piece_value};
@@ -182,7 +182,18 @@ impl SearchJob {
         self.path.clear();
         self.path.push(self.root.hash());
         let depth = self.depth as i32 - 1;
-        -self.negamax(&next, depth, -INF, -self.alpha, 1, clock)
+        let old_feature = if mv.kind == MoveKind::Clear {
+            let f = self.terrain.get(mv.to).feature;
+            self.terrain.get_mut(mv.to).feature = Feature::None;
+            Some(f)
+        } else {
+            None
+        };
+        let score = -self.negamax(&next, depth, -INF, -self.alpha, 1, clock);
+        if let Some(f) = old_feature {
+            self.terrain.get_mut(mv.to).feature = f;
+        }
+        score
     }
 
     fn ctx(&self) -> Ctx<'_> {
@@ -252,11 +263,24 @@ impl SearchJob {
         for mv in moves {
             let mut next = pos.clone();
             next.make_move(mv);
+            let old_feature = if mv.kind == MoveKind::Clear {
+                let f = self.terrain.get(mv.to).feature;
+                self.terrain.get_mut(mv.to).feature = Feature::None;
+                Some(f)
+            } else {
+                None
+            };
             if self.ctx().in_check(&next, side) {
+                if let Some(f) = old_feature {
+                    self.terrain.get_mut(mv.to).feature = f;
+                }
                 continue;
             }
             legal += 1;
             let score = -self.negamax(&next, depth - 1, -beta, -alpha, ply + 1, clock);
+            if let Some(f) = old_feature {
+                self.terrain.get_mut(mv.to).feature = f;
+            }
             if self.aborted {
                 self.path.pop();
                 return 0;

@@ -14,6 +14,7 @@ pub enum GameEvent {
     Check { king: Sq },
     Pickup { at: Sq },
     Selected { sq: Sq },
+    Cleared { at: Sq },
 }
 
 #[derive(Resource)]
@@ -313,26 +314,30 @@ impl GameState {
         if self.game.play(mv).is_ok() {
             self.undo.push(before.clone());
             self.outcome = self.game.outcome();
-            self.animate = Some(mv);
+            self.animate = if mv.kind == tc_core::MoveKind::Clear { None } else { Some(mv) };
 
-            if before.terrain != self.game.terrain {
+            if before.terrain != self.game.terrain || mv.kind == tc_core::MoveKind::Clear {
                 self.terrain_dirty = true;
             }
 
-            if let Some((at, by_side)) = capture_info {
-                self.events.push(GameEvent::Captured { at, by_side });
-            }
+            if mv.kind == tc_core::MoveKind::Clear {
+                self.events.push(GameEvent::Cleared { at: mv.to });
+            } else {
+                if let Some((at, by_side)) = capture_info {
+                    self.events.push(GameEvent::Captured { at, by_side });
+                }
 
-            let to_height = self.game.terrain.height(mv.to);
-            let landed_height_change = from_height != to_height;
-            self.events.push(GameEvent::Moved { to: mv.to, landed_height_change });
+                let to_height = self.game.terrain.height(mv.to);
+                let landed_height_change = from_height != to_height;
+                self.events.push(GameEvent::Moved { to: mv.to, landed_height_change });
 
-            if let Some(at) = pickup_at {
-                self.events.push(GameEvent::Pickup { at });
-            }
+                if let Some(at) = pickup_at {
+                    self.events.push(GameEvent::Pickup { at });
+                }
 
-            if mv.promotion.is_some() {
-                self.events.push(GameEvent::Promoted { at: mv.to });
+                if mv.promotion.is_some() {
+                    self.events.push(GameEvent::Promoted { at: mv.to });
+                }
             }
 
             if self.game.in_check()

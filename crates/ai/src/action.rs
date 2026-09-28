@@ -46,7 +46,12 @@ pub fn choose_action_with_clock(m: &Match, limits: Limits, clock: &dyn Fn() -> f
         info.score
     } else if let Some(mv) = best_mv {
         let mut next = m.clone();
-        next.pos.make_move(mv);
+        if next.play(mv).is_err() {
+            next.pos.make_move(mv);
+            if mv.kind == tc_core::MoveKind::Clear {
+                next.terrain.get_mut(mv.to).feature = tc_core::Feature::None;
+            }
+        }
         let rem = (limits.time_ms - (clock() - t0)).max(10.0);
         let (_, reply) = search_blocking(&next, Limits::depth(2, rem), clock);
         -reply.score
