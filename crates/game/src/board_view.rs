@@ -7,9 +7,12 @@
 //! World axes: +X is east (files), -Z is north (ranks), +Y is up. One square is one unit.
 
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::visibility::RenderLayers;
-use bevy::mesh::{Indices, PrimitiveTopology};
+use bevy::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
+use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline};
 use bevy::prelude::*;
+use bevy::render::render_resource::{
+    AsBindGroup, CompareFunction, RenderPipelineDescriptor, SpecializedMeshPipelineError,
+};
 use bevy::window::PrimaryWindow;
 use std::collections::HashMap;
 use tc_core::movegen::Ctx;
@@ -26,8 +29,28 @@ pub const LEVEL: f32 = 0.4;
 const BASE: f32 = 0.3;
 /// World size of one sprite pixel (ground tiles are 32 px across a square).
 const PX: f32 = 1.0 / 30.0;
-/// Render layer of move markers, drawn by the marker camera on top of everything.
-pub const MARKER_LAYER: RenderLayers = RenderLayers::layer(1);
+/// Makes a material skip the depth test, so move markers stay visible behind pieces and
+/// taller columns. (A second camera layered over the scene did the same, but some WebGL2
+/// drivers lost the scene underneath.)
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct OnTop {}
+
+impl MaterialExtension for OnTop {
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if let Some(depth) = descriptor.depth_stencil.as_mut() {
+            depth.depth_compare = Some(CompareFunction::Always);
+            depth.depth_write_enabled = Some(false);
+        }
+        Ok(())
+    }
+}
+
+type MarkerMaterial = ExtendedMaterial<StandardMaterial, OnTop>;
 /// Overlays float this far above a top face to avoid z-fighting.
 const LIFT_TINT: f32 = 0.004;
 const LIFT_MARK: f32 = 0.008;
@@ -428,6 +451,7 @@ fn piece_spot(state: &GameState, sq: Sq) -> Vec3 {
     square_top(sq, state.game.terrain.height(sq))
 }
 
+#[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn spawn_pieces(
     mut commands: Commands,
     mut state: ResMut<GameState>,
@@ -435,6 +459,7 @@ fn spawn_pieces(
     mut look: ResMut<Look>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
+    mut markers: ResMut<Assets<MarkerMaterial>>,
     old: Query<Entity, Or<(With<PieceSprite>, With<Overlay>)>>,
 ) {
     if !state.pieces_dirty {
@@ -475,7 +500,7 @@ fn spawn_pieces(
         }
     }
 
-    spawn_overlays(&mut commands, &state, &atlas, &mut meshes, &mut materials);
+    spawn_overlays(&mut commands, &state, &atlas, &mut meshes, &mut materials, &mut markers);
 }
 
 /// Flat highlights and markers lying on top faces.
@@ -485,27 +510,29 @@ struct OverlayPainter<'a, 'w, 's> {
     atlas: &'a Atlas,
     meshes: &'a mut Assets<Mesh>,
     materials: &'a mut Assets<StandardMaterial>,
+    markers: &'a mut Assets<MarkerMaterial>,
 }
 
 impl OverlayPainter<'_, '_, '_> {
     fn quad(&mut self, sq: Sq, sprite: Option<&str>, size: f32, color: Color, lift: f32) {
-        let material = self.materials.add(StandardMaterial {
+        let base = StandardMaterial {
             base_color: color,
             base_color_texture: sprite.map(|_| self.atlas.image.clone()),
             unlit: true,
             alpha_mode: AlphaMode::Blend,
             ..default()
-        });
+        };
         let uv = sprite.map(|s| full_uv(self.atlas.uv(s))).unwrap_or([[0.0; 2]; 4]);
         let top = square_top(sq, self.state.game.terrain.height(sq)) + Vec3::Y * lift;
         let mut q = Quads::default();
         q.add(flat(top, Vec2::splat(size)), uv, 1.0);
-        let mut e =
-            self.commands.spawn((Overlay, Mesh3d(self.meshes.add(q.mesh())), MeshMaterial3d(material)));
+        let mut e = self.commands.spawn((Overlay, Mesh3d(self.meshes.add(q.mesh()))));
         if sprite.is_some() {
-            // Markers go to the marker camera, which draws over the scene so a column or
-            // piece in front never hides where you can move.
-            e.insert(MARKER_LAYER);
+            // Markers draw over everything so a column or piece in front never hides
+            // where you can move; tints stay on the ground.
+            e.insert(MeshMaterial3d(self.markers.add(MarkerMaterial { base, extension: OnTop {} })));
+        } else {
+            e.insert(MeshMaterial3d(self.materials.add(base)));
         }
     }
 
@@ -525,8 +552,9 @@ fn spawn_overlays(
     atlas: &Atlas,
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
+    markers: &mut Assets<MarkerMaterial>,
 ) {
-    let mut paint = OverlayPainter { commands, state, atlas, meshes, materials };
+    let mut paint = OverlayPainter { commands, state, atlas, meshes, materials, markers };
     let t = &state.game.terrain;
     if let Some(last) = state.game.moves.last() {
         for sq in [last.from, last.to] {
@@ -671,15 +699,18 @@ pub struct BoardViewPlugin;
 
 impl Plugin for BoardViewPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ShowHeights>().add_systems(Startup, setup_look).add_systems(
-            Update,
-            (
-                (spawn_terrain, spawn_pieces).chain(),
-                animate_water,
-                animate_hops,
-                face_camera,
-                place_height_badges,
-            ),
-        );
+        app.add_plugins(MaterialPlugin::<MarkerMaterial>::default())
+            .init_resource::<ShowHeights>()
+            .add_systems(Startup, setup_look)
+            .add_systems(
+                Update,
+                (
+                    (spawn_terrain, spawn_pieces).chain(),
+                    animate_water,
+                    animate_hops,
+                    face_camera,
+                    place_height_badges,
+                ),
+            );
     }
 }

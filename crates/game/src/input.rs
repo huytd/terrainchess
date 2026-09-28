@@ -13,7 +13,7 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::atlas::Atlas;
-use crate::board_view::{MARKER_LAYER, ShowHeights, board_center, pick_piece, pick_square, square_top};
+use crate::board_view::{ShowHeights, board_center, pick_piece, pick_square, square_top};
 use tc_core::Side;
 
 use crate::game::{GameState, MAX_AI_LEVEL};
@@ -58,13 +58,8 @@ struct Gesture {
     dragged: bool,
 }
 
-/// The scene camera, used for picking.
 #[derive(Component)]
 pub struct MainCamera;
-
-/// Both cameras (scene and markers) follow the orbit.
-#[derive(Component)]
-struct OrbitCamera;
 
 /// Where the camera looks and from which side. The camera circles `focus` at a fixed
 /// tilt; `yaw` eases toward `target_yaw` so turns animate.
@@ -123,23 +118,11 @@ impl Orbit {
 struct FitCamera(Option<(Vec2, u64, u8)>);
 
 fn setup_camera(mut commands: Commands) {
-    let projection = || Projection::Perspective(PerspectiveProjection { fov: FOV, ..default() });
     // Tonemapping off keeps the pixel-art colours exact; no MSAA keeps edges crisp.
     commands.spawn((
         Camera3d::default(),
         MainCamera,
-        OrbitCamera,
-        projection(),
-        Tonemapping::None,
-        Msaa::Off,
-    ));
-    // Move markers draw last, over the scene, with a fresh depth buffer.
-    commands.spawn((
-        Camera3d::default(),
-        Camera { order: 1, clear_color: ClearColorConfig::None, ..default() },
-        OrbitCamera,
-        MARKER_LAYER,
-        projection(),
+        Projection::Perspective(PerspectiveProjection { fov: FOV, ..default() }),
         Tonemapping::None,
         Msaa::Off,
     ));
@@ -174,17 +157,14 @@ fn apply_orbit(
     time: Res<Time>,
     window: Single<&Window, With<PrimaryWindow>>,
     mut orbit: ResMut<Orbit>,
-    mut cameras: Query<&mut Transform, With<OrbitCamera>>,
+    mut camera: Single<&mut Transform, With<MainCamera>>,
 ) {
     orbit.view_h = window.height().max(1.0);
     let ease = (time.delta_secs() * 12.0).min(1.0);
     orbit.yaw += (orbit.target_yaw - orbit.yaw) * ease;
     let dir = Vec3::new(orbit.yaw.sin() * PITCH.cos(), PITCH.sin(), orbit.yaw.cos() * PITCH.cos());
-    let view =
+    **camera =
         Transform::from_translation(orbit.focus + dir * orbit.distance).looking_at(orbit.focus, Vec3::Y);
-    for mut tf in &mut cameras {
-        *tf = view;
-    }
 }
 
 fn mouse_camera(

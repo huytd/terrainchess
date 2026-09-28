@@ -10,20 +10,27 @@ mod game;
 mod hud;
 mod input;
 
+use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
 
 fn main() {
     App::new()
-        .add_plugins(DefaultPlugins.set(ImagePlugin::default_nearest()).set(WindowPlugin {
-            primary_window: Some(Window {
-                title: "Terrain Chess".into(),
-                canvas: Some("#bevy".into()),
-                fit_canvas_to_parent: true,
-                prevent_default_event_handling: true,
-                ..default()
-            }),
-            ..default()
-        }))
+        .add_plugins(
+            DefaultPlugins
+                .set(ImagePlugin::default_nearest())
+                // Assets have no .meta files; don't request them (they 404 on the web).
+                .set(AssetPlugin { meta_check: AssetMetaCheck::Never, ..default() })
+                .set(WindowPlugin {
+                    primary_window: Some(Window {
+                        title: "Terrain Chess".into(),
+                        canvas: Some("#bevy".into()),
+                        fit_canvas_to_parent: true,
+                        prevent_default_event_handling: true,
+                        ..default()
+                    }),
+                    ..default()
+                }),
+        )
         .insert_resource(ClearColor(Color::srgb_u8(0x1A, 0x1C, 0x2C)))
         .add_plugins((
             atlas::AtlasPlugin,
