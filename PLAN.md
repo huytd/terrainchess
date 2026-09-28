@@ -189,9 +189,9 @@ Target: **modern indie pixel art** like the grassland screenshot reference (bold
 | M3 | 2D board rendering (placeholder coloured tiles + letters for pieces) + height/cliff drawing + camera + picking + playable hotseat | Done | Two humans can play a full game on generated terrain |
 | M4 | AI opponent | Done | It plays legal terrain moves within a time budget, also on the web |
 | M5 | Roguelike loop: floors, reward draft, items, spells, pickups, save/reset | Done | A complete run can be won or lost, and the save persists and is wiped when you lose |
-| M6 | 16×16 / 32×32 armies and scaling, balance pass | | All sizes can be played at a steady 60 fps on the web |
-| M7 | Art & juice: generate the atlas from SPRITES.md, run the processing script, add autotiling, VFX, audio, menus | Partly done (3D pixel-art board, environment art) | It matches the look of the pixel-art reference image |
-| M8 | Web deploy (static hosting) + size optimisation (`wasm-opt`, `opt-level="z"` for wasm) | Partly done (web deploy with wasm-opt) | A public URL loads in under 10 s |
+| M6 | 16×16 / 32×32 armies and scaling, balance pass | Done (60 fps at all sizes incl. AI turns; 8×8 self-play 7–3–10) | All sizes can be played at a steady 60 fps on the web |
+| M7 | Art & juice: generate the atlas from SPRITES.md, run the processing script, add autotiling, VFX, audio, menus | Done (3D pixel-art board and island, environment art, water foam, VFX, synthesized SFX, title menu) | It matches the look of the pixel-art reference image |
+| M8 | Web deploy (static hosting) + size optimisation (`wasm-opt`, `opt-level="z"` for wasm) | Done (Vercel; 6.2 MB brotli, starts in 1.3 s, 3.4 s at 20 Mbps) | A public URL loads in under 10 s |
 
 ## 10. Risks
 
