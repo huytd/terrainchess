@@ -12,8 +12,6 @@ pub struct GameState {
     /// Earlier states, for undo in hotseat play.
     pub undo: Vec<Match>,
     pub selected: Option<Sq>,
-    /// A promotion waiting for the player to choose a piece.
-    pub pending_promotion: Option<Vec<Move>>,
     pub outcome: Option<Outcome>,
     /// Set when the board layout changes (new game), so the view rebuilds terrain.
     pub terrain_dirty: bool,
@@ -39,7 +37,6 @@ impl GameState {
             game,
             undo: Vec::new(),
             selected: None,
-            pending_promotion: None,
             outcome: None,
             terrain_dirty: true,
             pieces_dirty: true,
@@ -66,7 +63,6 @@ impl GameState {
             self.animate = Some(mv);
         }
         self.selected = None;
-        self.pending_promotion = None;
         self.pieces_dirty = true;
     }
 
@@ -80,7 +76,6 @@ impl GameState {
         }
         self.outcome = None;
         self.selected = None;
-        self.pending_promotion = None;
         self.animate = None;
         self.pieces_dirty = true;
     }

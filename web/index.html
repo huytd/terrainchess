@@ -7,7 +7,7 @@
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="theme-color" content="#1a1c2c" />
     <title>Terrain Chess</title>
-    <link data-trunk rel="rust" href="../crates/game/Cargo.toml" data-bin="terrainchess" data-cargo-profile="wasm-release" />
+    <link data-trunk rel="rust" href="../crates/game/Cargo.toml" data-bin="terrainchess" data-cargo-profile="wasm-release" data-wasm-opt="z" data-wasm-opt-params="--all-features" />
     <!-- Only the processed atlas ships; the source sheet stays out of the build. -->
     <link data-trunk rel="copy-file" href="../assets/atlas.png" data-target-path="assets" />
     <style>

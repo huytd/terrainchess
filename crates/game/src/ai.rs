@@ -13,18 +13,12 @@ const SLICE_MS: f64 = 8.0;
 const THINK_DELAY_SECS: f32 = 0.35;
 
 #[derive(Resource)]
-pub struct Thinker {
+struct Thinker {
     job: Option<SearchJob>,
     /// Position the job was started for: (seed, plies played).
     key: (u64, usize),
     waited: f32,
     epoch: Instant,
-}
-
-impl Thinker {
-    pub fn is_thinking(&self) -> bool {
-        self.job.is_some()
-    }
 }
 
 impl Default for Thinker {
@@ -35,7 +29,7 @@ impl Default for Thinker {
 
 fn think(time: Res<Time>, mut thinker: ResMut<Thinker>, mut state: ResMut<GameState>) {
     let key = (state.seed, state.game.moves.len());
-    if !state.ai_to_move() || state.pending_promotion.is_some() {
+    if !state.ai_to_move() {
         if thinker.job.is_some() {
             thinker.job = None;
         }

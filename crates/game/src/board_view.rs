@@ -13,7 +13,6 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{
     AsBindGroup, CompareFunction, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
-use bevy::window::PrimaryWindow;
 use std::collections::HashMap;
 use tc_core::movegen::Ctx;
 use tc_core::terrain::TileKind;
@@ -146,14 +145,6 @@ struct WaterFrame(usize);
 /// Upright card that turns about the vertical axis to face the camera.
 #[derive(Component)]
 struct Billboard;
-
-/// UI label with a square's height, kept over the square on screen.
-#[derive(Component)]
-struct HeightBadge(Vec3);
-
-/// Height badges stay on while set (toolbar / T); holding Alt shows them briefly.
-#[derive(Resource, Default)]
-pub struct ShowHeights(pub bool);
 
 /// Hop from one spot to another along a small arc.
 #[derive(Component)]
@@ -374,21 +365,6 @@ fn spawn_terrain(
             }
             _ => {}
         }
-
-        commands.spawn((
-            TerrainPart,
-            HeightBadge(top + Vec3::Y * 0.02),
-            Node {
-                position_type: PositionType::Absolute,
-                padding: UiRect::horizontal(Val::Px(3.0)),
-                ..default()
-            },
-            BackgroundColor(Color::srgba(0.1, 0.11, 0.17, 0.75)),
-            Text::new(tile.height.to_string()),
-            TextFont { font_size: 12.0.into(), ..default() },
-            TextColor(Color::WHITE),
-            Visibility::Hidden,
-        ));
     }
     let material = MeshMaterial3d(look.terrain.clone());
     commands.spawn((TerrainPart, Mesh3d(meshes.add(solid.mesh())), material.clone()));
@@ -669,48 +645,15 @@ fn face_camera(
     }
 }
 
-fn place_height_badges(
-    keys: Res<ButtonInput<KeyCode>>,
-    pinned: Res<ShowHeights>,
-    window: Single<&Window, With<PrimaryWindow>>,
-    camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
-    mut badges: Query<(&HeightBadge, &mut Node, &ComputedNode, &mut Visibility)>,
-) {
-    let show = pinned.0 || keys.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
-    let (cam, gtf) = *camera;
-    let scale = window.scale_factor();
-    for (badge, mut node, computed, mut v) in &mut badges {
-        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
-        if *v != want {
-            *v = want;
-        }
-        if !show {
-            continue;
-        }
-        if let Ok(p) = cam.world_to_viewport(gtf, badge.0) {
-            let half = computed.size() / scale / 2.0;
-            node.left = Val::Px(p.x - half.x);
-            node.top = Val::Px(p.y - half.y);
-        }
-    }
-}
-
 pub struct BoardViewPlugin;
 
 impl Plugin for BoardViewPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(MaterialPlugin::<MarkerMaterial>::default())
-            .init_resource::<ShowHeights>()
             .add_systems(Startup, setup_look)
             .add_systems(
                 Update,
-                (
-                    (spawn_terrain, spawn_pieces).chain(),
-                    animate_water,
-                    animate_hops,
-                    face_camera,
-                    place_height_badges,
-                ),
+                ((spawn_terrain, spawn_pieces).chain(), animate_water, animate_hops, face_camera),
             );
     }
 }

@@ -7,7 +7,6 @@ mod ai;
 mod atlas;
 mod board_view;
 mod game;
-mod hud;
 mod input;
 
 use bevy::asset::AssetMetaCheck;
@@ -38,7 +37,6 @@ fn main() {
             game::GamePlugin,
             board_view::BoardViewPlugin,
             input::InputPlugin,
-            hud::HudPlugin,
         ))
         .run();
 }

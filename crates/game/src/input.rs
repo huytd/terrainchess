@@ -13,8 +13,8 @@ use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
 use crate::atlas::Atlas;
-use crate::board_view::{ShowHeights, board_center, pick_piece, pick_square, square_top};
-use tc_core::Side;
+use crate::board_view::{board_center, pick_piece, pick_square, square_top};
+use tc_core::{PieceKind, Side};
 
 use crate::game::{GameState, MAX_AI_LEVEL};
 
@@ -33,7 +33,7 @@ const PITCH: f32 = 35.0 * PI / 180.0;
 /// Starting view: from White's side with a1 as the nearest corner.
 const START_YAW: f32 = -FRAC_PI_4;
 
-/// Game commands shared by the keyboard and the HUD toolbar.
+/// Game commands from the keyboard.
 #[derive(Message, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Undo,
@@ -42,7 +42,6 @@ pub enum Action {
     ToggleAi,
     SwapSides,
     AiLevel(i8),
-    ToggleHeights,
     Deselect,
     /// Turn the view by this many eighths of a full turn.
     Turn(i8),
@@ -52,8 +51,6 @@ pub enum Action {
 #[derive(Resource, Default)]
 struct Gesture {
     active: bool,
-    /// Started on a HUD button, so it never reaches the board.
-    on_ui: bool,
     /// Moved past the tap slop or used a second finger: not a tap.
     dragged: bool,
 }
@@ -205,7 +202,6 @@ fn mouse_camera(
 
 fn touch_gestures(
     touches: Res<Touches>,
-    buttons: Query<&Interaction>,
     mut gesture: ResMut<Gesture>,
     mut orbit: ResMut<Orbit>,
     mut state: ResMut<GameState>,
@@ -213,16 +209,14 @@ fn touch_gestures(
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
 ) {
     if touches.any_just_pressed() && !gesture.active {
-        // UI interaction is updated before Update, so a press on a button shows here.
-        let on_ui = buttons.iter().any(|i| *i != Interaction::None);
-        *gesture = Gesture { active: true, on_ui, ..default() };
+        *gesture = Gesture { active: true, ..default() };
     }
     if !gesture.active {
         return;
     }
     let down: Vec<_> = touches.iter().collect();
     match down.as_slice() {
-        [t] if !gesture.on_ui => {
+        [t] => {
             if t.distance().length() > TAP_SLOP {
                 gesture.dragged = true;
             }
@@ -243,7 +237,7 @@ fn touch_gestures(
         _ => {}
     }
     if down.is_empty() {
-        let tap = touches.iter_just_released().next().filter(|_| !gesture.dragged && !gesture.on_ui);
+        let tap = touches.iter_just_released().next().filter(|_| !gesture.dragged);
         if let Some(t) = tap {
             tap_board(&mut state, &atlas, *camera, orbit.px_per_unit(), t.position());
         }
@@ -253,14 +247,13 @@ fn touch_gestures(
 
 fn click_board(
     mouse: Res<ButtonInput<MouseButton>>,
-    buttons: Query<&Interaction>,
     orbit: Res<Orbit>,
     mut state: ResMut<GameState>,
     atlas: Res<Atlas>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
 ) {
-    if !mouse.just_pressed(MouseButton::Left) || buttons.iter().any(|i| *i != Interaction::None) {
+    if !mouse.just_pressed(MouseButton::Left) {
         return;
     }
     if let Some(cursor) = window.cursor_position() {
@@ -276,7 +269,7 @@ fn tap_board(
     px_per_unit: f32,
     cursor: Vec2,
 ) {
-    if state.pending_promotion.is_some() || state.outcome.is_some() || state.ai_to_move() {
+    if state.outcome.is_some() || state.ai_to_move() {
         return;
     }
     let (cam, gtf) = camera;
@@ -303,15 +296,16 @@ fn tap_board(
     };
     let side = state.game.pos.side_to_move;
     let moves: Vec<_> = state.selected_moves().into_iter().filter(|m| m.to == sq).collect();
-    match moves.len() {
-        0 => {
+    // Several moves to one square only happens with promotions; there is no picker yet,
+    // so pawns become queens.
+    let chosen = moves.iter().find(|m| m.promotion.is_none_or(|k| k == PieceKind::Queen));
+    match chosen {
+        Some(&mv) => state.play(mv),
+        None => {
             let own = state.game.pos.get(sq).is_some_and(|p| p.side == side);
             state.selected = if own && state.selected != Some(sq) { Some(sq) } else { None };
             state.pieces_dirty = true;
         }
-        1 => state.play(moves[0]),
-        // Several moves to one square only happens with promotions.
-        _ => state.pending_promotion = Some(moves),
     }
 }
 
@@ -327,7 +321,6 @@ fn hotkeys(keys: Res<ButtonInput<KeyCode>>, state: Res<GameState>, mut actions: 
         (KeyCode::Equal, Action::AiLevel(1)),
         (KeyCode::Backspace, Action::Undo),
         (KeyCode::KeyU, Action::Undo),
-        (KeyCode::KeyT, Action::ToggleHeights),
         (KeyCode::Escape, Action::Deselect),
         (KeyCode::KeyQ, Action::Turn(1)),
         (KeyCode::KeyE, Action::Turn(-1)),
@@ -341,7 +334,6 @@ fn hotkeys(keys: Res<ButtonInput<KeyCode>>, state: Res<GameState>, mut actions: 
 fn apply_actions(
     mut actions: MessageReader<Action>,
     mut state: ResMut<GameState>,
-    mut heights: ResMut<ShowHeights>,
     mut orbit: ResMut<Orbit>,
     time: Res<Time>,
 ) {
@@ -371,11 +363,9 @@ fn apply_actions(
                 state.ai_level = state.ai_level.saturating_add_signed(d).min(MAX_AI_LEVEL);
             }
             Action::Undo => state.undo(),
-            Action::ToggleHeights => heights.0 = !heights.0,
             Action::Turn(eighths) => orbit.target_yaw += eighths as f32 * FRAC_PI_4,
             Action::Deselect => {
                 state.selected = None;
-                state.pending_promotion = None;
                 state.pieces_dirty = true;
             }
         }
