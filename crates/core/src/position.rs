@@ -21,6 +21,7 @@ pub struct Position {
     pub en_passant: Option<Sq>,
     pub halfmove_clock: u16,
     pub fullmove: u16,
+    pub shield: Option<(Sq, Side)>,
 }
 
 impl Position {
@@ -33,6 +34,7 @@ impl Position {
             en_passant: None,
             halfmove_clock: 0,
             fullmove: 1,
+            shield: None,
         }
     }
 
@@ -190,6 +192,9 @@ impl Position {
             self.fullmove += 1;
         }
         self.side_to_move = side.opposite();
+        if self.shield.is_some_and(|(_, s)| s == self.side_to_move) {
+            self.shield = None;
+        }
     }
 
     /// Zobrist hash for repetition detection and (later) the AI's transposition table.
@@ -209,6 +214,9 @@ impl Position {
         }
         if let Some(ep) = self.en_passant {
             h ^= mix(40_000 + ep.index(self.size) as u64);
+        }
+        if let Some((sq, s)) = self.shield {
+            h ^= mix(50_000 + s.index() as u64 * 2048 + sq.index(self.size) as u64);
         }
         h
     }

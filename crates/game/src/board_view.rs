@@ -305,6 +305,7 @@ fn spawn_terrain(
             TileKind::Sand => "sand",
             TileKind::ShallowWater => "shallow_0",
             TileKind::DeepWater => "deep",
+            TileKind::Ice => "ice",
             TileKind::Void => "void",
         };
         let checker = if (sq.x + sq.y) % 2 == 0 { 0.88 } else { 1.0 };

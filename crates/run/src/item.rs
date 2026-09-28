@@ -43,17 +43,7 @@ pub enum RelicEffect {
 }
 
 /// Active spells available in a run.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub enum SpellId {
-    RaiseEarth,
-    LowerEarth,
-    Freeze,
-    Bridge,
-    DigTunnel,
-    Shield,
-    Swap,
-    Rewind,
-}
+pub use tc_core::SpellId;
 
 /// The specific behavior and data for an item.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

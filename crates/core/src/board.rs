@@ -1,9 +1,11 @@
 //! Grid coordinates. `x` is the file (0 = a), `y` is the rank (0 = White's back rank).
 
+use serde::{Deserialize, Serialize};
+
 /// Supported board sizes (PLAN.md §5).
 pub const SIZES: [u8; 3] = [8, 16, 32];
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct Sq {
     pub x: u8,
     pub y: u8,

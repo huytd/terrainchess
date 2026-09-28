@@ -5,6 +5,7 @@ use std::collections::HashSet;
 use tc_core::board::Sq;
 use tc_core::piece::{Piece, PieceKind, Side};
 use tc_core::position::Position;
+use tc_core::{Pickup, SpellId, TileKind};
 use tc_run::{Rarity, RunError, RunOutcome, RunState, catalog, load_all_items};
 
 #[test]
@@ -72,7 +73,7 @@ fn every_draft_is_three_distinct_unowned_items() {
             // Pick one item and advance floor.
             run.pick(&draft[0]).expect("pick should succeed");
             assert!(run.owned.contains(&draft[0]));
-            run.record_result(true);
+            run.record_result(true, 0);
         }
     }
 }
@@ -207,8 +208,8 @@ fn calm_terrain_relic_adjusts_generation_roughness() {
 #[test]
 fn save_round_trips_and_reloaded_run_rolls_same_draft() {
     let mut run = RunState::new(42, 8);
-    run.record_result(true);
-    run.record_result(true);
+    run.record_result(true, 0);
+    run.record_result(true, 0);
     let d = run.draft();
     run.pick(&d[0]).expect("pick should succeed");
 
@@ -242,7 +243,7 @@ fn winning_eight_matches_sets_won_and_one_loss_sets_lost() {
         assert_eq!(setup.ai_level, f + 1, "ai level should rise with floor");
         assert_eq!(run.floor, f);
         assert_eq!(run.outcome, None);
-        run.record_result(true);
+        run.record_result(true, 0);
     }
 
     // Now at boss floor (index 7).
@@ -252,14 +253,14 @@ fn winning_eight_matches_sets_won_and_one_loss_sets_lost() {
     assert_eq!(run.outcome, None);
 
     // Win boss match (8th match total).
-    run.record_result(true);
+    run.record_result(true, 0);
     assert_eq!(run.outcome, Some(RunOutcome::Won), "winning 8 matches sets Won");
 
     // A fresh run experiencing a loss sets Lost.
     let mut run2 = RunState::new(200, 8);
-    run2.record_result(true);
+    run2.record_result(true, 0);
     assert_eq!(run2.floor, 1);
-    run2.record_result(false);
+    run2.record_result(false, 0);
     assert_eq!(run2.outcome, Some(RunOutcome::Lost), "one loss sets Lost");
     assert_eq!(run2.floor, 1, "floor should not change after a loss");
 }
@@ -312,4 +313,108 @@ fn pick_validates_last_draft() {
 
     // After picking, the draft is consumed and cannot pick again.
     assert_eq!(run.pick(&draft[0]), Err(RunError::NoDraftAvailable));
+}
+
+#[test]
+fn pickup_placement_is_deterministic_and_only_on_valid_squares() {
+    for size in [8u8, 16, 32] {
+        let run = RunState::new(12345, size);
+        let setup = run.match_setup();
+        let expected_count = match size {
+            8 => 2,
+            16 => 4,
+            32 => 8,
+            _ => 0,
+        };
+        assert_eq!(setup.pickups.len(), expected_count);
+
+        // Deterministic: second setup with same run state produces identical pickups
+        let setup2 = run.match_setup();
+        assert_eq!(setup.pickups, setup2.pickups);
+
+        let (terrain, _) = setup.terrain();
+        let home = Position::home_rows(size);
+        let start_pos = Position::start(size);
+
+        for (sq, pickup) in &setup.pickups {
+            // Must be non-home square
+            assert!(sq.y >= home && sq.y < size - home, "pickup at {:?} must be on non-home rows", sq);
+            // Must be empty in starting position
+            assert!(start_pos.get(*sq).is_none(), "pickup at {:?} must not spawn on a starting piece", sq);
+            // Must be a tile that a piece can stand on
+            let tile = terrain.get(*sq);
+            assert!(!tile.is_blocked(), "pickup at {:?} cannot be on blocked tile", sq);
+            assert_ne!(tile.kind, TileKind::DeepWater, "pickup at {:?} cannot be in deep water", sq);
+
+            // On floor 0, every pickup must be a SpellCharge of a castable spell
+            match pickup {
+                Pickup::SpellCharge(spell) => {
+                    assert!(spell.is_castable(), "spell {:?} must be castable", spell);
+                }
+                Pickup::RunItem => {
+                    panic!("floor 0 should not spawn RunItem");
+                }
+            }
+        }
+    }
+
+    // From floor 2 onwards, RunItem has a 30% chance to spawn for one of the pickups
+    let mut found_run_item = false;
+    for seed in 0..50u64 {
+        let mut run = RunState::new(seed, 8);
+        run.floor = 2;
+        let setup = run.match_setup();
+        let run_items = setup.pickups.iter().filter(|(_, p)| matches!(p, Pickup::RunItem)).count();
+        assert!(run_items <= 1, "at most one pickup should be a RunItem");
+        if run_items == 1 {
+            found_run_item = true;
+        }
+    }
+    assert!(
+        found_run_item,
+        "over 50 seeds on floor 2, at least one match should place a RunItem (30% chance)"
+    );
+}
+
+#[test]
+fn bonus_picks_from_run_items() {
+    let mut run = RunState::new(42, 8);
+    assert_eq!(run.bonus_picks, 0);
+
+    // Winning a match with 2 collected run items awards 2 bonus picks
+    run.record_result(true, 2);
+    assert_eq!(run.bonus_picks, 2);
+    assert_eq!(run.floor, 1);
+
+    // Normal draft between floors
+    let d0 = run.draft();
+    run.pick(&d0[0]).expect("normal draft pick");
+
+    // The game calls draft again while bonus_picks > 0
+    let mut bonus_count = 0;
+    while run.bonus_picks > 0 {
+        run.bonus_picks -= 1;
+        let d = run.draft();
+        run.pick(&d[0]).expect("bonus draft pick");
+        bonus_count += 1;
+    }
+    assert_eq!(bonus_count, 2);
+    assert_eq!(run.bonus_picks, 0);
+    assert_eq!(run.owned.len(), 3, "1 normal pick + 2 bonus picks = 3 owned items");
+}
+
+#[test]
+fn player_charges_from_owned_spell_items() {
+    let mut run = RunState::new(99, 8);
+    let initial_setup = run.match_setup();
+    assert!(initial_setup.charges.is_empty());
+
+    // Add raise_earth (2 charges in spells.ron) and shield (1 charge)
+    run.owned.push("raise_earth".into());
+    run.owned.push("shield".into());
+
+    let setup = run.match_setup();
+    assert_eq!(setup.charges.len(), 2);
+    assert!(setup.charges.contains(&(SpellId::RaiseEarth, 2)));
+    assert!(setup.charges.contains(&(SpellId::Shield, 1)));
 }

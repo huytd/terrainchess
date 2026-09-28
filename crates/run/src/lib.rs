@@ -11,3 +11,4 @@ pub use item::{
     parse_items_from_ron,
 };
 pub use run::{BOSS_FLOOR, FLOORS, MatchSetup, RunError, RunOutcome, RunState, TOTAL_FLOORS};
+pub use tc_core::{Pickup, SpellCast};

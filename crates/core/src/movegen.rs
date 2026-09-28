@@ -184,6 +184,9 @@ impl Ctx<'_> {
     }
 
     pub fn is_attacked(&self, pos: &Position, target: Sq, by: Side) -> bool {
+        if pos.shield.is_some_and(|(sq, side)| sq == target && side != by) {
+            return false;
+        }
         pos.pieces().filter(|(_, p)| p.side == by).any(|(from, p)| {
             self.can_capture_on(from, target) && self.for_each_attack(pos, from, p, &mut |sq| sq == target)
         })
@@ -205,7 +208,11 @@ impl Ctx<'_> {
             self.for_each_attack(pos, from, piece, &mut |to| {
                 let open = match pos.get(to) {
                     None => true,
-                    Some(p) => p.side != side && self.can_capture_on(from, to),
+                    Some(p) => {
+                        p.side != side
+                            && self.can_capture_on(from, to)
+                            && !pos.shield.is_some_and(|(sq, s)| sq == to && s != side)
+                    }
                 };
                 if open {
                     let kind = if caves.contains(&to) { MoveKind::Cave } else { MoveKind::Normal };
@@ -260,16 +267,23 @@ impl Ctx<'_> {
                 continue;
             }
             if pos.get(to).is_some_and(|p| p.side != side) {
-                if self.can_capture_on(from, to) {
+                if self.can_capture_on(from, to) && !pos.shield.is_some_and(|(sq, s)| sq == to && s != side) {
                     push(Move::new(from, to, MoveKind::Normal), out);
                 }
             } else if pos.en_passant == Some(to) && self.can_capture_on(from, Sq::new(to.x, from.y)) {
-                push(Move::new(from, to, MoveKind::EnPassant), out);
+                let victim_sq = Sq::new(to.x, from.y);
+                if !pos.shield.is_some_and(|(sq, s)| (sq == to || sq == victim_sq) && s != side) {
+                    push(Move::new(from, to, MoveKind::EnPassant), out);
+                }
             }
         }
         for exit in self.terrain.cave_exits(from) {
             if self.can_stand(prof, exit)
-                && pos.get(exit).is_none_or(|p| p.side != side && self.can_capture_on(from, exit))
+                && pos.get(exit).is_none_or(|p| {
+                    p.side != side
+                        && self.can_capture_on(from, exit)
+                        && !pos.shield.is_some_and(|(sq, s)| sq == exit && s != side)
+                })
             {
                 push(Move::new(from, exit, MoveKind::Cave), out);
             }

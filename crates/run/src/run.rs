@@ -1,12 +1,14 @@
 //! Roguelike run state, match setup, reward drafting, and save/load (PLAN.md §3, §6).
 
 use serde::{Deserialize, Serialize};
+use tc_core::Pickup;
 use tc_core::board::Sq;
 use tc_core::piece::Side;
 use tc_core::position::Position;
 use tc_core::rng::Rng;
 use tc_core::rules::Rules;
-use tc_core::terrain::Terrain;
+use tc_core::spell::SpellId;
+use tc_core::terrain::{Feature, Terrain, TileKind};
 use tc_core::worldgen::GenParams;
 
 use crate::item::{ItemId, ItemKind, Rarity, RelicEffect, catalog, find_item};
@@ -54,6 +56,8 @@ pub struct MatchSetup {
     pub ai_level: u8,
     pub player: Side,
     pub relics: Vec<RelicEffect>,
+    pub pickups: Vec<(Sq, Pickup)>,
+    pub charges: Vec<(SpellId, u8)>,
 }
 
 impl MatchSetup {
@@ -95,12 +99,24 @@ pub struct RunState {
     /// The most recent draft offered to the player.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub last_draft: Option<[ItemId; 3]>,
+    /// Extra draft picks remaining from collected run items.
+    #[serde(default)]
+    pub bonus_picks: u8,
 }
 
 impl RunState {
     /// Create a fresh run at floor 0.
     pub fn new(seed: u64, size: u8) -> Self {
-        RunState { seed, size, floor: 0, owned: Vec::new(), rng: seed, outcome: None, last_draft: None }
+        RunState {
+            seed,
+            size,
+            floor: 0,
+            owned: Vec::new(),
+            rng: seed,
+            outcome: None,
+            last_draft: None,
+            bonus_picks: 0,
+        }
     }
 
     /// Derive the deterministic match seed from run seed and floor.
@@ -153,19 +169,46 @@ impl RunState {
             }
         }
 
+        let mut charges: Vec<(SpellId, u8)> = Vec::new();
+        for id in &self.owned {
+            if let Some(crate::item::Item { kind: ItemKind::Spell { spell, charges: c, .. }, .. }) =
+                find_item(id)
+            {
+                if let Some(entry) = charges.iter_mut().find(|(s, _)| *s == *spell) {
+                    entry.1 = entry.1.saturating_add(*c);
+                } else {
+                    charges.push((*spell, *c));
+                }
+            }
+        }
+
         let ai_level = (self.floor + 1).min(7);
 
-        MatchSetup { seed, r#gen, rules, ai_level, player, relics }
+        let setup_temp = MatchSetup {
+            seed,
+            r#gen: r#gen.clone(),
+            rules: rules.clone(),
+            ai_level,
+            player,
+            relics: relics.clone(),
+            pickups: Vec::new(),
+            charges: charges.clone(),
+        };
+        let (terrain, actual_seed) = setup_temp.terrain();
+        let pickups = place_pickups(actual_seed, self.floor, self.size, &terrain, player);
+
+        MatchSetup { pickups, ..setup_temp }
     }
 
     /// Record the outcome of the current match.
-    pub fn record_result(&mut self, won: bool) {
+    pub fn record_result(&mut self, won: bool, run_items_collected: u8) {
         if !won {
             self.outcome = Some(RunOutcome::Lost);
         } else if self.floor >= BOSS_FLOOR {
             self.outcome = Some(RunOutcome::Won);
         } else {
             self.floor += 1;
+            self.bonus_picks = self.bonus_picks.saturating_add(run_items_collected);
         }
     }
 
@@ -242,4 +285,99 @@ impl RunState {
     pub fn from_ron(s: &str) -> Result<Self, ron::error::SpannedError> {
         ron::from_str(s)
     }
+}
+
+/// Place pickups deterministically on valid board squares favoring high ground,
+/// cave entrances and the enemy half.
+fn place_pickups(
+    actual_seed: u64,
+    floor: u8,
+    size: u8,
+    terrain: &Terrain,
+    player: Side,
+) -> Vec<(Sq, Pickup)> {
+    let target_count = match size {
+        8 => 2,
+        16 => 4,
+        32 => 8,
+        s => (s / 4).max(2) as usize,
+    };
+
+    let home = Position::home_rows(size);
+    let start_pos = Position::start(size);
+
+    // Candidates: empty non-home squares that a piece can stand on
+    let mut candidates: Vec<(Sq, u32)> = Vec::new();
+    for sq in tc_core::board::squares(size) {
+        if sq.y < home || sq.y >= size - home {
+            continue;
+        }
+        if start_pos.get(sq).is_some() {
+            continue;
+        }
+        let tile = terrain.get(sq);
+        if tile.is_blocked() || tile.kind == TileKind::DeepWater {
+            continue;
+        }
+
+        // Preference weighting:
+        // Highest squares: tile.height * 3
+        // Cave entrances: +4
+        // Enemy half: +3
+        let mut weight = 1 + tile.height as u32 * 3;
+        if matches!(tile.feature, Feature::Cave(_)) {
+            weight += 4;
+        }
+        let enemy_half = match player {
+            Side::White => sq.y >= size / 2,
+            Side::Black => sq.y < size / 2,
+        };
+        if enemy_half {
+            weight += 3;
+        }
+
+        candidates.push((sq, weight));
+    }
+
+    let mut rng = Rng::new(actual_seed ^ 0x5049_434B_5550_5321);
+    let mut selected_squares: Vec<Sq> = Vec::with_capacity(target_count);
+
+    while selected_squares.len() < target_count && !candidates.is_empty() {
+        let total_weight: u32 = candidates.iter().map(|(_, w)| *w).sum();
+        if total_weight == 0 {
+            break;
+        }
+        let roll = rng.below(total_weight);
+        let mut running = 0;
+        let mut chosen_idx = 0;
+        for (i, (_, w)) in candidates.iter().enumerate() {
+            running += *w;
+            if roll < running {
+                chosen_idx = i;
+                break;
+            }
+        }
+        let (sq, _) = candidates.swap_remove(chosen_idx);
+        selected_squares.push(sq);
+    }
+
+    const CASTABLE: [SpellId; 5] =
+        [SpellId::RaiseEarth, SpellId::LowerEarth, SpellId::Freeze, SpellId::Shield, SpellId::Swap];
+
+    let has_run_item = floor >= 2 && rng.below(100) < 30 && !selected_squares.is_empty();
+    let run_item_idx =
+        if has_run_item { Some(rng.below(selected_squares.len() as u32) as usize) } else { None };
+
+    let mut pickups = Vec::with_capacity(selected_squares.len());
+    for (i, sq) in selected_squares.into_iter().enumerate() {
+        let pickup = if Some(i) == run_item_idx {
+            Pickup::RunItem
+        } else {
+            let spell = CASTABLE[rng.below(CASTABLE.len() as u32) as usize];
+            Pickup::SpellCharge(spell)
+        };
+        pickups.push((sq, pickup));
+    }
+
+    pickups
 }
