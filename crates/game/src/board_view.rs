@@ -20,7 +20,8 @@ use tc_core::{Feature, MoveKind, Obstacle, PieceKind, Side, Sq};
 
 use crate::atlas::{Atlas, Uv};
 use crate::game::GameState;
-use crate::input::MainCamera;
+use crate::input::{ArrowsEnabled, MainCamera};
+use crate::run::{Run, RunPhase, TitleMenu};
 
 /// World height of one terrain level.
 pub const LEVEL: f32 = 0.4;
@@ -210,9 +211,22 @@ pub(crate) struct Look {
     pub(crate) cards: Handle<StandardMaterial>,
     /// Card meshes by sprite name and horizontal flip.
     pub(crate) card_meshes: HashMap<(String, bool), Handle<Mesh>>,
+    /// Shared on-top material for threat arrows onto the player's pieces.
+    pub(crate) arrow_red: Handle<MarkerMaterial>,
+    /// Shared on-top material for arrows onto the selected piece.
+    pub(crate) arrow_amber: Handle<MarkerMaterial>,
 }
 
-fn setup_look(mut commands: Commands, atlas: Res<Atlas>, mut materials: ResMut<Assets<StandardMaterial>>) {
+/// Threat arrows to the player's pieces, and to the piece currently selected.
+const ARROW_RED: Color = Color::srgba(0.92, 0.2, 0.18, 0.85);
+const ARROW_AMBER: Color = Color::srgba(1.0, 0.72, 0.15, 0.85);
+
+fn setup_look(
+    mut commands: Commands,
+    atlas: Res<Atlas>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    mut markers: ResMut<Assets<MarkerMaterial>>,
+) {
     let terrain = materials.add(StandardMaterial {
         base_color_texture: Some(atlas.image.clone()),
         unlit: true,
@@ -226,7 +240,19 @@ fn setup_look(mut commands: Commands, atlas: Res<Atlas>, mut materials: ResMut<A
         alpha_mode: AlphaMode::Mask(0.5),
         ..default()
     });
-    commands.insert_resource(Look { terrain, cards, card_meshes: HashMap::new() });
+    let arrow_material = |color: Color| MarkerMaterial {
+        base: StandardMaterial {
+            base_color: color,
+            unlit: true,
+            cull_mode: None,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        },
+        extension: OnTop {},
+    };
+    let arrow_red = markers.add(arrow_material(ARROW_RED));
+    let arrow_amber = markers.add(arrow_material(ARROW_AMBER));
+    commands.insert_resource(Look { terrain, cards, card_meshes: HashMap::new(), arrow_red, arrow_amber });
 }
 
 /// A per-cell number for picking tile variants without flicker.
@@ -284,6 +310,20 @@ impl Quads {
             self.color.push(c);
         }
         self.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    /// A flat triangle; `corners` in order, with `shade` darkening as in `add`.
+    pub(crate) fn add_tri(&mut self, corners: [Vec3; 3], shade: f32) {
+        let n = (corners[1] - corners[0]).cross(corners[2] - corners[0]).normalize_or_zero();
+        let c = Color::srgb(shade, shade, shade).to_linear().to_f32_array();
+        let base = self.pos.len() as u32;
+        for p in corners {
+            self.pos.push(p.to_array());
+            self.normal.push(n.to_array());
+            self.uv.push([0.0, 0.0]);
+            self.color.push(c);
+        }
+        self.idx.extend([base, base + 1, base + 2]);
     }
 
     pub(crate) fn mesh(self) -> Mesh {
@@ -541,6 +581,9 @@ fn spawn_pieces(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut markers: ResMut<Assets<MarkerMaterial>>,
+    run: Res<Run>,
+    title_menu: Res<TitleMenu>,
+    arrows_enabled: Res<ArrowsEnabled>,
     old: Query<Entity, Or<(With<PieceSprite>, With<Overlay>, With<PickupSprite>)>>,
 ) {
     if !state.pieces_dirty {
@@ -599,7 +642,22 @@ fn spawn_pieces(
         ));
     }
 
-    spawn_overlays(&mut commands, &state, &atlas, &mut meshes, &mut materials, &mut markers);
+    // No arrows behind a title/draft/run-over overlay; red ones only on the turn of the
+    // side they warn, amber ones (attackers of the selection) whenever selecting is possible.
+    let overlay_open = title_menu.open || run.phase != RunPhase::Playing;
+    let amber_arrows = arrows_enabled.0 && !overlay_open;
+    let red_arrows = amber_arrows && !state.ai_to_move() && state.outcome.is_none();
+    spawn_overlays(
+        &mut commands,
+        &state,
+        &atlas,
+        &mut meshes,
+        &mut materials,
+        &mut markers,
+        &look,
+        red_arrows,
+        amber_arrows,
+    );
 }
 
 /// Flat highlights and markers lying on top faces.
@@ -610,6 +668,7 @@ struct OverlayPainter<'a, 'w, 's> {
     meshes: &'a mut Assets<Mesh>,
     materials: &'a mut Assets<StandardMaterial>,
     markers: &'a mut Assets<MarkerMaterial>,
+    look: &'a Look,
 }
 
 impl OverlayPainter<'_, '_, '_> {
@@ -643,8 +702,56 @@ impl OverlayPainter<'_, '_, '_> {
     fn mark(&mut self, sq: Sq, name: &str, size: f32, color: Color) {
         self.quad(sq, Some(name), size, color, LIFT_MARK);
     }
+
+    /// A flat arrow lying above both squares, shaft plus triangular head, pointing from
+    /// the attacker's square to the victim's. Uses the shared on-top marker material for
+    /// `red`, so the arrow is never hidden by columns or pieces in front of it.
+    fn arrow(&mut self, from: Sq, to: Sq, red: bool) {
+        const NEAR_GAP: f32 = 0.25;
+        const TIP_GAP: f32 = 0.3;
+        const SHAFT_HALF_WIDTH: f32 = 0.045;
+        const HEAD_LEN: f32 = 0.28;
+        const HEAD_HALF_WIDTH: f32 = 0.15;
+
+        let t = &self.state.game.terrain;
+        let mut a = square_top(from, t.height(from));
+        let mut b = square_top(to, t.height(to));
+        let h = a.y.max(b.y) + 0.02;
+        a.y = h;
+        b.y = h;
+        let delta = b - a;
+        if delta.length_squared() < 1e-6 {
+            return;
+        }
+        let dir = delta.normalize();
+        // Rotate 90 degrees in the XZ plane.
+        let perp = Vec3::new(-dir.z, 0.0, dir.x);
+
+        let shaft_start = a + dir * NEAR_GAP;
+        let tip = b - dir * TIP_GAP;
+        let head_base = tip - dir * HEAD_LEN;
+
+        let mut q = Quads::default();
+        if (head_base - shaft_start).dot(dir) > 0.0 {
+            q.add(
+                [
+                    shaft_start - perp * SHAFT_HALF_WIDTH,
+                    shaft_start + perp * SHAFT_HALF_WIDTH,
+                    head_base + perp * SHAFT_HALF_WIDTH,
+                    head_base - perp * SHAFT_HALF_WIDTH,
+                ],
+                [[0.0; 2]; 4],
+                1.0,
+            );
+        }
+        q.add_tri([tip, head_base - perp * HEAD_HALF_WIDTH, head_base + perp * HEAD_HALF_WIDTH], 1.0);
+
+        let material = if red { self.look.arrow_red.clone() } else { self.look.arrow_amber.clone() };
+        self.commands.spawn((Overlay, Mesh3d(self.meshes.add(q.mesh())), MeshMaterial3d(material)));
+    }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn spawn_overlays(
     commands: &mut Commands,
     state: &GameState,
@@ -652,8 +759,11 @@ fn spawn_overlays(
     meshes: &mut Assets<Mesh>,
     materials: &mut Assets<StandardMaterial>,
     markers: &mut Assets<MarkerMaterial>,
+    look: &Look,
+    red_arrows: bool,
+    amber_arrows: bool,
 ) {
-    let mut paint = OverlayPainter { commands, state, atlas, meshes, materials, markers };
+    let mut paint = OverlayPainter { commands, state, atlas, meshes, materials, markers, look };
     let t = &state.game.terrain;
     if let Some(last) = state.game.moves.last() {
         for sq in [last.from, last.to] {
@@ -667,6 +777,23 @@ fn spawn_overlays(
     }
     if let Some((sq, _)) = state.game.pos.shield {
         paint.mark(sq, "ov_ring", 0.7, Color::srgb_u8(0xFF, 0xD3, 0x5A));
+    }
+    if red_arrows {
+        // Threats onto whichever side is to move, so hotseat/sandbox always reads as
+        // "danger to the player about to act."
+        for (from, to) in state.game.threats(state.game.pos.side_to_move) {
+            paint.arrow(from, to, true);
+        }
+    }
+    if amber_arrows
+        && let Some(sel) = state.selected
+        && let Some(piece) = state.game.pos.get(sel)
+    {
+        for (from, to) in state.game.threats(piece.side) {
+            if to == sel {
+                paint.arrow(from, to, false);
+            }
+        }
     }
     if let Some(spell) = state.armed_spell {
         if matches!(spell, tc_core::SpellId::Swap | tc_core::SpellId::DigTunnel)

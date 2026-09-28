@@ -59,10 +59,22 @@ pub enum Action {
     CheatWin,
     /// Dev cheat: lose current run match.
     CheatLoss,
+    /// Show or hide threat arrows.
+    ToggleArrows,
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct DevMode(pub bool);
+
+/// Whether threat arrows are drawn, toggled by `A`. On by default.
+#[derive(Resource, Clone, Copy, Debug)]
+pub struct ArrowsEnabled(pub bool);
+
+impl Default for ArrowsEnabled {
+    fn default() -> Self {
+        ArrowsEnabled(true)
+    }
+}
 
 fn read_dev_flag() -> bool {
     #[cfg(target_arch = "wasm32")]
@@ -498,6 +510,7 @@ fn hotkeys(
         (KeyCode::KeyU, Action::Undo),
         (KeyCode::KeyQ, Action::Turn(1)),
         (KeyCode::KeyE, Action::Turn(-1)),
+        (KeyCode::KeyA, Action::ToggleArrows),
     ] {
         if keys.just_pressed(key) {
             actions.write(action);
@@ -522,6 +535,7 @@ fn apply_actions(
     mut state: ResMut<GameState>,
     mut run: ResMut<Run>,
     mut orbit: ResMut<Orbit>,
+    mut arrows: ResMut<ArrowsEnabled>,
     time: Res<Time>,
 ) {
     for &action in actions.read() {
@@ -596,6 +610,11 @@ fn apply_actions(
                 state.selected = None;
                 state.pieces_dirty = true;
             }
+            Action::ToggleArrows => {
+                arrows.0 = !arrows.0;
+                // Arrows are rebuilt along with the rest of the overlays.
+                state.pieces_dirty = true;
+            }
         }
     }
 }
@@ -607,6 +626,7 @@ impl Plugin for InputPlugin {
         app.init_resource::<FitCamera>()
             .init_resource::<Gesture>()
             .init_resource::<Orbit>()
+            .init_resource::<ArrowsEnabled>()
             .insert_resource(DevMode(read_dev_flag()))
             .add_message::<Action>()
             .add_systems(Startup, setup_camera)

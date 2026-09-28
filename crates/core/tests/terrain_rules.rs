@@ -1,7 +1,9 @@
 //! One fixture per terrain rule in PLAN.md §4.
 
 use tc_core::movegen::Ctx;
-use tc_core::{Feature, Match, Move, MoveKind, Obstacle, PieceKind, Position, Rules, Sq, Terrain, TileKind};
+use tc_core::{
+    Feature, Match, Move, MoveKind, Obstacle, PieceKind, Position, Rules, Side, Sq, Terrain, TileKind,
+};
 
 struct Fixture {
     terrain: Terrain,
@@ -66,6 +68,10 @@ impl Fixture {
 
     fn can(&self, from: &str, to: &str) -> bool {
         self.targets(from).contains(&to.to_string())
+    }
+
+    fn match_(&self) -> Match {
+        Match::new(self.terrain.clone(), self.rules.clone(), self.pos.clone())
     }
 }
 
@@ -322,4 +328,35 @@ fn clearing_is_illegal_when_it_leaves_king_in_check() {
     let f = Fixture::new("7k/8/8/r7/8/8/3P4/4K3 w - - 0 1").obstacle(&["e3"], Obstacle::Rock);
     let moves = f.ctx().legal_moves(&f.pos);
     assert!(moves.contains(&clear_e3), "clearing e3 is legal when not exposing king to check");
+}
+
+#[test]
+fn rook_attacking_a_pawn_on_flat_ground_is_a_threat() {
+    let f = Fixture::new("7k/8/8/8/8/8/4p3/4R2K w - - 0 1");
+    let threats = f.match_().threats(Side::Black);
+    assert!(threats.contains(&(sq("e1"), sq("e2"))));
+}
+
+#[test]
+fn threat_onto_higher_ground_is_not_reported() {
+    // Captures can't go uphill even one level, though the rook could still step there.
+    let f = Fixture::new("7k/8/8/8/8/8/4p3/4R2K w - - 0 1").h(&["e2"], 1);
+    let threats = f.match_().threats(Side::Black);
+    assert!(!threats.contains(&(sq("e1"), sq("e2"))));
+}
+
+#[test]
+fn shielded_piece_is_not_reported_as_a_threat() {
+    let f = Fixture::new("7k/8/8/8/8/8/4p3/4R2K w - - 0 1");
+    let mut m = f.match_();
+    m.pos.shield = Some((sq("e2"), Side::Black));
+    assert!(!m.threats(Side::Black).contains(&(sq("e1"), sq("e2"))));
+}
+
+#[test]
+fn knight_fork_reports_both_pairs() {
+    let f = Fixture::new("k7/8/2p3p1/4N3/8/8/8/7K w - - 0 1");
+    let mut threats = f.match_().threats(Side::Black);
+    threats.sort();
+    assert_eq!(threats, [(sq("e5"), sq("c6")), (sq("e5"), sq("g6"))]);
 }

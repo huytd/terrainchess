@@ -178,6 +178,37 @@ impl Match {
         self.ctx().in_check(&self.pos, self.pos.side_to_move)
     }
 
+    /// Every capture the side opposing `victim_side` could make right now onto a
+    /// `victim_side` piece, as (attacker, victim) square pairs. Runs pseudo-legal
+    /// generation on a hypothetical position with the attacker to move, so it respects
+    /// the real terrain rules (high ground, shields, cliffs, caves) without needing to
+    /// check whether the attacker's own king would end up in check. Used to draw threat
+    /// arrows, not to decide legality.
+    pub fn threats(&self, victim_side: Side) -> Vec<(Sq, Sq)> {
+        let attacker_side = victim_side.opposite();
+        let mut pos = self.pos.clone();
+        if pos.side_to_move != attacker_side {
+            // An en-passant square set for the other side to move doesn't carry over.
+            pos.en_passant = None;
+        }
+        pos.side_to_move = attacker_side;
+        let mut moves = Vec::with_capacity(64);
+        self.ctx().pseudo_legal(&pos, &mut moves);
+        let mut pairs: Vec<(Sq, Sq)> = Vec::new();
+        for mv in moves {
+            let victim_sq = match mv.kind {
+                MoveKind::EnPassant => Sq::new(mv.to.x, mv.from.y),
+                _ => mv.to,
+            };
+            if pos.get(victim_sq).is_some_and(|p| p.side == victim_side)
+                && !pairs.contains(&(mv.from, victim_sq))
+            {
+                pairs.push((mv.from, victim_sq));
+            }
+        }
+        pairs
+    }
+
     /// Ticks down timed effects by one ply, reverting expired effects.
     pub fn tick_timed_effects(&mut self) {
         for effect in &mut self.timed_effects {
