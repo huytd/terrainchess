@@ -237,6 +237,19 @@ impl Quads {
         self.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
+    pub(crate) fn add_tinted(&mut self, corners: [Vec3; 4], uv: [[f32; 2]; 4], tint: Color) {
+        let n = (corners[1] - corners[0]).cross(corners[3] - corners[0]).normalize_or_zero();
+        let c = tint.to_linear().to_f32_array();
+        let base = self.pos.len() as u32;
+        for (p, t) in corners.into_iter().zip(uv) {
+            self.pos.push(p.to_array());
+            self.normal.push(n.to_array());
+            self.uv.push(t);
+            self.color.push(c);
+        }
+        self.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
     pub(crate) fn mesh(self) -> Mesh {
         Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.pos)
@@ -319,36 +332,52 @@ fn spawn_terrain(
 
         // Top face, with a light checker and brighter high ground.
         let name = match tile.kind {
-            TileKind::Grass => ["grass_0", "grass_1", "grass_0", "grass_dark"]
-                [hash(sq.x as i32, sq.y as i32, 1) as usize % 4],
-            TileKind::Stone => ["cobble", "flagstone"][hash(sq.x as i32, sq.y as i32, 2) as usize % 2],
-            TileKind::Sand => "sand",
+            TileKind::Grass | TileKind::Stone | TileKind::Sand | TileKind::Bridge => "flagstone",
             TileKind::ShallowWater => "shallow_0",
             TileKind::DeepWater => "deep",
             TileKind::Ice => "ice",
-            TileKind::Bridge => "flagstone",
             TileKind::Void => "void",
         };
-        let checker = if (sq.x + sq.y) % 2 == 0 { 0.88 } else { 1.0 };
-        let shade = checker * (0.86 + 0.06 * tile.height as f32).min(1.05);
+        let mut tint = if (sq.x + sq.y) % 2 != 0 {
+            Color::srgb(0.93, 0.87, 0.74)
+        } else {
+            Color::srgb(0.47, 0.50, 0.58)
+        };
+        if tile.is_water() || tile.kind == TileKind::Ice {
+            tint = tint.mix(&Color::WHITE, 0.3);
+        }
+        let bright = 0.9 + 0.05 * tile.height as f32;
+        let c = tint.to_srgba();
+        let tint = Color::srgb(c.red * bright, c.green * bright, c.blue * bright);
         let corners = flat(top, Vec2::ONE);
         if tile.kind == TileKind::ShallowWater {
             for (i, frame) in ["shallow_0", "shallow_1"].into_iter().enumerate() {
-                water[i].add(corners, full_uv(atlas.uv(frame)), shade);
+                water[i].add_tinted(corners, full_uv(atlas.uv(frame)), tint);
             }
         } else {
-            solid.add(corners, full_uv(atlas.uv(name)), shade);
+            solid.add_tinted(corners, full_uv(atlas.uv(name)), tint);
         }
 
         if tile.is_water() {
-            let foam_corners = flat(top + Vec3::Y * 0.003, Vec2::ONE);
-            for (dir, (dx, dy)) in [(0, (0i8, 1i8)), (1, (1, 0)), (2, (0, -1)), (3, (-1, 0))] {
+            let patch_uv = |name: &str| {
+                let uv = atlas.uv(name);
+                [uv.at(0.2, 0.52), uv.at(0.8, 0.52), uv.at(0.8, 0.44), uv.at(0.2, 0.44)]
+            };
+            let patch_0 = patch_uv("shore_0");
+            let patch_1 = patch_uv("shore_1");
+            for (dir, (dx, dy), offset, edge_size) in [
+                (0, (0i8, 1i8), Vec3::new(0.0, 0.003, -0.44), Vec2::new(1.0, 0.12)),
+                (1, (1, 0), Vec3::new(0.44, 0.003, 0.0), Vec2::new(0.12, 1.0)),
+                (2, (0, -1), Vec3::new(0.0, 0.003, 0.44), Vec2::new(1.0, 0.12)),
+                (3, (-1, 0), Vec3::new(-0.44, 0.003, 0.0), Vec2::new(0.12, 1.0)),
+            ] {
                 let is_water_neighbour = sq.offset(dx, dy, size).is_some_and(|n| t.get(n).is_water());
                 if !is_water_neighbour {
-                    let uv_0 = rotate_uv(full_uv(atlas.uv("shore_0")), dir);
-                    let uv_1 = rotate_uv(full_uv(atlas.uv("shore_1")), dir);
-                    water[0].add(foam_corners, uv_0, shade);
-                    water[1].add(foam_corners, uv_1, shade);
+                    let foam_corners = flat(top + offset, edge_size);
+                    let uv_0 = rotate_uv(patch_0, dir);
+                    let uv_1 = rotate_uv(patch_1, dir);
+                    water[0].add_tinted(foam_corners, uv_0, tint);
+                    water[1].add_tinted(foam_corners, uv_1, tint);
                 }
             }
         }

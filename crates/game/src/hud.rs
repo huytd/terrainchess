@@ -86,10 +86,7 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
             Text::new("Floor 1 / 8"),
             TextFont { font_size: FontSize::Px(16.0), ..default() },
             TextColor(INK_WOOD),
-            TextLayout {
-                justify: Justify::Center,
-                linebreak: LineBreak::NoWrap,
-            },
+            TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
             FloorBadgeText,
         ));
 
