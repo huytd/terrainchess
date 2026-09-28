@@ -80,9 +80,33 @@ impl MaterialExtension for Occluded {
 }
 
 type OccludedMaterial = ExtendedMaterial<StandardMaterial, Occluded>;
+
+/// Disables depth write while keeping the normal depth test, so piece cards are drawn in
+/// the transparent pass, sorted back to front, and never write depth.
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct PieceCard {}
+
+impl MaterialExtension for PieceCard {
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if let Some(depth) = descriptor.depth_stencil.as_mut() {
+            depth.depth_write_enabled = Some(false);
+        }
+        Ok(())
+    }
+}
+
+pub type PieceMaterial = ExtendedMaterial<StandardMaterial, PieceCard>;
+
 /// Overlays float this far above a top face to avoid z-fighting.
+const LIFT_GRID: f32 = 0.003;
 const LIFT_TINT: f32 = 0.004;
 const LIFT_MARK: f32 = 0.008;
+const GRID_WIDTH: f32 = 0.035;
 
 /// Height of a square's top face.
 pub fn top_y(height: i8) -> f32 {
@@ -248,6 +272,8 @@ pub(crate) const HOP_SECS: f32 = 0.22;
 pub(crate) struct Look {
     pub(crate) terrain: Handle<StandardMaterial>,
     pub(crate) cards: Handle<StandardMaterial>,
+    pub(crate) piece_cards: Handle<PieceMaterial>,
+    pub(crate) grid: Handle<StandardMaterial>,
     pub(crate) shadows: Handle<StandardMaterial>,
     pub(crate) shadow_mesh_small: Handle<Mesh>,
     pub(crate) shadow_mesh_large: Handle<Mesh>,
@@ -316,6 +342,7 @@ fn setup_look(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut markers: ResMut<Assets<MarkerMaterial>>,
     mut occluded_materials: ResMut<Assets<OccludedMaterial>>,
+    mut piece_materials: ResMut<Assets<PieceMaterial>>,
 ) {
     let terrain = materials.add(StandardMaterial {
         base_color_texture: Some(atlas.image.clone()),
@@ -328,6 +355,24 @@ fn setup_look(
         unlit: true,
         cull_mode: None,
         alpha_mode: AlphaMode::Mask(0.5),
+        ..default()
+    });
+    let piece_cards = piece_materials.add(PieceMaterial {
+        base: StandardMaterial {
+            base_color_texture: Some(atlas.image.clone()),
+            unlit: true,
+            cull_mode: None,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        },
+        extension: PieceCard {},
+    });
+    let grid = materials.add(StandardMaterial {
+        base_color: Color::srgb_u8(0x12, 0x0E, 0x14).with_alpha(0.7),
+        unlit: true,
+        cull_mode: None,
+        alpha_mode: AlphaMode::Blend,
+        fog_enabled: true,
         ..default()
     });
     let shadows = materials.add(StandardMaterial {
@@ -424,6 +469,8 @@ fn setup_look(
     commands.insert_resource(Look {
         terrain,
         cards,
+        piece_cards,
+        grid,
         shadows,
         shadow_mesh_small,
         shadow_mesh_large,
@@ -576,6 +623,7 @@ fn spawn_terrain(
     let t = state.game.terrain.clone();
     let mut solid = Quads::default();
     let mut water = [Quads::default(), Quads::default()];
+    let mut grid_quads = Quads::default();
     for sq in tc_core::board::squares(size) {
         let tile = *t.get(sq);
         let top = square_top(sq, tile.height);
@@ -653,6 +701,75 @@ fn spawn_terrain(
             wall(&mut solid, &atlas, a, b, lo, top.y, shade + 0.03 * tile.height as f32);
         }
 
+        // Grid lines along square edges and column top rims:
+        let y_lift = top.y + LIFT_GRID;
+        let is_water = tile.is_water();
+        for (dx, dy) in [(0i8, 1i8), (1, 0), (0, -1), (-1, 0)] {
+            let n_opt = sq.offset(dx, dy, size);
+            match n_opt {
+                None => {
+                    // Board outer edge: sitting on this square's own top edge.
+                    let quad = match (dx, dy) {
+                        (0, 1) => {
+                            flat(Vec3::new(x, y_lift, z - 0.5 + GRID_WIDTH / 2.0), Vec2::new(1.0, GRID_WIDTH))
+                        }
+                        (1, 0) => {
+                            flat(Vec3::new(x + 0.5 - GRID_WIDTH / 2.0, y_lift, z), Vec2::new(GRID_WIDTH, 1.0))
+                        }
+                        (0, -1) => {
+                            flat(Vec3::new(x, y_lift, z + 0.5 - GRID_WIDTH / 2.0), Vec2::new(1.0, GRID_WIDTH))
+                        }
+                        (-1, 0) => {
+                            flat(Vec3::new(x - 0.5 + GRID_WIDTH / 2.0, y_lift, z), Vec2::new(GRID_WIDTH, 1.0))
+                        }
+                        _ => unreachable!(),
+                    };
+                    grid_quads.add(quad, [[0.0, 0.0]; 4], 1.0);
+                }
+                Some(n) => {
+                    let n_tile = *t.get(n);
+                    let n_is_water = n_tile.is_water();
+                    if is_water && n_is_water {
+                        // Water squares' interiors: no grid lines.
+                        continue;
+                    }
+                    if tile.height == n_tile.height {
+                        // Shared flat edge: draw once (North and East).
+                        if dx == 1 || dy == 1 {
+                            let quad = match (dx, dy) {
+                                (0, 1) => flat(Vec3::new(x, y_lift, z - 0.5), Vec2::new(1.0, GRID_WIDTH)),
+                                (1, 0) => flat(Vec3::new(x + 0.5, y_lift, z), Vec2::new(GRID_WIDTH, 1.0)),
+                                _ => unreachable!(),
+                            };
+                            grid_quads.add(quad, [[0.0, 0.0]; 4], 1.0);
+                        }
+                    } else if !is_water {
+                        // Height difference: sitting on this square's own top edge.
+                        let quad = match (dx, dy) {
+                            (0, 1) => flat(
+                                Vec3::new(x, y_lift, z - 0.5 + GRID_WIDTH / 2.0),
+                                Vec2::new(1.0, GRID_WIDTH),
+                            ),
+                            (1, 0) => flat(
+                                Vec3::new(x + 0.5 - GRID_WIDTH / 2.0, y_lift, z),
+                                Vec2::new(GRID_WIDTH, 1.0),
+                            ),
+                            (0, -1) => flat(
+                                Vec3::new(x, y_lift, z + 0.5 - GRID_WIDTH / 2.0),
+                                Vec2::new(1.0, GRID_WIDTH),
+                            ),
+                            (-1, 0) => flat(
+                                Vec3::new(x - 0.5 + GRID_WIDTH / 2.0, y_lift, z),
+                                Vec2::new(GRID_WIDTH, 1.0),
+                            ),
+                            _ => unreachable!(),
+                        };
+                        grid_quads.add(quad, [[0.0, 0.0]; 4], 1.0);
+                    }
+                }
+            }
+        }
+
         match tile.feature {
             Feature::Cave(link) => {
                 let rune = materials.add(StandardMaterial {
@@ -695,6 +812,13 @@ fn spawn_terrain(
         if !q.pos.is_empty() {
             commands.spawn((TerrainPart, WaterFrame(i), Mesh3d(meshes.add(q.mesh())), material.clone()));
         }
+    }
+    if !grid_quads.pos.is_empty() {
+        commands.spawn((
+            TerrainPart,
+            Mesh3d(meshes.add(grid_quads.mesh())),
+            MeshMaterial3d(look.grid.clone()),
+        ));
     }
 }
 
@@ -803,7 +927,7 @@ fn spawn_pieces(
                 PieceSprite,
                 Billboard,
                 Mesh3d(mesh.clone()),
-                MeshMaterial3d(look.cards.clone()),
+                MeshMaterial3d(look.piece_cards.clone()),
                 Transform::from_translation(spot),
             ))
             .with_children(|parent| {
@@ -1214,6 +1338,7 @@ impl Plugin for BoardViewPlugin {
         load_internal_asset!(app, OCCLUDED_SHADER_HANDLE, "occluded.wgsl", Shader::from_wgsl);
         app.add_plugins(MaterialPlugin::<MarkerMaterial>::default())
             .add_plugins(MaterialPlugin::<OccludedMaterial>::default())
+            .add_plugins(MaterialPlugin::<PieceMaterial>::default())
             .add_systems(Startup, setup_look)
             .add_systems(
                 Update,

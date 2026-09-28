@@ -480,6 +480,25 @@ def process(src, src_sky, src_ground, src_gui, palette):
         out[name] = (img, anchor)
     out["white_king"] = (trimmed(white_king(crop), PIECE_H["king"]), BOTTOM)
 
+    outline_color = np.array([0x12, 0x0E, 0x14], dtype=np.float32)
+    for name in list(out.keys()):
+        if name.startswith(("white_", "black_")):
+            img, _ = out[name]
+            h, w = img.shape[:2]
+            padded = np.zeros((h + 2, w + 2, 4), dtype=np.float32)
+            padded[1:-1, 1:-1] = img
+            is_opaque = padded[..., 3] > 0
+            is_transparent = ~is_opaque
+            touches_opaque = np.zeros((h + 2, w + 2), dtype=bool)
+            touches_opaque[:-1, :] |= is_opaque[1:, :]
+            touches_opaque[1:, :] |= is_opaque[:-1, :]
+            touches_opaque[:, :-1] |= is_opaque[:, 1:]
+            touches_opaque[:, 1:] |= is_opaque[:, :-1]
+            outline_mask = is_transparent & touches_opaque
+            padded[outline_mask, :3] = outline_color
+            padded[outline_mask, 3] = 255.0
+            out[name] = (padded, BOTTOM)
+
     # Generated sprite: board_stone (compressed contrast, lifted mortar, desaturated)
     flag = out["flagstone"][0].copy()
     flag_rgb = flag[..., :3]
