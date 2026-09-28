@@ -4762,6 +4762,7 @@ name = "tc_ai"
 version = "0.1.0"
 dependencies = [
  "tc_core",
+ "web-time",
 ]
 
 [[package]]

@@ -286,9 +286,7 @@ impl GameState {
             {
                 self.terrain_dirty = true;
             }
-            if matches!(spell, SpellId::Rewind) {
-                self.pieces_dirty = true;
-            }
+            self.pieces_dirty = true;
             self.events.push(GameEvent::Cast { spell, squares });
             if self.game.in_check()
                 && let Some(king) = self.game.pos.king(self.game.pos.side_to_move)

@@ -6,3 +6,4 @@ description = "Terrain Chess AI: alpha-beta search over tc_core. No Bevy."
 
 [dependencies]
 tc_core.workspace = true
+web-time = "1.1"

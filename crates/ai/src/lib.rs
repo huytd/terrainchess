@@ -4,10 +4,12 @@
 //! The search is a [`SearchJob`] that runs in slices, so a single-threaded web build
 //! can think across frames without freezing.
 
+mod action;
 mod eval;
 mod search;
 mod tt;
 
+pub use action::{Action, choose_action, choose_action_with_clock, spell_cost};
 pub use eval::evaluate;
 pub use search::{SearchInfo, SearchJob, search_blocking};
 

@@ -73,8 +73,6 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
                 padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(2.0),
                 ..default()
             },
             ImageNode {
@@ -84,20 +82,16 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
                 ..default()
             },
         ))
-        .with_children(|badge| {
-            badge.spawn((
-                Text::new(""),
-                TextFont { font_size: FontSize::Px(16.0), ..default() },
-                TextColor(INK_WOOD),
-                FloorBadgeText,
-            ));
-            badge.spawn((
-                Text::new(""),
-                TextFont { font_size: FontSize::Px(12.0), ..default() },
-                TextColor(INK_WOOD),
-                FloorBadgeEnemyText,
-            ));
-        });
+        .with_child((
+            Text::new("Floor 1 / 8"),
+            TextFont { font_size: FontSize::Px(16.0), ..default() },
+            TextColor(INK_WOOD),
+            TextLayout {
+                justify: Justify::Center,
+                linebreak: LineBreak::NoWrap,
+            },
+            FloorBadgeText,
+        ));
 
     // Menu button at the top-right corner
     commands
@@ -667,16 +661,26 @@ fn sync_title_menu(
                 right: Val::Px(0.0),
                 top: Val::Px(0.0),
                 bottom: Val::Px(0.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
-                flex_direction: FlexDirection::Column,
-                row_gap: Val::Px(14.0),
-                padding: UiRect::all(Val::Px(24.0)),
                 ..default()
             },
-            BackgroundColor(Color::srgba(0.08, 0.09, 0.14, 0.72)),
         ))
-        .with_children(|parent| {
+        .with_children(|overlay| {
+            overlay
+                .spawn((
+                    Node {
+                        flex_direction: FlexDirection::Column,
+                        align_items: AlignItems::Center,
+                        row_gap: Val::Px(14.0),
+                        padding: UiRect::all(Val::Px(24.0)),
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgba(0.08, 0.09, 0.14, 0.72)),
+                ))
+                .with_children(|parent| {
             // Title banner: large light ink on a panel_wood banner
             parent
                 .spawn((
@@ -796,8 +800,8 @@ fn sync_title_menu(
                 TextFont { font_size: FontSize::Px(13.0), ..default() },
                 TextColor(INK_WOOD),
                 TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
-                Node { max_width: Val::Percent(90.0), ..default() },
             ));
+        });
         });
 }
 
