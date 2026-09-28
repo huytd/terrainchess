@@ -17,4 +17,22 @@
             effect: CalmTerrain,
         ),
     ),
+    (
+        id: "tide_charm",
+        name: "Tide Charm",
+        description: "Shallow water on your half becomes sand.",
+        rarity: Uncommon,
+        kind: Relic(
+            effect: TideCharm,
+        ),
+    ),
+    (
+        id: "cartographer",
+        name: "Cartographer",
+        description: "Gain an extra run item pickup on every floor.",
+        rarity: Rare,
+        kind: Relic(
+            effect: Cartographer,
+        ),
+    ),
 ]

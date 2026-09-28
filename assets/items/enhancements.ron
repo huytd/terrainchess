@@ -71,4 +71,23 @@
             ),
         ),
     ),
+    (
+        id: "tunneler_bishops",
+        name: "Tunneler Bishops",
+        description: "Bishops can exit linked caves during a slide.",
+        rarity: Rare,
+        kind: Enhancement(
+            piece: Bishop,
+            delta: (
+                cave_slide: Some(true),
+            ),
+        ),
+    ),
+    (
+        id: "veteran",
+        name: "Veteran",
+        description: "Once per match, your first piece about to be captured retreats instead.",
+        rarity: Rare,
+        kind: Veteran,
+    ),
 ]

@@ -58,6 +58,8 @@ pub struct MatchSetup {
     pub relics: Vec<RelicEffect>,
     pub pickups: Vec<(Sq, Pickup)>,
     pub charges: Vec<(SpellId, u8)>,
+    pub enemy_items: Vec<ItemId>,
+    pub veteran: [bool; 2],
 }
 
 impl MatchSetup {
@@ -74,6 +76,21 @@ impl MatchSetup {
                 for x in 0..self.r#gen.size {
                     let tile = terrain.get_mut(Sq::new(x, y));
                     tile.height = (tile.height + 1).min(tc_core::terrain::MAX_HEIGHT);
+                }
+            }
+        }
+        if self.relics.contains(&RelicEffect::TideCharm) {
+            let mid = self.r#gen.size / 2;
+            let y_range = match self.player {
+                Side::White => 0..mid,
+                Side::Black => mid..self.r#gen.size,
+            };
+            for y in y_range {
+                for x in 0..self.r#gen.size {
+                    let tile = terrain.get_mut(Sq::new(x, y));
+                    if tile.kind == TileKind::ShallowWater {
+                        tile.kind = TileKind::Sand;
+                    }
                 }
             }
         }
@@ -166,6 +183,52 @@ impl RunState {
                 if let Some(b) = delta.uphill_ends_slide {
                     profile.uphill_ends_slide = b;
                 }
+                if let Some(b) = delta.cave_slide {
+                    profile.cave_slide = b;
+                }
+            }
+        }
+
+        let mut veteran = [false; 2];
+        if self.owned.iter().any(|id| id == "veteran") {
+            veteran[player.index()] = true;
+        }
+
+        let mut enemy_items = Vec::new();
+        let enemy_count = if self.floor >= 3 { ((self.floor - 3) / 2 + 1) as usize } else { 0 };
+        if enemy_count > 0 {
+            let mut available_enhancements: Vec<&'static crate::item::Item> =
+                catalog().iter().filter(|item| matches!(item.kind, ItemKind::Enhancement { .. })).collect();
+            available_enhancements.sort_by_key(|i| &i.id);
+            let mut enemy_rng = Rng::new(seed ^ 0x454E_454D_595F_454E);
+            for _ in 0..enemy_count {
+                if available_enhancements.is_empty() {
+                    break;
+                }
+                let idx = enemy_rng.below(available_enhancements.len() as u32) as usize;
+                let item = available_enhancements.swap_remove(idx);
+                enemy_items.push(item.id.clone());
+                if let ItemKind::Enhancement { piece, delta } = &item.kind {
+                    let profile = &mut rules.profiles[Side::Black.index()][piece.index()];
+                    if let Some(d) = delta.max_climb {
+                        profile.max_climb = (profile.max_climb as i8 + d).clamp(0, 3) as u8;
+                    }
+                    if let Some(d) = delta.jump_max_dh {
+                        profile.jump_max_dh = (profile.jump_max_dh as i8 + d).clamp(0, 3) as u8;
+                    }
+                    if let Some(d) = delta.max_slide_drop {
+                        profile.max_slide_drop = (profile.max_slide_drop as i8 + d).clamp(0, 3) as u8;
+                    }
+                    if let Some(b) = delta.deep_water {
+                        profile.deep_water = b;
+                    }
+                    if let Some(b) = delta.uphill_ends_slide {
+                        profile.uphill_ends_slide = b;
+                    }
+                    if let Some(b) = delta.cave_slide {
+                        profile.cave_slide = b;
+                    }
+                }
             }
         }
 
@@ -193,9 +256,12 @@ impl RunState {
             relics: relics.clone(),
             pickups: Vec::new(),
             charges: charges.clone(),
+            enemy_items,
+            veteran,
         };
         let (terrain, actual_seed) = setup_temp.terrain();
-        let pickups = place_pickups(actual_seed, self.floor, self.size, &terrain, player);
+        let cartographer = relics.contains(&RelicEffect::Cartographer);
+        let pickups = place_pickups(actual_seed, self.floor, self.size, &terrain, player, cartographer);
 
         MatchSetup { pickups, ..setup_temp }
     }
@@ -295,13 +361,15 @@ fn place_pickups(
     size: u8,
     terrain: &Terrain,
     player: Side,
+    cartographer: bool,
 ) -> Vec<(Sq, Pickup)> {
-    let target_count = match size {
+    let base_count = match size {
         8 => 2,
         16 => 4,
         32 => 8,
         s => (s / 4).max(2) as usize,
     };
+    let target_count = if cartographer { base_count + 1 } else { base_count };
 
     let home = Position::home_rows(size);
     let start_pos = Position::start(size);
@@ -361,19 +429,36 @@ fn place_pickups(
         selected_squares.push(sq);
     }
 
-    const CASTABLE: [SpellId; 5] =
-        [SpellId::RaiseEarth, SpellId::LowerEarth, SpellId::Freeze, SpellId::Shield, SpellId::Swap];
+    const ALL_SPELLS: [SpellId; 8] = [
+        SpellId::RaiseEarth,
+        SpellId::LowerEarth,
+        SpellId::Freeze,
+        SpellId::Bridge,
+        SpellId::DigTunnel,
+        SpellId::Shield,
+        SpellId::Swap,
+        SpellId::Rewind,
+    ];
 
-    let has_run_item = floor >= 2 && rng.below(100) < 30 && !selected_squares.is_empty();
-    let run_item_idx =
-        if has_run_item { Some(rng.below(selected_squares.len() as u32) as usize) } else { None };
+    let mut run_item_indices = Vec::new();
+    if cartographer && !selected_squares.is_empty() {
+        let idx = rng.below(selected_squares.len() as u32) as usize;
+        run_item_indices.push(idx);
+    }
+    let has_run_item = floor >= 2 && rng.below(100) < 30 && selected_squares.len() > run_item_indices.len();
+    if has_run_item {
+        let remaining: Vec<usize> =
+            (0..selected_squares.len()).filter(|i| !run_item_indices.contains(i)).collect();
+        let idx = remaining[rng.below(remaining.len() as u32) as usize];
+        run_item_indices.push(idx);
+    }
 
     let mut pickups = Vec::with_capacity(selected_squares.len());
     for (i, sq) in selected_squares.into_iter().enumerate() {
-        let pickup = if Some(i) == run_item_idx {
+        let pickup = if run_item_indices.contains(&i) {
             Pickup::RunItem
         } else {
-            let spell = CASTABLE[rng.below(CASTABLE.len() as u32) as usize];
+            let spell = ALL_SPELLS[rng.below(ALL_SPELLS.len() as u32) as usize];
             Pickup::SpellCharge(spell)
         };
         pickups.push((sq, pickup));

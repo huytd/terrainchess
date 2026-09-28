@@ -31,6 +31,9 @@ pub struct ProfileDelta {
     /// Delta added to max slide drop before stopping.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_slide_drop: Option<i8>,
+    /// Whether a slide reaching an empty cave entrance may exit the linked cave.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cave_slide: Option<bool>,
 }
 
 /// Passive global relic effects.
@@ -40,6 +43,10 @@ pub enum RelicEffect {
     TectonicPact,
     /// Floors generate with roughness reduced by 0.15.
     CalmTerrain,
+    /// Shallow water on the player's half becomes sand.
+    TideCharm,
+    /// The match gets one extra pickup (always a RunItem) from floor 0.
+    Cartographer,
 }
 
 /// Active spells available in a run.
@@ -51,6 +58,7 @@ pub enum ItemKind {
     Enhancement { piece: PieceKind, delta: ProfileDelta },
     Relic { effect: RelicEffect },
     Spell { spell: SpellId, charges: u8, quick: bool },
+    Veteran,
 }
 
 /// String identifier for an item.

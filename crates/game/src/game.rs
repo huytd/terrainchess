@@ -41,6 +41,8 @@ pub struct GameState {
     pub swap_first: Option<Sq>,
     /// Events that occurred during the latest move or spell cast.
     pub events: Vec<GameEvent>,
+    /// Enemy enhancement item IDs active in this match.
+    pub enemy_items: Vec<String>,
 }
 
 pub const MAX_AI_LEVEL: u8 = 7;
@@ -53,6 +55,7 @@ impl GameState {
         let mut game = Match::new(terrain, setup.rules.clone(), Position::start(size));
         game.set_pickups(setup.pickups.clone());
         game.set_charges(setup.player, setup.charges.clone());
+        game.veteran = setup.veteran;
         GameState {
             size,
             seed,
@@ -68,6 +71,7 @@ impl GameState {
             armed_spell: None,
             swap_first: None,
             events: Vec::new(),
+            enemy_items: setup.enemy_items.clone(),
         }
     }
 
@@ -89,6 +93,7 @@ impl GameState {
             armed_spell: None,
             swap_first: None,
             events: Vec::new(),
+            enemy_items: Vec::new(),
         }
     }
 
@@ -115,6 +120,10 @@ impl GameState {
     }
 
     pub fn arm_spell(&mut self, spell: SpellId) {
+        if spell == SpellId::Rewind {
+            self.cast(SpellCast::Rewind);
+            return;
+        }
         self.armed_spell = Some(spell);
         self.swap_first = None;
         self.selected = None;
@@ -162,6 +171,41 @@ impl GameState {
                     _ => None,
                 })
                 .collect(),
+            SpellId::Bridge => targets
+                .into_iter()
+                .filter_map(|c| match c {
+                    SpellCast::Bridge(sq) => Some(sq),
+                    _ => None,
+                })
+                .collect(),
+            SpellId::DigTunnel => {
+                if let Some(first) = self.swap_first {
+                    let mut seconds = Vec::new();
+                    for c in targets {
+                        if let SpellCast::DigTunnel(a, b) = c {
+                            if a == first && !seconds.contains(&b) {
+                                seconds.push(b);
+                            } else if b == first && !seconds.contains(&a) {
+                                seconds.push(a);
+                            }
+                        }
+                    }
+                    seconds
+                } else {
+                    let mut firsts = Vec::new();
+                    for c in targets {
+                        if let SpellCast::DigTunnel(a, b) = c {
+                            if !firsts.contains(&a) {
+                                firsts.push(a);
+                            }
+                            if !firsts.contains(&b) {
+                                firsts.push(b);
+                            }
+                        }
+                    }
+                    firsts
+                }
+            }
             SpellId::Swap => {
                 if let Some(first) = self.swap_first {
                     let mut seconds = Vec::new();
@@ -197,9 +241,12 @@ impl GameState {
     pub fn cast(&mut self, cast: SpellCast) {
         let before = self.game.clone();
         let spell = cast.spell_id();
-        let squares = match cast {
-            SpellCast::RaiseEarth(sq) | SpellCast::LowerEarth(sq) | SpellCast::Shield(sq) => vec![sq],
-            SpellCast::Swap(a, b) => vec![a, b],
+        let mut squares = match cast {
+            SpellCast::RaiseEarth(sq)
+            | SpellCast::LowerEarth(sq)
+            | SpellCast::Shield(sq)
+            | SpellCast::Bridge(sq) => vec![sq],
+            SpellCast::Swap(a, b) | SpellCast::DigTunnel(a, b) => vec![a, b],
             SpellCast::Freeze(sq) => {
                 let size = before.terrain.size;
                 let mut frozen = Vec::new();
@@ -214,13 +261,33 @@ impl GameState {
                 }
                 frozen
             }
+            SpellCast::Rewind => Vec::new(),
         };
 
         if self.game.cast(cast).is_ok() {
-            self.undo.push(before);
+            if spell == SpellId::Rewind {
+                for sq in tc_core::board::squares(self.size) {
+                    if self.game.pos.get(sq).is_some() && self.game.pos.get(sq) != before.pos.get(sq) {
+                        squares.push(sq);
+                    }
+                }
+            }
+            self.undo.push(before.clone());
             self.outcome = self.game.outcome();
-            if matches!(spell, SpellId::RaiseEarth | SpellId::LowerEarth | SpellId::Freeze) {
+            if matches!(
+                spell,
+                SpellId::RaiseEarth
+                    | SpellId::LowerEarth
+                    | SpellId::Freeze
+                    | SpellId::Bridge
+                    | SpellId::DigTunnel
+                    | SpellId::Rewind
+            ) || before.terrain != self.game.terrain
+            {
                 self.terrain_dirty = true;
+            }
+            if matches!(spell, SpellId::Rewind) {
+                self.pieces_dirty = true;
             }
             self.events.push(GameEvent::Cast { spell, squares });
             if self.game.in_check()
@@ -246,9 +313,13 @@ impl GameState {
         let pickup_at = before.pickups.iter().find(|(sq, _)| *sq == mv.to).map(|(sq, _)| *sq);
 
         if self.game.play(mv).is_ok() {
-            self.undo.push(before);
+            self.undo.push(before.clone());
             self.outcome = self.game.outcome();
             self.animate = Some(mv);
+
+            if before.terrain != self.game.terrain {
+                self.terrain_dirty = true;
+            }
 
             if let Some((at, by_side)) = capture_info {
                 self.events.push(GameEvent::Captured { at, by_side });

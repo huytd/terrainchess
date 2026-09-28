@@ -14,22 +14,15 @@ fn game_with_fen(fen: &str) -> Match {
 }
 
 #[test]
-fn uncastable_spells_return_false_and_no_targets() {
-    let mut game = game_with_fen("7k/8/8/8/8/8/8/7K w - - 0 1");
-    assert!(!SpellId::Bridge.is_castable());
-    assert!(!SpellId::DigTunnel.is_castable());
-    assert!(!SpellId::Rewind.is_castable());
-
+fn all_spells_are_castable() {
+    assert!(SpellId::Bridge.is_castable());
+    assert!(SpellId::DigTunnel.is_castable());
+    assert!(SpellId::Rewind.is_castable());
     assert!(SpellId::RaiseEarth.is_castable());
     assert!(SpellId::LowerEarth.is_castable());
     assert!(SpellId::Freeze.is_castable());
     assert!(SpellId::Shield.is_castable());
     assert!(SpellId::Swap.is_castable());
-
-    game.set_charges(Side::White, vec![(SpellId::Bridge, 5), (SpellId::DigTunnel, 5), (SpellId::Rewind, 5)]);
-    assert!(game.cast_targets(SpellId::Bridge).is_empty());
-    assert!(game.cast_targets(SpellId::DigTunnel).is_empty());
-    assert!(game.cast_targets(SpellId::Rewind).is_empty());
 }
 
 #[test]
@@ -277,4 +270,174 @@ fn pickups_collected_by_moving_and_capturing() {
     game.play(Move::new(sq("a3"), sq("c2"), MoveKind::Normal)).unwrap();
     assert_eq!(game.run_items_collected[Side::White.index()], 1);
     assert!(game.pickups.is_empty(), "all pickups collected");
+}
+
+#[test]
+fn bridge_legality_and_effect() {
+    let fen = "7k/8/8/8/8/8/4P3/4K3 w - - 0 1";
+    let mut game = game_with_fen(fen);
+    game.set_charges(Side::White, vec![(SpellId::Bridge, 1)]);
+
+    // e2 pawn:
+    // e3 is north (orthogonal). Let's set it to ShallowWater.
+    game.terrain.get_mut(sq("e3")).kind = TileKind::ShallowWater;
+    // d2 is west (orthogonal). Let's set it to Void.
+    game.terrain.get_mut(sq("d2")).kind = TileKind::Void;
+    // f3 is northeast (diagonal). Let's set it to ShallowWater.
+    game.terrain.get_mut(sq("f3")).kind = TileKind::ShallowWater;
+    // b5 is far away ShallowWater.
+    game.terrain.get_mut(sq("b5")).kind = TileKind::ShallowWater;
+
+    let targets = game.cast_targets(SpellId::Bridge);
+    assert!(targets.contains(&SpellCast::Bridge(sq("e3"))), "orthogonal shallow water adjacent to pawn");
+    assert!(targets.contains(&SpellCast::Bridge(sq("d2"))), "orthogonal void adjacent to pawn");
+    assert!(!targets.contains(&SpellCast::Bridge(sq("f3"))), "diagonal water is not allowed");
+    assert!(!targets.contains(&SpellCast::Bridge(sq("b5"))), "distant water is not allowed");
+
+    // Cast Bridge on e3:
+    game.cast(SpellCast::Bridge(sq("e3"))).expect("cast bridge on e3");
+    assert_eq!(game.terrain.get(sq("e3")).kind, TileKind::Bridge);
+    assert!(!game.terrain.get(sq("e3")).is_water());
+    assert!(!game.terrain.get(sq("e3")).is_blocked());
+    assert_eq!(game.charge_count(Side::White, SpellId::Bridge), 0);
+    assert_eq!(game.pos.side_to_move, Side::Black, "bridge ends turn");
+}
+
+#[test]
+fn dig_tunnel_legality_and_effect() {
+    let fen = "7k/8/8/8/8/8/8/4K3 w - - 0 1";
+    let mut game = game_with_fen(fen);
+    game.set_charges(Side::White, vec![(SpellId::DigTunnel, 1)]);
+
+    // Chebyshev dist <= 2 from e1 (4, 0):
+    // c1 is (2, 0) -> dist 2.
+    // g1 is (6, 0) -> dist 2.
+    // c1 to g1 chebyshev dist is 4 >= 3.
+    let targets = game.cast_targets(SpellId::DigTunnel);
+    assert!(targets.contains(&SpellCast::DigTunnel(sq("c1"), sq("g1"))));
+
+    // Squares too close (< 3 apart): e1 to d2 dist 1, c1 to d1 dist 1
+    assert!(!targets.contains(&SpellCast::DigTunnel(sq("c1"), sq("d1"))));
+
+    // Cast dig tunnel on c1 and g1:
+    game.cast(SpellCast::DigTunnel(sq("c1"), sq("g1"))).expect("cast dig tunnel");
+    assert_eq!(game.charge_count(Side::White, SpellId::DigTunnel), 0);
+    assert_eq!(game.pos.side_to_move, Side::Black, "dig tunnel ends turn");
+
+    // Check cave features
+    let c1_feat = game.terrain.get(sq("c1")).feature;
+    let g1_feat = game.terrain.get(sq("g1")).feature;
+    match (c1_feat, g1_feat) {
+        (Feature::Cave(link1), Feature::Cave(link2)) => {
+            assert_eq!(link1, link2, "caves must share the same link id");
+        }
+        _ => panic!("both squares must have cave features"),
+    }
+    assert_eq!(game.timed_caves.len(), 1);
+
+    // Play 8 plies (moves) to expire the timed cave
+    for _ in 0..8 {
+        let mv = game.legal_moves()[0];
+        game.play(mv).unwrap();
+    }
+
+    // Now timed caves should have expired (reverted to Feature::None)
+    assert_eq!(game.terrain.get(sq("c1")).feature, Feature::None);
+    assert_eq!(game.terrain.get(sq("g1")).feature, Feature::None);
+    assert!(game.timed_caves.is_empty());
+}
+
+#[test]
+fn rewind_undoes_move_pair_and_spends_charge() {
+    let fen = "7k/8/8/8/8/8/8/R3K3 w - - 0 1";
+    let mut game = game_with_fen(fen);
+    game.set_charges(Side::White, vec![(SpellId::Rewind, 1)]);
+
+    // With 0 moves, rewind is illegal
+    assert!(game.cast_targets(SpellId::Rewind).is_empty());
+    assert!(game.cast(SpellCast::Rewind).is_err());
+
+    // Ply 1: White plays Ra1 -> a2
+    game.play(Move::new(sq("a1"), sq("a2"), MoveKind::Normal)).unwrap();
+    // With 1 move, rewind is still illegal
+    assert!(game.cast_targets(SpellId::Rewind).is_empty());
+    assert!(game.cast(SpellCast::Rewind).is_err());
+
+    // Ply 2: Black plays Kh8 -> g8
+    game.play(Move::new(sq("h8"), sq("g8"), MoveKind::Normal)).unwrap();
+
+    // Now 2 plies have been played! It is White's turn again.
+    assert_eq!(game.pos.side_to_move, Side::White);
+    let targets = game.cast_targets(SpellId::Rewind);
+    assert_eq!(targets, vec![SpellCast::Rewind]);
+
+    // Cast Rewind:
+    game.cast(SpellCast::Rewind).expect("rewind cast succeeds");
+    // Undoes the full pair: White rook back at a1, Black king back at h8!
+    assert!(game.pos.get(sq("a1")).is_some());
+    assert_eq!(game.pos.get(sq("a1")).unwrap().kind, PieceKind::Rook);
+    assert!(game.pos.get(sq("a2")).is_none());
+    assert_eq!(game.pos.get(sq("h8")).unwrap().kind, PieceKind::King);
+    assert!(game.pos.get(sq("g8")).is_none());
+
+    // Rewind charge is spent and not restored
+    assert_eq!(game.charge_count(Side::White, SpellId::Rewind), 0);
+    // Does NOT end turn: it is White's turn again
+    assert_eq!(game.pos.side_to_move, Side::White);
+}
+
+#[test]
+fn tunneler_bishops_slide_through_caves() {
+    // White bishop at c1. Cave entrance at e3 linked to cave exit at b6.
+    let fen = "7k/8/8/8/8/8/8/2B1K3 w - - 0 1";
+    let mut game = game_with_fen(fen);
+    game.terrain.get_mut(sq("e3")).feature = Feature::Cave(1);
+    game.terrain.get_mut(sq("b6")).feature = Feature::Cave(1);
+
+    // Standard bishop without cave_slide cannot reach b6
+    let moves = game.legal_moves();
+    assert!(!moves.iter().any(|m| m.to == sq("b6")));
+
+    // Enable cave_slide for White's bishop
+    let white_bishop = tc_core::Piece::new(PieceKind::Bishop, Side::White);
+    game.rules.profile_mut(white_bishop).cave_slide = true;
+
+    let moves2 = game.legal_moves();
+    let cave_move = moves2.iter().find(|m| m.from == sq("c1") && m.to == sq("b6"));
+    assert!(cave_move.is_some(), "tunneler bishop can slide into e3 and emerge at b6");
+    assert_eq!(cave_move.unwrap().kind, MoveKind::Cave);
+
+    // Play the cave move: bishop ends up at b6
+    game.play(*cave_move.unwrap()).unwrap();
+    assert_eq!(game.pos.get(sq("b6")).unwrap().kind, PieceKind::Bishop);
+    assert!(game.pos.get(sq("c1")).is_none());
+}
+
+#[test]
+fn veteran_pushes_piece_toward_back_rank_once() {
+    // White pawn at d4, Black rook at d8.
+    let fen = "3r3k/8/8/8/3P4/8/8/4K3 w - - 0 1";
+    let mut game = game_with_fen(fen);
+    game.set_veteran(Side::White, true);
+
+    // White plays dummy move Ke1 -> f1
+    game.play(Move::new(sq("e1"), sq("f1"), MoveKind::Normal)).unwrap();
+
+    // Black rook captures d8 -> d4
+    game.play(Move::new(sq("d8"), sq("d4"), MoveKind::Normal)).unwrap();
+
+    // Veteran activates! White pawn on d4 is pushed toward its back rank (d3),
+    // and Black rook lands on d4.
+    assert_eq!(game.pos.get(sq("d4")).unwrap().kind, PieceKind::Rook);
+    assert_eq!(game.pos.get(sq("d4")).unwrap().side, Side::Black);
+    assert_eq!(game.pos.get(sq("d3")).unwrap().kind, PieceKind::Pawn);
+    assert_eq!(game.pos.get(sq("d3")).unwrap().side, Side::White);
+    // Veteran flag is cleared
+    assert!(!game.veteran[Side::White.index()]);
+
+    // If Black rook captures d3 next, pawn is captured normally
+    game.play(Move::new(sq("f1"), sq("e1"), MoveKind::Normal)).unwrap();
+    game.play(Move::new(sq("d4"), sq("d3"), MoveKind::Normal)).unwrap();
+    assert_eq!(game.pos.get(sq("d3")).unwrap().kind, PieceKind::Rook);
+    assert_eq!(game.pos.get(sq("d3")).unwrap().side, Side::Black);
 }

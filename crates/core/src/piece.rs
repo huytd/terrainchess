@@ -125,6 +125,8 @@ pub struct MoveProfile {
     pub deep_water: bool,
     /// Jumps (knight) may only land where `|Δh|` is at most this.
     pub jump_max_dh: u8,
+    /// When a slide reaches an empty cave entrance, the linked exit is also a destination.
+    pub cave_slide: bool,
 }
 
 impl MoveProfile {
@@ -135,6 +137,7 @@ impl MoveProfile {
             uphill_ends_slide: true,
             deep_water: false,
             jump_max_dh: 2,
+            cave_slide: false,
         }
     }
 }

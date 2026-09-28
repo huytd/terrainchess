@@ -15,6 +15,6 @@ pub use board::Sq;
 pub use movegen::{Move, MoveKind};
 pub use piece::{MoveProfile, Piece, PieceKind, Side};
 pub use position::Position;
-pub use rules::{DrawReason, Match, Outcome, Pickup, Rules, TimedEffect};
+pub use rules::{DrawReason, Match, Outcome, Pickup, Rules, TimedCave, TimedEffect};
 pub use spell::{SpellCast, SpellId};
 pub use terrain::{Feature, Obstacle, Terrain, Tile, TileKind};

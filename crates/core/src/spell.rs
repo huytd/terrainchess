@@ -18,13 +18,9 @@ pub enum SpellId {
 }
 
 impl SpellId {
-    /// Spells that can currently be cast in the game.
-    /// Bridge, DigTunnel and Rewind are reserved for future phases.
+    /// Spells that can currently be cast in the game (all spells are castable).
     pub fn is_castable(&self) -> bool {
-        matches!(
-            self,
-            SpellId::RaiseEarth | SpellId::LowerEarth | SpellId::Freeze | SpellId::Shield | SpellId::Swap
-        )
+        true
     }
 
     /// Quick spells do not end the caster's turn.
@@ -39,8 +35,11 @@ pub enum SpellCast {
     RaiseEarth(Sq),
     LowerEarth(Sq),
     Freeze(Sq),
+    Bridge(Sq),
+    DigTunnel(Sq, Sq),
     Shield(Sq),
     Swap(Sq, Sq),
+    Rewind,
 }
 
 impl SpellCast {
@@ -49,13 +48,16 @@ impl SpellCast {
             SpellCast::RaiseEarth(_) => SpellId::RaiseEarth,
             SpellCast::LowerEarth(_) => SpellId::LowerEarth,
             SpellCast::Freeze(_) => SpellId::Freeze,
+            SpellCast::Bridge(_) => SpellId::Bridge,
+            SpellCast::DigTunnel(_, _) => SpellId::DigTunnel,
             SpellCast::Shield(_) => SpellId::Shield,
             SpellCast::Swap(_, _) => SpellId::Swap,
+            SpellCast::Rewind => SpellId::Rewind,
         }
     }
 
     /// Whether this cast is a quick spell that does not end the turn.
     pub fn is_quick(&self) -> bool {
-        self.spell_id().is_quick()
+        matches!(self, SpellCast::Shield(_) | SpellCast::Rewind)
     }
 }

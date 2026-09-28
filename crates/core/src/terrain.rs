@@ -15,6 +15,7 @@ pub enum TileKind {
     DeepWater,
     Void,
     Ice,
+    Bridge,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]

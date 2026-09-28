@@ -377,7 +377,24 @@ pub fn process_game_events(state: Res<GameState>, mut spawner: FxSpawner) {
                         spawner.spawn_tornado(spot + Vec3::Y * 0.35);
                     }
                 }
-                _ => {}
+                SpellId::Bridge => {
+                    for &sq in squares {
+                        let spot = square_top(sq, state.game.terrain.height(sq));
+                        spawner.spawn_dust(spot + Vec3::Y * 0.2);
+                    }
+                }
+                SpellId::DigTunnel => {
+                    for &sq in squares {
+                        let spot = square_top(sq, state.game.terrain.height(sq));
+                        spawner.spawn_dirt(spot + Vec3::Y * 0.2);
+                    }
+                }
+                SpellId::Rewind => {
+                    for &sq in squares {
+                        let spot = square_top(sq, state.game.terrain.height(sq));
+                        spawner.spawn_sparkle(spot + Vec3::Y * 0.35);
+                    }
+                }
             },
             GameEvent::Promoted { at } => {
                 let spot = square_top(*at, state.game.terrain.height(*at));

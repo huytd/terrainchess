@@ -326,6 +326,7 @@ fn spawn_terrain(
             TileKind::ShallowWater => "shallow_0",
             TileKind::DeepWater => "deep",
             TileKind::Ice => "ice",
+            TileKind::Bridge => "flagstone",
             TileKind::Void => "void",
         };
         let checker = if (sq.x + sq.y) % 2 == 0 { 0.88 } else { 1.0 };
@@ -604,7 +605,7 @@ fn spawn_overlays(
         paint.mark(sq, "ov_ring", 0.7, Color::srgb_u8(0xFF, 0xD3, 0x5A));
     }
     if let Some(spell) = state.armed_spell {
-        if spell == tc_core::SpellId::Swap
+        if matches!(spell, tc_core::SpellId::Swap | tc_core::SpellId::DigTunnel)
             && let Some(first) = state.swap_first
         {
             paint.mark(first, "ov_select", 0.95, Color::WHITE);

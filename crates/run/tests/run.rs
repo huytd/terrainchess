@@ -28,12 +28,14 @@ fn item_files_parse_and_ids_are_unique() {
         "momentum_bishops",
         "long_jump_knights",
         "daring_queens",
+        "tunneler_bishops",
+        "veteran",
     ];
     for id in expected_enhancements {
         assert!(ids.contains(&id.to_string()), "missing enhancement item: {id}");
     }
 
-    let expected_relics = ["tectonic_pact", "calm_terrain"];
+    let expected_relics = ["tectonic_pact", "calm_terrain", "tide_charm", "cartographer"];
     for id in expected_relics {
         assert!(ids.contains(&id.to_string()), "missing relic item: {id}");
     }
@@ -417,4 +419,116 @@ fn player_charges_from_owned_spell_items() {
     assert_eq!(setup.charges.len(), 2);
     assert!(setup.charges.contains(&(SpellId::RaiseEarth, 2)));
     assert!(setup.charges.contains(&(SpellId::Shield, 1)));
+}
+
+#[test]
+fn tide_charm_converts_shallow_water_on_player_half_to_sand() {
+    let size = 8u8;
+    let mut run = RunState::new(42, size);
+    let setup_without = run.match_setup();
+    let (terrain_without, _) = setup_without.terrain();
+
+    run.owned.push("tide_charm".into());
+    let setup_with = run.match_setup();
+    let (terrain_with, _) = setup_with.terrain();
+
+    let mid = size / 2;
+    for y in 0..size {
+        for x in 0..size {
+            let sq = Sq::new(x, y);
+            let kind_without = terrain_without.get(sq).kind;
+            let kind_with = terrain_with.get(sq).kind;
+
+            if y < mid {
+                // Player's half
+                if kind_without == TileKind::ShallowWater {
+                    assert_eq!(kind_with, TileKind::Sand, "shallow water on player half should become sand");
+                } else {
+                    assert_eq!(kind_with, kind_without);
+                }
+            } else {
+                // Opponent's half
+                assert_eq!(kind_with, kind_without, "opponent half should remain untouched");
+            }
+        }
+    }
+}
+
+#[test]
+fn cartographer_relic_guarantees_extra_run_item_pickup() {
+    let size = 8u8;
+    // On floor 0 without cartographer: 2 pickups, none is RunItem
+    let run = RunState::new(12345, size);
+    let setup = run.match_setup();
+    assert_eq!(setup.pickups.len(), 2);
+    assert!(!setup.pickups.iter().any(|(_, p)| matches!(p, Pickup::RunItem)));
+
+    // On floor 0 with cartographer: 3 pickups (2 + 1), and at least one is RunItem
+    let mut run_carto = RunState::new(12345, size);
+    run_carto.owned.push("cartographer".into());
+    let setup_carto = run_carto.match_setup();
+    assert_eq!(setup_carto.pickups.len(), 3);
+    assert!(
+        setup_carto.pickups.iter().any(|(_, p)| matches!(p, Pickup::RunItem)),
+        "cartographer must guarantee a RunItem pickup from floor 0"
+    );
+}
+
+#[test]
+fn tunneler_bishops_and_veteran_enhancements_applied() {
+    let mut run = RunState::new(101, 8);
+    let white_bishop = Piece::new(PieceKind::Bishop, Side::White);
+    let black_bishop = Piece::new(PieceKind::Bishop, Side::Black);
+
+    let setup0 = run.match_setup();
+    assert!(!setup0.rules.profile(white_bishop).cave_slide);
+    assert_eq!(setup0.veteran, [false, false]);
+
+    run.owned.push("tunneler_bishops".into());
+    run.owned.push("veteran".into());
+    let setup1 = run.match_setup();
+    assert!(setup1.rules.profile(white_bishop).cave_slide);
+    assert!(!setup1.rules.profile(black_bishop).cave_slide);
+    assert_eq!(setup1.veteran, [true, false]);
+}
+
+#[test]
+fn enemy_enhancements_from_floor_3_on() {
+    // Floors 0..3: no enemy items
+    for floor in 0..3 {
+        let mut run = RunState::new(777, 8);
+        run.floor = floor;
+        let setup = run.match_setup();
+        assert!(setup.enemy_items.is_empty(), "floor {floor} should have no enemy items");
+    }
+
+    // Floor 3: 1 enemy item
+    let mut run3 = RunState::new(777, 8);
+    run3.floor = 3;
+    let setup3 = run3.match_setup();
+    assert_eq!(setup3.enemy_items.len(), 1, "floor 3 should have 1 enemy item");
+
+    // Floor 4: 1 enemy item ((4-3)/2 + 1 = 1)
+    let mut run4 = RunState::new(777, 8);
+    run4.floor = 4;
+    let setup4 = run4.match_setup();
+    assert_eq!(setup4.enemy_items.len(), 1, "floor 4 should have 1 enemy item");
+
+    // Floor 5: 2 enemy items ((5-3)/2 + 1 = 2)
+    let mut run5 = RunState::new(777, 8);
+    run5.floor = 5;
+    let setup5 = run5.match_setup();
+    assert_eq!(setup5.enemy_items.len(), 2, "floor 5 should have 2 enemy items");
+
+    // Floor 7: 3 enemy items ((7-3)/2 + 1 = 3)
+    let mut run7 = RunState::new(777, 8);
+    run7.floor = 7;
+    let setup7 = run7.match_setup();
+    assert_eq!(setup7.enemy_items.len(), 3, "floor 7 should have 3 enemy items");
+
+    // Deterministic from match seed
+    let mut run7_b = RunState::new(777, 8);
+    run7_b.floor = 7;
+    let setup7_b = run7_b.match_setup();
+    assert_eq!(setup7.enemy_items, setup7_b.enemy_items, "enemy items must be deterministic");
 }

@@ -409,6 +409,16 @@ fn tap_board(
                 tc_core::SpellId::LowerEarth => state.cast(tc_core::SpellCast::LowerEarth(sq)),
                 tc_core::SpellId::Freeze => state.cast(tc_core::SpellCast::Freeze(sq)),
                 tc_core::SpellId::Shield => state.cast(tc_core::SpellCast::Shield(sq)),
+                tc_core::SpellId::Bridge => state.cast(tc_core::SpellCast::Bridge(sq)),
+                tc_core::SpellId::DigTunnel => {
+                    if let Some(first) = state.swap_first {
+                        let (a, b) = if first < sq { (first, sq) } else { (sq, first) };
+                        state.cast(tc_core::SpellCast::DigTunnel(a, b));
+                    } else {
+                        state.swap_first = Some(sq);
+                        state.pieces_dirty = true;
+                    }
+                }
                 tc_core::SpellId::Swap => {
                     if let Some(first) = state.swap_first {
                         state.cast(tc_core::SpellCast::Swap(first, sq));
@@ -417,7 +427,7 @@ fn tap_board(
                         state.pieces_dirty = true;
                     }
                 }
-                _ => state.disarm(),
+                tc_core::SpellId::Rewind => state.cast(tc_core::SpellCast::Rewind),
             }
         } else {
             state.disarm();

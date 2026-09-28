@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::board::{Sq, squares};
-use crate::movegen::{Ctx, Move};
+use crate::movegen::{Ctx, Move, MoveKind};
 use crate::piece::{MoveProfile, Piece, PieceKind, Side};
 use crate::position::Position;
 use crate::spell::{SpellCast, SpellId};
@@ -21,6 +21,15 @@ pub enum Pickup {
 pub struct TimedEffect {
     pub sq: Sq,
     pub original_kind: TileKind,
+    pub remaining_plies: u8,
+}
+
+/// A timed cave link that reverts after a number of plies.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TimedCave {
+    pub a: Sq,
+    pub b: Sq,
+    pub link: u8,
     pub remaining_plies: u8,
 }
 
@@ -43,6 +52,10 @@ impl Rules {
 
     pub fn profile(&self, piece: Piece) -> &MoveProfile {
         &self.profiles[piece.side.index()][piece.kind.index()]
+    }
+
+    pub fn profile_mut(&mut self, piece: Piece) -> &mut MoveProfile {
+        &mut self.profiles[piece.side.index()][piece.kind.index()]
     }
 }
 
@@ -71,8 +84,11 @@ pub struct Match {
     pub moves: Vec<Move>,
     pub charges: [Vec<(SpellId, u8)>; 2],
     pub timed_effects: Vec<TimedEffect>,
+    pub timed_caves: Vec<TimedCave>,
     pub pickups: Vec<(Sq, Pickup)>,
     pub run_items_collected: [u8; 2],
+    pub veteran: [bool; 2],
+    pub snapshots: Vec<Match>,
 }
 
 impl Match {
@@ -87,9 +103,16 @@ impl Match {
             moves: Vec::new(),
             charges: [Vec::new(), Vec::new()],
             timed_effects: Vec::new(),
+            timed_caves: Vec::new(),
             pickups: Vec::new(),
             run_items_collected: [0, 0],
+            veteran: [false, false],
+            snapshots: Vec::new(),
         }
+    }
+
+    pub fn set_veteran(&mut self, side: Side, active: bool) {
+        self.veteran[side.index()] = active;
     }
 
     pub fn set_charges(&mut self, side: Side, charges: Vec<(SpellId, u8)>) {
@@ -134,6 +157,19 @@ impl Match {
             }
         }
         self.timed_effects.retain(|e| e.remaining_plies > 0);
+
+        for cave in &mut self.timed_caves {
+            cave.remaining_plies = cave.remaining_plies.saturating_sub(1);
+            if cave.remaining_plies == 0 {
+                if self.terrain.get(cave.a).feature == Feature::Cave(cave.link) {
+                    self.terrain.get_mut(cave.a).feature = Feature::None;
+                }
+                if self.terrain.get(cave.b).feature == Feature::Cave(cave.link) {
+                    self.terrain.get_mut(cave.b).feature = Feature::None;
+                }
+            }
+        }
+        self.timed_caves.retain(|c| c.remaining_plies > 0);
     }
 
     /// Play a move if it is legal.
@@ -142,7 +178,49 @@ impl Match {
             return Err(format!("illegal move {}", mv.uci()));
         }
         let side = self.pos.side_to_move;
+
+        // Record snapshot before the move (capped at 4)
+        let mut snap = self.clone();
+        snap.snapshots.clear();
+        if self.snapshots.len() == 4 {
+            self.snapshots.remove(0);
+        }
+        self.snapshots.push(snap);
+
+        let moving_side = side;
+        let victim_side = moving_side.opposite();
+        let victim_info = match mv.kind {
+            MoveKind::EnPassant => {
+                let victim_sq = Sq::new(mv.to.x, mv.from.y);
+                self.pos.get(victim_sq).map(|p| (victim_sq, p))
+            }
+            _ => self.pos.get(mv.to).map(|p| (mv.to, p)),
+        };
+
+        let mut veteran_pushed = None;
+        if let Some((victim_sq, victim_piece)) = victim_info
+            && victim_piece.side == victim_side
+            && victim_piece.kind != PieceKind::King
+            && self.veteran[victim_side.index()]
+        {
+            self.veteran[victim_side.index()] = false;
+            let push_dy = -victim_side.forward();
+            if let Some(push_sq) = victim_sq.offset(0, push_dy, self.terrain.size) {
+                let is_empty = push_sq == mv.from || self.pos.get(push_sq).is_none();
+                let tile = self.terrain.get(push_sq);
+                let prof = self.rules.profile(victim_piece);
+                let is_standable =
+                    !tile.is_blocked() && (prof.deep_water || tile.kind != TileKind::DeepWater);
+                if is_empty && is_standable {
+                    veteran_pushed = Some((push_sq, victim_piece));
+                }
+            }
+        }
+
         self.pos.make_move(mv);
+        if let Some((push_sq, victim_piece)) = veteran_pushed {
+            self.pos.set(push_sq, Some(victim_piece));
+        }
 
         // Collect pickup if the move ended on a pickup square
         if let Some(idx) = self.pickups.iter().position(|(sq, _)| *sq == mv.to) {
@@ -274,7 +352,76 @@ impl Match {
                     }
                 }
             }
-            SpellId::Bridge | SpellId::DigTunnel | SpellId::Rewind => {}
+            SpellId::Bridge => {
+                for sq in squares(size) {
+                    let tile = self.terrain.get(sq);
+                    if !matches!(tile.kind, TileKind::ShallowWater | TileKind::DeepWater | TileKind::Void) {
+                        continue;
+                    }
+                    let is_adjacent = crate::board::ORTHO.iter().any(|&(dx, dy)| {
+                        sq.offset(dx, dy, size)
+                            .is_some_and(|adj| self.pos.get(adj).is_some_and(|p| p.side == side))
+                    });
+                    if !is_adjacent {
+                        continue;
+                    }
+                    let mut clone = self.clone();
+                    clone.terrain.get_mut(sq).kind = TileKind::Bridge;
+                    if !clone.in_check() {
+                        out.push(SpellCast::Bridge(sq));
+                    }
+                }
+            }
+            SpellId::DigTunnel => {
+                let friendly_sqs: Vec<Sq> =
+                    squares(size).filter(|&s| self.pos.get(s).is_some_and(|p| p.side == side)).collect();
+                let candidates: Vec<Sq> = squares(size)
+                    .filter(|&sq| {
+                        if self.pos.get(sq).is_some() {
+                            return false;
+                        }
+                        let tile = self.terrain.get(sq);
+                        if tile.is_blocked()
+                            || tile.kind == TileKind::DeepWater
+                            || tile.feature != Feature::None
+                        {
+                            return false;
+                        }
+                        friendly_sqs.iter().any(|&p_sq| {
+                            (sq.x as i16 - p_sq.x as i16).abs().max((sq.y as i16 - p_sq.y as i16).abs()) <= 2
+                        })
+                    })
+                    .collect();
+
+                for i in 0..candidates.len() {
+                    for j in (i + 1)..candidates.len() {
+                        let a = candidates[i];
+                        let b = candidates[j];
+                        let dist = (a.x as i16 - b.x as i16).abs().max((a.y as i16 - b.y as i16).abs());
+                        if dist < 3 {
+                            continue;
+                        }
+                        let link = (0..=u8::MAX)
+                            .find(|&cand| {
+                                !squares(size).any(|s| {
+                                    matches!(self.terrain.get(s).feature, Feature::Cave(id) if id == cand)
+                                })
+                            })
+                            .unwrap_or(255);
+                        let mut clone = self.clone();
+                        clone.terrain.get_mut(a).feature = Feature::Cave(link);
+                        clone.terrain.get_mut(b).feature = Feature::Cave(link);
+                        if !clone.in_check() {
+                            out.push(SpellCast::DigTunnel(a, b));
+                        }
+                    }
+                }
+            }
+            SpellId::Rewind => {
+                if self.snapshots.len() >= 2 && self.moves.len() >= 2 {
+                    out.push(SpellCast::Rewind);
+                }
+            }
         }
 
         out
@@ -290,10 +437,21 @@ impl Match {
         }
         let canonical_cast = match cast {
             SpellCast::Swap(a, b) if a > b => SpellCast::Swap(b, a),
+            SpellCast::DigTunnel(a, b) if a > b => SpellCast::DigTunnel(b, a),
             other => other,
         };
         if !self.cast_targets(spell).contains(&canonical_cast) {
             return Err(format!("illegal cast {:?}", cast));
+        }
+
+        // Record snapshot before turn-ending cast
+        if !cast.is_quick() && !matches!(cast, SpellCast::Rewind) {
+            let mut snap = self.clone();
+            snap.snapshots.clear();
+            if self.snapshots.len() == 4 {
+                self.snapshots.remove(0);
+            }
+            self.snapshots.push(snap);
         }
 
         // Spend one charge
@@ -331,6 +489,21 @@ impl Match {
                     }
                 }
             }
+            SpellCast::Bridge(sq) => {
+                let tile = self.terrain.get_mut(sq);
+                tile.kind = TileKind::Bridge;
+            }
+            SpellCast::DigTunnel(a, b) => {
+                let link = (0..=u8::MAX)
+                    .find(|&cand| {
+                        !squares(self.terrain.size)
+                            .any(|s| matches!(self.terrain.get(s).feature, Feature::Cave(id) if id == cand))
+                    })
+                    .unwrap_or(255);
+                self.terrain.get_mut(a).feature = Feature::Cave(link);
+                self.terrain.get_mut(b).feature = Feature::Cave(link);
+                self.timed_caves.push(TimedCave { a, b, link, remaining_plies: 8 });
+            }
             SpellCast::Shield(sq) => {
                 self.pos.shield = Some((sq, side));
             }
@@ -351,6 +524,21 @@ impl Match {
                         }
                     }
                 }
+            }
+            SpellCast::Rewind => {
+                if self.snapshots.len() < 2 || self.moves.len() < 2 {
+                    return Err("fewer than two plies of history to rewind".to_string());
+                }
+                let target_idx = self.snapshots.len() - 2;
+                let mut target = self.snapshots[target_idx].clone();
+                let remaining_snapshots: Vec<Match> = self.snapshots[..target_idx].to_vec();
+                target.snapshots = remaining_snapshots;
+                if let Some(entry) =
+                    target.charges[side.index()].iter_mut().find(|(s, _)| *s == SpellId::Rewind)
+                {
+                    entry.1 = entry.1.saturating_sub(1);
+                }
+                *self = target;
             }
         }
 
@@ -375,6 +563,21 @@ impl Match {
                 }
             }
             self.timed_effects.retain(|e| e.remaining_plies > 0);
+
+            for cave in &mut self.timed_caves {
+                if !matches!(cast, SpellCast::DigTunnel(_, _)) || cave.remaining_plies < 8 {
+                    cave.remaining_plies = cave.remaining_plies.saturating_sub(1);
+                    if cave.remaining_plies == 0 {
+                        if self.terrain.get(cave.a).feature == Feature::Cave(cave.link) {
+                            self.terrain.get_mut(cave.a).feature = Feature::None;
+                        }
+                        if self.terrain.get(cave.b).feature == Feature::Cave(cave.link) {
+                            self.terrain.get_mut(cave.b).feature = Feature::None;
+                        }
+                    }
+                }
+            }
+            self.timed_caves.retain(|c| c.remaining_plies > 0);
 
             self.history.push(self.pos.hash());
         }

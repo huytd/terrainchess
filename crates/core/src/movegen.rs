@@ -96,7 +96,7 @@ impl Ctx<'_> {
         prof: &MoveProfile,
         from: Sq,
         dir: (i8, i8),
-        f: &mut impl FnMut(Sq) -> bool,
+        f: &mut impl FnMut(Sq, bool) -> bool,
     ) -> bool {
         // A piece standing in shallow water can't move 2+ squares.
         let max_steps = if self.in_shallow_water(from) { 1 } else { usize::MAX };
@@ -106,8 +106,15 @@ impl Ctx<'_> {
             if !self.can_step(prof, cur, next) {
                 break;
             }
-            if f(next) {
+            if f(next, false) {
                 return true;
+            }
+            if prof.cave_slide && pos.get(next).is_none() {
+                for exit in self.terrain.cave_exits(next) {
+                    if self.can_stand(prof, exit) && f(exit, true) {
+                        return true;
+                    }
+                }
             }
             if pos.get(next).is_some() || self.slide_ends(prof, cur, next) {
                 break;
@@ -117,15 +124,13 @@ impl Ctx<'_> {
         false
     }
 
-    /// Every square `piece` at `from` reaches by its movement pattern: it moves to these
-    /// when empty and captures on them when they hold an enemy no higher than `from`.
-    /// Pawn pushes are not included. `f` returns true to stop early.
-    pub fn for_each_attack(
+    /// Extended attack generation that indicates whether a target was reached via cave hop.
+    pub fn for_each_attack_ext(
         &self,
         pos: &Position,
         from: Sq,
         piece: Piece,
-        f: &mut impl FnMut(Sq) -> bool,
+        f: &mut impl FnMut(Sq, bool) -> bool,
     ) -> bool {
         let size = self.size();
         let prof = self.rules.profile(piece);
@@ -134,7 +139,7 @@ impl Ctx<'_> {
                 for dx in [-1, 1] {
                     if let Some(to) = from.offset(dx, piece.side.forward(), size)
                         && self.can_step(prof, from, to)
-                        && f(to)
+                        && f(to, false)
                     {
                         return true;
                     }
@@ -146,7 +151,7 @@ impl Ctx<'_> {
                     for (dx, dy) in KNIGHT {
                         if let Some(to) = from.offset(dx, dy, size)
                             && self.can_land_jump(prof, from, to)
-                            && f(to)
+                            && f(to, false)
                         {
                             return true;
                         }
@@ -158,7 +163,7 @@ impl Ctx<'_> {
                 for (dx, dy) in KING {
                     if let Some(to) = from.offset(dx, dy, size)
                         && self.can_step(prof, from, to)
-                        && f(to)
+                        && f(to, false)
                     {
                         return true;
                     }
@@ -176,11 +181,24 @@ impl Ctx<'_> {
         }
         // One tunnel hop, for any piece type.
         for exit in self.terrain.cave_exits(from) {
-            if self.can_stand(prof, exit) && f(exit) {
+            if self.can_stand(prof, exit) && f(exit, true) {
                 return true;
             }
         }
         false
+    }
+
+    /// Every square `piece` at `from` reaches by its movement pattern: it moves to these
+    /// when empty and captures on them when they hold an enemy no higher than `from`.
+    /// Pawn pushes are not included. `f` returns true to stop early.
+    pub fn for_each_attack(
+        &self,
+        pos: &Position,
+        from: Sq,
+        piece: Piece,
+        f: &mut impl FnMut(Sq) -> bool,
+    ) -> bool {
+        self.for_each_attack_ext(pos, from, piece, &mut |sq, _| f(sq))
     }
 
     pub fn is_attacked(&self, pos: &Position, target: Sq, by: Side) -> bool {
@@ -204,8 +222,7 @@ impl Ctx<'_> {
                 self.pawn_moves(pos, from, piece, out);
                 continue;
             }
-            let caves: Vec<Sq> = self.terrain.cave_exits(from).collect();
-            self.for_each_attack(pos, from, piece, &mut |to| {
+            self.for_each_attack_ext(pos, from, piece, &mut |to, is_cave| {
                 let open = match pos.get(to) {
                     None => true,
                     Some(p) => {
@@ -215,8 +232,15 @@ impl Ctx<'_> {
                     }
                 };
                 if open {
-                    let kind = if caves.contains(&to) { MoveKind::Cave } else { MoveKind::Normal };
-                    out.push(Move::new(from, to, kind));
+                    let is_direct_cave = self.terrain.cave_exits(from).any(|e| e == to);
+                    let kind = if is_cave || is_direct_cave { MoveKind::Cave } else { MoveKind::Normal };
+                    if let Some(existing) = out.iter_mut().find(|m| m.from == from && m.to == to) {
+                        if kind == MoveKind::Cave {
+                            existing.kind = MoveKind::Cave;
+                        }
+                    } else {
+                        out.push(Move::new(from, to, kind));
+                    }
                 }
                 false
             });

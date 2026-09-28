@@ -22,6 +22,9 @@ struct FloorBadge;
 struct FloorBadgeText;
 
 #[derive(Component)]
+struct FloorBadgeEnemyText;
+
+#[derive(Component)]
 struct TitleOverlay;
 
 #[derive(Component)]
@@ -70,6 +73,8 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
                 padding: UiRect::axes(Val::Px(14.0), Val::Px(8.0)),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(2.0),
                 ..default()
             },
             ImageNode {
@@ -79,12 +84,20 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
                 ..default()
             },
         ))
-        .with_child((
-            Text::new(""),
-            TextFont { font_size: FontSize::Px(16.0), ..default() },
-            TextColor(INK_WOOD),
-            FloorBadgeText,
-        ));
+        .with_children(|badge| {
+            badge.spawn((
+                Text::new(""),
+                TextFont { font_size: FontSize::Px(16.0), ..default() },
+                TextColor(INK_WOOD),
+                FloorBadgeText,
+            ));
+            badge.spawn((
+                Text::new(""),
+                TextFont { font_size: FontSize::Px(12.0), ..default() },
+                TextColor(INK_WOOD),
+                FloorBadgeEnemyText,
+            ));
+        });
 
     // Menu button at the top-right corner
     commands
@@ -115,7 +128,12 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
         ));
 }
 
-fn update_floor_badge(run: Res<Run>, mut q: Query<&mut Text, With<FloorBadgeText>>) {
+fn update_floor_badge(
+    run: Res<Run>,
+    state: Res<GameState>,
+    mut q: Query<&mut Text, (With<FloorBadgeText>, Without<FloorBadgeEnemyText>)>,
+    mut q_enemy: Query<&mut Text, With<FloorBadgeEnemyText>>,
+) {
     for mut text in &mut q {
         let label = if run.sandbox {
             "Sandbox".to_string()
@@ -126,6 +144,22 @@ fn update_floor_badge(run: Res<Run>, mut q: Query<&mut Text, With<FloorBadgeText
         };
         if text.0 != label {
             text.0 = label;
+        }
+    }
+
+    for mut text in &mut q_enemy {
+        let enemy_label = if !run.sandbox && run.state.floor >= 3 && !state.enemy_items.is_empty() {
+            let names: Vec<_> = state
+                .enemy_items
+                .iter()
+                .map(|id| tc_run::find_item(id).map(|item| item.name.as_str()).unwrap_or(id.as_str()))
+                .collect();
+            format!("Enemy: {}", names.join(", "))
+        } else {
+            String::new()
+        };
+        if text.0 != enemy_label {
+            text.0 = enemy_label;
         }
     }
 }
@@ -230,7 +264,9 @@ fn sync_overlays(
                                     tc_run::Rarity::Uncommon | tc_run::Rarity::Rare => INK_WOOD,
                                 };
                                 let kind_str = match &item.kind {
-                                    ItemKind::Enhancement { .. } => "Enhancement".to_string(),
+                                    ItemKind::Enhancement { .. } | ItemKind::Veteran => {
+                                        "Enhancement".to_string()
+                                    }
                                     ItemKind::Relic { .. } => "Relic".to_string(),
                                     ItemKind::Spell { charges, .. } => {
                                         if *charges == 1 {
