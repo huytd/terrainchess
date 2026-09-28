@@ -1,6 +1,6 @@
 [workspace]
 resolver = "3"
-members = ["crates/core", "crates/ai", "crates/game"]
+members = ["crates/core", "crates/ai", "crates/run", "crates/game"]
 
 [workspace.package]
 version = "0.1.0"
@@ -9,6 +9,7 @@ edition = "2024"
 [workspace.dependencies]
 tc_core = { path = "crates/core" }
 tc_ai = { path = "crates/ai" }
+tc_run = { path = "crates/run" }
 # Only what the 3D board needs: no UI, text, picking, audio or gamepads, to keep the web
 # build small.
 bevy = { version = "=0.19.1", default-features = false, features = [

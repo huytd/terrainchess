@@ -1,0 +1,20 @@
+[
+    (
+        id: "tectonic_pact",
+        name: "Tectonic Pact",
+        description: "Your home ranks start 1 level higher.",
+        rarity: Rare,
+        kind: Relic(
+            effect: TectonicPact,
+        ),
+    ),
+    (
+        id: "calm_terrain",
+        name: "Calm Terrain",
+        description: "Floors generate with gentler, calmer terrain.",
+        rarity: Uncommon,
+        kind: Relic(
+            effect: CalmTerrain,
+        ),
+    ),
+]

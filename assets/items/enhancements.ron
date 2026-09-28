@@ -1,0 +1,74 @@
+[
+    (
+        id: "mountaineer_rooks",
+        name: "Mountaineer Rooks",
+        description: "Rooks can climb cliffs one level higher.",
+        rarity: Common,
+        kind: Enhancement(
+            piece: Rook,
+            delta: (
+                max_climb: Some(1),
+            ),
+        ),
+    ),
+    (
+        id: "amphibious_knights",
+        name: "Amphibious Knights",
+        description: "Knights can land in deep water.",
+        rarity: Uncommon,
+        kind: Enhancement(
+            piece: Knight,
+            delta: (
+                deep_water: Some(true),
+            ),
+        ),
+    ),
+    (
+        id: "surefooted_pawns",
+        name: "Surefooted Pawns",
+        description: "Pawns can climb cliffs one level higher.",
+        rarity: Common,
+        kind: Enhancement(
+            piece: Pawn,
+            delta: (
+                max_climb: Some(1),
+            ),
+        ),
+    ),
+    (
+        id: "momentum_bishops",
+        name: "Momentum Bishops",
+        description: "Bishops no longer end their slide when moving uphill.",
+        rarity: Uncommon,
+        kind: Enhancement(
+            piece: Bishop,
+            delta: (
+                uphill_ends_slide: Some(false),
+            ),
+        ),
+    ),
+    (
+        id: "long_jump_knights",
+        name: "Long-Jump Knights",
+        description: "Knights can jump across higher cliffs.",
+        rarity: Uncommon,
+        kind: Enhancement(
+            piece: Knight,
+            delta: (
+                jump_max_dh: Some(1),
+            ),
+        ),
+    ),
+    (
+        id: "daring_queens",
+        name: "Daring Queens",
+        description: "Queens can drop from higher cliffs without ending their slide.",
+        rarity: Rare,
+        kind: Enhancement(
+            piece: Queen,
+            delta: (
+                max_slide_drop: Some(1),
+            ),
+        ),
+    ),
+]

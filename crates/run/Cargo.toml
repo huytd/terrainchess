@@ -1,0 +1,10 @@
+[package]
+name = "tc_run"
+version.workspace = true
+edition.workspace = true
+description = "Terrain Chess roguelike run layer: run state, items, reward draft, save/load."
+
+[dependencies]
+tc_core.workspace = true
+serde.workspace = true
+ron.workspace = true

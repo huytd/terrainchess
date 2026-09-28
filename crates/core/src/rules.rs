@@ -1,12 +1,14 @@
 //! Match state: rules configuration, legal play, and end-of-game detection.
 
+use serde::{Deserialize, Serialize};
+
 use crate::movegen::{Ctx, Move};
 use crate::piece::{MoveProfile, Piece, PieceKind, Side};
 use crate::position::Position;
 use crate::terrain::Terrain;
 
 /// Per-side movement profiles. Run upgrades edit these numbers.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Rules {
     pub profiles: [[MoveProfile; 6]; 2],
     /// Pawns may double-step while on this relative rank or lower.

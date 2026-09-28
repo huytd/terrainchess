@@ -1,7 +1,9 @@
 //! Small seeded RNG (SplitMix64). Deterministic on every platform, so the same seed
 //! always gives the same board, and trivially serialisable for run saves.
 
-#[derive(Clone, Debug)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Rng {
     state: u64,
 }
@@ -9,6 +11,11 @@ pub struct Rng {
 impl Rng {
     pub fn new(seed: u64) -> Self {
         Rng { state: seed }
+    }
+
+    /// Current internal RNG state.
+    pub fn state(&self) -> u64 {
+        self.state
     }
 
     pub fn next_u64(&mut self) -> u64 {

@@ -1,6 +1,8 @@
 //! Pieces and their data-driven movement profiles (PLAN.md §2, §4).
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+use serde::{Deserialize, Serialize};
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum Side {
     /// The Ashen Sun (holy kingdom). Moves first.
     White,
@@ -39,7 +41,7 @@ impl Side {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum PieceKind {
     Pawn,
     Knight,
@@ -90,7 +92,7 @@ impl PieceKind {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct Piece {
     pub kind: PieceKind,
     pub side: Side,
@@ -111,7 +113,7 @@ impl Piece {
 }
 
 /// How a piece type interacts with terrain. Most upgrades just change these numbers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct MoveProfile {
     /// Highest upward step onto a neighbouring tile. Anything taller is a cliff.
     pub max_climb: u8,

@@ -6,3 +6,4 @@ description = "Terrain Chess rules: board, terrain, move generation, generator. 
 
 [dependencies]
 noise.workspace = true
+serde.workspace = true

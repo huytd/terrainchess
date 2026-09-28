@@ -4323,6 +4323,16 @@ name = "tc_core"
 version = "0.1.0"
 dependencies = [
  "noise",
+ "serde",
+]
+
+[[package]]
+name = "tc_run"
+version = "0.1.0"
+dependencies = [
+ "ron",
+ "serde",
+ "tc_core",
 ]
 
 [[package]]

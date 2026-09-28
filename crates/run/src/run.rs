@@ -1,0 +1,245 @@
+//! Roguelike run state, match setup, reward drafting, and save/load (PLAN.md §3, §6).
+
+use serde::{Deserialize, Serialize};
+use tc_core::board::Sq;
+use tc_core::piece::Side;
+use tc_core::position::Position;
+use tc_core::rng::Rng;
+use tc_core::rules::Rules;
+use tc_core::terrain::Terrain;
+use tc_core::worldgen::GenParams;
+
+use crate::item::{ItemId, ItemKind, Rarity, RelicEffect, catalog, find_item};
+
+/// Number of normal floors before the boss.
+pub const FLOORS: u8 = 7;
+/// Floor index of the final boss match.
+pub const BOSS_FLOOR: u8 = 7;
+/// Total number of matches in a victorious run (floors 0 through 7).
+pub const TOTAL_FLOORS: u8 = 8;
+
+/// Outcome of a completed run.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RunOutcome {
+    Won,
+    Lost,
+}
+
+/// Errors that can occur during run operations.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunError {
+    /// Attempted to pick an item that was not offered in the draft.
+    NotInDraft(String),
+    /// Attempted to pick when no draft has been rolled.
+    NoDraftAvailable,
+}
+
+impl std::fmt::Display for RunError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            RunError::NotInDraft(id) => write!(f, "item '{id}' was not in the last draft"),
+            RunError::NoDraftAvailable => write!(f, "no draft is currently available to pick from"),
+        }
+    }
+}
+
+impl std::error::Error for RunError {}
+
+/// Configuration and rules for an individual match in the run.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MatchSetup {
+    pub seed: u64,
+    pub r#gen: GenParams,
+    pub rules: Rules,
+    pub ai_level: u8,
+    pub player: Side,
+    pub relics: Vec<RelicEffect>,
+}
+
+impl MatchSetup {
+    /// Generate terrain for this match and apply relic modifications.
+    pub fn terrain(&self) -> (Terrain, u64) {
+        let (mut terrain, actual_seed) = tc_core::worldgen::generate(self.seed, &self.r#gen);
+        if self.relics.contains(&RelicEffect::TectonicPact) {
+            let home = Position::home_rows(self.r#gen.size);
+            let y_range = match self.player {
+                Side::White => 0..home,
+                Side::Black => (self.r#gen.size - home)..self.r#gen.size,
+            };
+            for y in y_range {
+                for x in 0..self.r#gen.size {
+                    let tile = terrain.get_mut(Sq::new(x, y));
+                    tile.height = (tile.height + 1).min(tc_core::terrain::MAX_HEIGHT);
+                }
+            }
+        }
+        (terrain, actual_seed)
+    }
+}
+
+/// The persistent state of a roguelike run (PLAN.md §3, §6).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RunState {
+    /// Initial seed for the entire run.
+    pub seed: u64,
+    /// Board grid size (e.g. 8 for 8×8).
+    pub size: u8,
+    /// Current floor index (0..=7).
+    pub floor: u8,
+    /// IDs of all items owned by the player.
+    pub owned: Vec<String>,
+    /// Persistent RNG state for drafting and procedural rolls.
+    pub rng: u64,
+    /// Final outcome of the run once finished.
+    pub outcome: Option<RunOutcome>,
+    /// The most recent draft offered to the player.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_draft: Option<[ItemId; 3]>,
+}
+
+impl RunState {
+    /// Create a fresh run at floor 0.
+    pub fn new(seed: u64, size: u8) -> Self {
+        RunState { seed, size, floor: 0, owned: Vec::new(), rng: seed, outcome: None, last_draft: None }
+    }
+
+    /// Derive the deterministic match seed from run seed and floor.
+    pub fn match_seed(run_seed: u64, floor: u8) -> u64 {
+        tc_core::rng::mix(
+            run_seed
+                ^ ((floor as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)).wrapping_add(0xD1B5_4A32_D192_ED03),
+        )
+    }
+
+    /// Build the match configuration for the current floor.
+    pub fn match_setup(&self) -> MatchSetup {
+        let seed = Self::match_seed(self.seed, self.floor);
+        let mut r#gen = GenParams::for_floor(self.size, self.floor);
+
+        let mut relics = Vec::new();
+        for id in &self.owned {
+            if let Some(crate::item::Item { kind: ItemKind::Relic { effect }, .. }) = find_item(id) {
+                relics.push(*effect);
+            }
+        }
+
+        if relics.contains(&RelicEffect::CalmTerrain) {
+            r#gen.roughness = (r#gen.roughness - 0.15).max(0.0);
+        }
+
+        let mut rules = Rules::standard(self.size);
+        let player = Side::White;
+
+        for id in &self.owned {
+            if let Some(crate::item::Item { kind: ItemKind::Enhancement { piece, delta }, .. }) =
+                find_item(id)
+            {
+                let profile = &mut rules.profiles[player.index()][piece.index()];
+                if let Some(d) = delta.max_climb {
+                    profile.max_climb = (profile.max_climb as i8 + d).clamp(0, 3) as u8;
+                }
+                if let Some(d) = delta.jump_max_dh {
+                    profile.jump_max_dh = (profile.jump_max_dh as i8 + d).clamp(0, 3) as u8;
+                }
+                if let Some(d) = delta.max_slide_drop {
+                    profile.max_slide_drop = (profile.max_slide_drop as i8 + d).clamp(0, 3) as u8;
+                }
+                if let Some(b) = delta.deep_water {
+                    profile.deep_water = b;
+                }
+                if let Some(b) = delta.uphill_ends_slide {
+                    profile.uphill_ends_slide = b;
+                }
+            }
+        }
+
+        let ai_level = (self.floor + 1).min(7);
+
+        MatchSetup { seed, r#gen, rules, ai_level, player, relics }
+    }
+
+    /// Record the outcome of the current match.
+    pub fn record_result(&mut self, won: bool) {
+        if !won {
+            self.outcome = Some(RunOutcome::Lost);
+        } else if self.floor >= BOSS_FLOOR {
+            self.outcome = Some(RunOutcome::Won);
+        } else {
+            self.floor += 1;
+        }
+    }
+
+    /// Roll three distinct items the player does not own yet.
+    pub fn draft(&mut self) -> [ItemId; 3] {
+        let mut rng = Rng::new(self.rng);
+        let mut selected: Vec<ItemId> = Vec::with_capacity(3);
+
+        for _ in 0..3 {
+            let available: Vec<&'static crate::item::Item> = catalog()
+                .iter()
+                .filter(|item| {
+                    !self.owned.contains(&item.id)
+                        && !selected.contains(&item.id)
+                        && (self.floor >= 2 || item.rarity != Rarity::Rare)
+                })
+                .collect();
+
+            // Invariant: catalog contains sufficient unowned items to draft 3 options.
+            assert!(!available.is_empty(), "not enough unowned items available to draft");
+
+            let common: Vec<&'static crate::item::Item> =
+                available.iter().copied().filter(|i| i.rarity == Rarity::Common).collect();
+            let uncommon: Vec<&'static crate::item::Item> =
+                available.iter().copied().filter(|i| i.rarity == Rarity::Uncommon).collect();
+            let rare: Vec<&'static crate::item::Item> =
+                available.iter().copied().filter(|i| i.rarity == Rarity::Rare).collect();
+
+            let w_common = if common.is_empty() { 0 } else { 60 };
+            let w_uncommon = if uncommon.is_empty() { 0 } else { 30 };
+            let w_rare = if rare.is_empty() { 0 } else { 10 };
+            let total_w = w_common + w_uncommon + w_rare;
+
+            assert!(total_w > 0, "no valid rarity pool available to roll from");
+            let roll = rng.below(total_w);
+
+            let pool = if roll < w_common {
+                &common
+            } else if roll < w_common + w_uncommon {
+                &uncommon
+            } else {
+                &rare
+            };
+
+            let chosen_idx = rng.below(pool.len() as u32) as usize;
+            selected.push(pool[chosen_idx].id.clone());
+        }
+
+        self.rng = rng.state();
+        let draft = [selected[0].clone(), selected[1].clone(), selected[2].clone()];
+        self.last_draft = Some(draft.clone());
+        draft
+    }
+
+    /// Add a chosen item to owned items if it was part of the last draft.
+    pub fn pick(&mut self, id: &str) -> Result<(), RunError> {
+        let Some(ref draft) = self.last_draft else {
+            return Err(RunError::NoDraftAvailable);
+        };
+        if !draft.iter().any(|d| d == id) {
+            return Err(RunError::NotInDraft(id.to_string()));
+        }
+        self.owned.push(id.to_string());
+        self.last_draft = None;
+        Ok(())
+    }
+
+    /// Serialize run state to a RON formatted string.
+    pub fn to_ron(&self) -> Result<String, ron::Error> {
+        ron::ser::to_string_pretty(self, ron::ser::PrettyConfig::default())
+    }
+
+    /// Deserialize run state from a RON formatted string.
+    pub fn from_ron(s: &str) -> Result<Self, ron::error::SpannedError> {
+        ron::from_str(s)
+    }
+}

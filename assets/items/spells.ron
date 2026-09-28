@@ -1,0 +1,90 @@
+[
+    (
+        id: "raise_earth",
+        name: "Raise Earth",
+        description: "Raise the height of a target tile.",
+        rarity: Common,
+        kind: Spell(
+            spell: RaiseEarth,
+            charges: 2,
+            quick: false,
+        ),
+    ),
+    (
+        id: "lower_earth",
+        name: "Lower Earth",
+        description: "Lower the height of a target tile.",
+        rarity: Common,
+        kind: Spell(
+            spell: LowerEarth,
+            charges: 2,
+            quick: false,
+        ),
+    ),
+    (
+        id: "freeze",
+        name: "Freeze",
+        description: "Freeze water to make it walkable.",
+        rarity: Uncommon,
+        kind: Spell(
+            spell: Freeze,
+            charges: 2,
+            quick: false,
+        ),
+    ),
+    (
+        id: "bridge",
+        name: "Bridge",
+        description: "Place a walkable bridge plank over a gap.",
+        rarity: Common,
+        kind: Spell(
+            spell: Bridge,
+            charges: 2,
+            quick: false,
+        ),
+    ),
+    (
+        id: "dig_tunnel",
+        name: "Dig Tunnel",
+        description: "Create a temporary cave link between cliff faces.",
+        rarity: Uncommon,
+        kind: Spell(
+            spell: DigTunnel,
+            charges: 1,
+            quick: false,
+        ),
+    ),
+    (
+        id: "shield",
+        name: "Shield",
+        description: "Protect a piece from capture until your next turn.",
+        rarity: Uncommon,
+        kind: Spell(
+            spell: Shield,
+            charges: 1,
+            quick: true,
+        ),
+    ),
+    (
+        id: "swap",
+        name: "Swap",
+        description: "Switch positions of two friendly pieces.",
+        rarity: Rare,
+        kind: Spell(
+            spell: Swap,
+            charges: 1,
+            quick: false,
+        ),
+    ),
+    (
+        id: "rewind",
+        name: "Rewind",
+        description: "Undo the last full move played in the match.",
+        rarity: Rare,
+        kind: Spell(
+            spell: Rewind,
+            charges: 1,
+            quick: false,
+        ),
+    ),
+]

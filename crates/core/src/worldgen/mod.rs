@@ -6,6 +6,7 @@ mod validate;
 pub use validate::{Reject, validate};
 
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
+use serde::{Deserialize, Serialize};
 
 use crate::board::{KING, Sq};
 use crate::position::Position;
@@ -13,7 +14,7 @@ use crate::rng::Rng;
 use crate::rules::Rules;
 use crate::terrain::{Feature, MAX_HEIGHT, Obstacle, Terrain, Tile, TileKind};
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GenParams {
     pub size: u8,
     /// 0 = gentle rolling hills, 1 = rugged cliffs.
