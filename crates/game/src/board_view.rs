@@ -282,10 +282,10 @@ pub(crate) struct Look {
     pub(crate) shadow_mesh_large: Handle<Mesh>,
     /// Card meshes by sprite name and horizontal flip.
     pub(crate) card_meshes: HashMap<(String, bool), Handle<Mesh>>,
-    /// Shared on-top material for threat victim frame.
-    pub(crate) threat_victim: Handle<MarkerMaterial>,
-    /// Shared on-top material for threat attacker frame.
-    pub(crate) threat_attacker: Handle<MarkerMaterial>,
+    /// Shared ground material for threat victim frame.
+    pub(crate) threat_victim: Handle<StandardMaterial>,
+    /// Shared ground material for threat attacker frame.
+    pub(crate) threat_attacker: Handle<StandardMaterial>,
     /// Shared on-top material for threat intent badge.
     pub(crate) threat_badge: Handle<MarkerMaterial>,
     pub(crate) victim_frame_mesh: Handle<Mesh>,
@@ -415,27 +415,21 @@ fn setup_look(
     );
     let badge_mesh = meshes.add(q_badge.mesh());
 
-    let threat_victim = markers.add(MarkerMaterial {
-        base: StandardMaterial {
-            base_color: Color::srgb_u8(0xE0, 0x3A, 0x2F).with_alpha(1.0),
-            unlit: true,
-            cull_mode: None,
-            alpha_mode: AlphaMode::Blend,
-            depth_bias: 200.0,
-            ..default()
-        },
-        extension: OnTop {},
+    let threat_victim = materials.add(StandardMaterial {
+        base_color: Color::srgb_u8(0xE0, 0x3A, 0x2F).with_alpha(1.0),
+        unlit: true,
+        cull_mode: None,
+        alpha_mode: AlphaMode::Blend,
+        depth_bias: 0.0,
+        ..default()
     });
-    let threat_attacker = markers.add(MarkerMaterial {
-        base: StandardMaterial {
-            base_color: Color::srgb_u8(0xF2, 0xB3, 0x3D).with_alpha(0.85),
-            unlit: true,
-            cull_mode: None,
-            alpha_mode: AlphaMode::Blend,
-            depth_bias: 200.0,
-            ..default()
-        },
-        extension: OnTop {},
+    let threat_attacker = materials.add(StandardMaterial {
+        base_color: Color::srgb_u8(0xF2, 0xB3, 0x3D).with_alpha(0.85),
+        unlit: true,
+        cull_mode: None,
+        alpha_mode: AlphaMode::Blend,
+        depth_bias: 0.0,
+        ..default()
     });
     let threat_badge = markers.add(MarkerMaterial {
         base: StandardMaterial {
@@ -1075,7 +1069,7 @@ impl OverlayPainter<'_, '_, '_> {
     }
 
     fn victim_frame(&mut self, sq: Sq) {
-        let top = square_top(sq, self.state.game.terrain.height(sq)) + Vec3::Y * LIFT_MARK;
+        let top = square_top(sq, self.state.game.terrain.height(sq)) + Vec3::Y * LIFT_TINT;
         self.commands.spawn((
             Overlay,
             Mesh3d(self.look.victim_frame_mesh.clone()),
@@ -1085,7 +1079,7 @@ impl OverlayPainter<'_, '_, '_> {
     }
 
     fn attacker_frame(&mut self, sq: Sq) {
-        let top = square_top(sq, self.state.game.terrain.height(sq)) + Vec3::Y * LIFT_MARK;
+        let top = square_top(sq, self.state.game.terrain.height(sq)) + Vec3::Y * LIFT_TINT;
         self.commands.spawn((
             Overlay,
             Mesh3d(self.look.attacker_frame_mesh.clone()),
@@ -1294,19 +1288,23 @@ fn animate_pickups(time: Res<Time>, mut q: Query<(&PickupBob, &mut Transform)>) 
 }
 
 /// Pulse the shared threat frame materials' alpha at 1.6 Hz.
-fn animate_threat_materials(time: Res<Time>, look: Res<Look>, mut markers: ResMut<Assets<MarkerMaterial>>) {
+fn animate_threat_materials(
+    time: Res<Time>,
+    look: Res<Look>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
     let t = time.elapsed_secs();
     let phase = t * 1.6 * std::f32::consts::TAU;
     let s = phase.sin();
     // Victim: red #E03A2F, pulsing alpha 0.55 -> 1.0 at 1.6 Hz.
     let alpha_victim = 0.775 + 0.225 * s;
-    if let Some(mut mat) = markers.get_mut(&look.threat_victim) {
-        mat.base.base_color = Color::srgb_u8(0xE0, 0x3A, 0x2F).with_alpha(alpha_victim);
+    if let Some(mut mat) = materials.get_mut(&look.threat_victim) {
+        mat.base_color = Color::srgb_u8(0xE0, 0x3A, 0x2F).with_alpha(alpha_victim);
     }
     // Attacker: amber #F2B33D, pulsing in counter-phase, alpha 0.4 -> 0.85.
     let alpha_attacker = 0.625 - 0.225 * s;
-    if let Some(mut mat) = markers.get_mut(&look.threat_attacker) {
-        mat.base.base_color = Color::srgb_u8(0xF2, 0xB3, 0x3D).with_alpha(alpha_attacker);
+    if let Some(mut mat) = materials.get_mut(&look.threat_attacker) {
+        mat.base_color = Color::srgb_u8(0xF2, 0xB3, 0x3D).with_alpha(alpha_attacker);
     }
 }
 
