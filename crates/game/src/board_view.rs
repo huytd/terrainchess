@@ -46,6 +46,7 @@ impl MaterialExtension for OnTop {
         if let Some(depth) = descriptor.depth_stencil.as_mut() {
             depth.depth_compare = Some(CompareFunction::Always);
             depth.depth_write_enabled = Some(false);
+            depth.bias = DepthBiasState::default();
         }
         Ok(())
     }
@@ -73,7 +74,7 @@ impl MaterialExtension for Occluded {
         if let Some(depth) = descriptor.depth_stencil.as_mut() {
             depth.depth_compare = Some(CompareFunction::Less);
             depth.depth_write_enabled = Some(false);
-            depth.bias = DepthBiasState { constant: 10, slope_scale: 1.0, clamp: 0.0 };
+            depth.bias = DepthBiasState::default();
         }
         Ok(())
     }
@@ -95,6 +96,7 @@ impl MaterialExtension for PieceCard {
     ) -> Result<(), SpecializedMeshPipelineError> {
         if let Some(depth) = descriptor.depth_stencil.as_mut() {
             depth.depth_write_enabled = Some(false);
+            depth.bias = DepthBiasState::default();
         }
         Ok(())
     }
@@ -103,9 +105,10 @@ impl MaterialExtension for PieceCard {
 pub type PieceMaterial = ExtendedMaterial<StandardMaterial, PieceCard>;
 
 /// Overlays float this far above a top face to avoid z-fighting.
-const LIFT_GRID: f32 = 0.003;
-const LIFT_TINT: f32 = 0.004;
-const LIFT_MARK: f32 = 0.008;
+const LIFT_GRID: f32 = 0.001;
+const LIFT_TINT: f32 = 0.007;
+const LIFT_SHADOW: f32 = 0.008;
+const LIFT_MARK: f32 = 0.014;
 const GRID_WIDTH: f32 = 0.035;
 
 /// Height of a square's top face.
@@ -363,15 +366,16 @@ fn setup_look(
             unlit: true,
             cull_mode: None,
             alpha_mode: AlphaMode::Blend,
+            depth_bias: 100.0,
             ..default()
         },
         extension: PieceCard {},
     });
     let grid = materials.add(StandardMaterial {
-        base_color: Color::srgb_u8(0x12, 0x0E, 0x14).with_alpha(0.7),
+        base_color: Color::srgb_u8(0x2A, 0x26, 0x21),
         unlit: true,
         cull_mode: None,
-        alpha_mode: AlphaMode::Blend,
+        alpha_mode: AlphaMode::Opaque,
         fog_enabled: true,
         ..default()
     });
@@ -417,6 +421,7 @@ fn setup_look(
             unlit: true,
             cull_mode: None,
             alpha_mode: AlphaMode::Blend,
+            depth_bias: 200.0,
             ..default()
         },
         extension: OnTop {},
@@ -427,6 +432,7 @@ fn setup_look(
             unlit: true,
             cull_mode: None,
             alpha_mode: AlphaMode::Blend,
+            depth_bias: 200.0,
             ..default()
         },
         extension: OnTop {},
@@ -438,6 +444,7 @@ fn setup_look(
             unlit: true,
             cull_mode: None,
             alpha_mode: AlphaMode::Blend,
+            depth_bias: 200.0,
             ..default()
         },
         extension: OnTop {},
@@ -450,6 +457,7 @@ fn setup_look(
             unlit: true,
             cull_mode: None,
             alpha_mode: AlphaMode::Blend,
+            depth_bias: 0.0,
             ..default()
         },
         extension: Occluded {},
@@ -461,6 +469,7 @@ fn setup_look(
             unlit: true,
             cull_mode: None,
             alpha_mode: AlphaMode::Blend,
+            depth_bias: 0.0,
             ..default()
         },
         extension: Occluded {},
@@ -935,7 +944,7 @@ fn spawn_pieces(
                     PieceSilhouette,
                     Mesh3d(mesh),
                     MeshMaterial3d(occluded_mat),
-                    Transform::IDENTITY,
+                    Transform::from_translation(Vec3::new(0.0, 0.0, 0.06)),
                 ));
             })
             .id();
@@ -944,7 +953,7 @@ fn spawn_pieces(
             PieceKind::Knight | PieceKind::Rook => look.shadow_mesh_large.clone(),
             _ => look.shadow_mesh_small.clone(),
         };
-        let shadow_spot = Vec3::new(spot.x, spot.y + LIFT_TINT, spot.z);
+        let shadow_spot = Vec3::new(spot.x, spot.y + LIFT_SHADOW, spot.z);
         let shadow_e = commands
             .spawn((
                 PieceShadow,
@@ -964,7 +973,7 @@ fn spawn_pieces(
             commands
                 .entity(piece_e)
                 .insert((Transform::from_translation(from), Hop { from, to: spot, t: 0.0, height }));
-            let hop_y = from.y.min(spot.y) + LIFT_TINT;
+            let hop_y = from.y.min(spot.y) + LIFT_SHADOW;
             commands.entity(shadow_e).insert((
                 Transform::from_translation(Vec3::new(from.x, hop_y, from.z)),
                 ShadowHop { from, to: spot, t: 0.0, y: hop_y },
@@ -977,7 +986,7 @@ fn spawn_pieces(
             commands
                 .entity(piece_e)
                 .insert((Transform::from_translation(from), Hop { from, to: spot, t: 0.0, height: 0.2 }));
-            let hop_y = from.y.min(spot.y) + LIFT_TINT;
+            let hop_y = from.y.min(spot.y) + LIFT_SHADOW;
             commands.entity(shadow_e).insert((
                 Transform::from_translation(Vec3::new(from.x, hop_y, from.z)),
                 ShadowHop { from, to: spot, t: 0.0, y: hop_y },
@@ -1039,6 +1048,7 @@ impl OverlayPainter<'_, '_, '_> {
             base_color_texture: sprite.map(|_| self.atlas.image.clone()),
             unlit: true,
             alpha_mode: AlphaMode::Blend,
+            depth_bias: if sprite.is_some() { 200.0 } else { 0.0 },
             ..default()
         };
         let uv = sprite.map(|s| full_uv(self.atlas.uv(s))).unwrap_or([[0.0; 2]; 4]);
@@ -1267,7 +1277,7 @@ fn animate_shadow_hops(
         tf.translation = Vec3::new(p.x, hop.y, p.z);
         tf.scale = Vec3::splat(shrink);
         if k >= 1.0 {
-            tf.translation = Vec3::new(hop.to.x, hop.to.y + LIFT_TINT, hop.to.z);
+            tf.translation = Vec3::new(hop.to.x, hop.to.y + LIFT_SHADOW, hop.to.z);
             tf.scale = Vec3::ONE;
             commands.entity(e).try_remove::<ShadowHop>();
         }
