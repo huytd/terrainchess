@@ -5,6 +5,7 @@ use tc_core::{Outcome, Side};
 use tc_run::RunState;
 
 use crate::game::GameState;
+use crate::loading::AppState;
 use crate::save;
 
 /// The current phase of a roguelike run.
@@ -185,6 +186,9 @@ impl Plugin for RunPlugin {
             .add_message::<PickCard>()
             .add_message::<StartRun>()
             .add_message::<ToggleSandbox>()
-            .add_systems(Update, (check_run_match_outcome, handle_run_messages).chain());
+            .add_systems(
+                Update,
+                (check_run_match_outcome, handle_run_messages).chain().run_if(in_state(AppState::Ready)),
+            );
     }
 }

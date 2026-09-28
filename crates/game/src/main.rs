@@ -10,6 +10,7 @@ mod fx;
 mod game;
 mod hud;
 mod input;
+mod loading;
 mod run;
 mod save;
 mod scenery;
@@ -38,6 +39,7 @@ fn main() {
         )
         .insert_resource(ClearColor(Color::srgb_u8(0xA9, 0xB8, 0xC4)))
         .add_plugins((
+            loading::LoadingPlugin,
             atlas::AtlasPlugin,
             ai::AiPlugin,
             run::RunPlugin,

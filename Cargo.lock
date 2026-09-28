@@ -4796,11 +4796,13 @@ name = "terrainchess"
 version = "0.1.0"
 dependencies = [
  "bevy",
+ "js-sys",
  "ron",
  "serde",
  "tc_ai",
  "tc_core",
  "tc_run",
+ "wasm-bindgen",
  "web-sys",
 ]
 

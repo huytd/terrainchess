@@ -5,6 +5,7 @@ use bevy::prelude::*;
 use tc_ai::{Action, Limits, choose_action};
 
 use crate::game::GameState;
+use crate::loading::AppState;
 use crate::run::TitleMenu;
 
 /// Let the player's move land before the AI starts.
@@ -56,6 +57,6 @@ pub struct AiPlugin;
 
 impl Plugin for AiPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Thinker>().add_systems(Update, think);
+        app.init_resource::<Thinker>().add_systems(Update, think.run_if(in_state(AppState::Ready)));
     }
 }

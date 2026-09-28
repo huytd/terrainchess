@@ -6,6 +6,7 @@ use tc_run::ItemKind;
 
 use crate::atlas::Atlas;
 use crate::game::GameState;
+use crate::loading::AppState;
 use crate::run::{PickCard, Run, RunPhase, StartRun, TitleMenu, ToggleSandbox};
 use crate::save;
 
@@ -1586,7 +1587,7 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_hud).add_systems(
+        app.add_systems(OnEnter(AppState::Ready), setup_hud).add_systems(
             Update,
             (
                 update_floor_badge,
@@ -1601,7 +1602,8 @@ impl Plugin for HudPlugin {
                 update_button_visuals,
                 sync_hand_bar,
             )
-                .chain(),
+                .chain()
+                .run_if(in_state(AppState::Ready)),
         );
     }
 }

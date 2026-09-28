@@ -18,6 +18,7 @@ use crate::board_view::{board_center, pick_obstacle, pick_piece, pick_square, sq
 use tc_core::{Outcome, PieceKind, Side};
 
 use crate::game::{GameEvent, GameState, MAX_AI_LEVEL};
+use crate::loading::AppState;
 use crate::run::{self, Run, RunPhase, TitleMenu};
 use crate::save;
 
@@ -632,7 +633,12 @@ impl Plugin for InputPlugin {
             .add_systems(Startup, setup_camera)
             .add_systems(
                 Update,
-                (hotkeys, apply_actions, click_board, touch_gestures, mouse_camera, fit_camera, apply_orbit)
+                (
+                    (hotkeys, apply_actions, click_board, touch_gestures, mouse_camera)
+                        .run_if(in_state(AppState::Ready)),
+                    fit_camera,
+                    apply_orbit,
+                )
                     .chain(),
             );
     }
