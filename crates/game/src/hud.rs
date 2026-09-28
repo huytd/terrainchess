@@ -27,6 +27,8 @@ enum Tool {
     AiDown,
     AiUp,
     Heights,
+    TurnLeft,
+    TurnRight,
 }
 
 #[derive(Component)]
@@ -82,8 +84,9 @@ fn setup(mut commands: Commands) {
         BackgroundColor(PANEL),
         children![(
             Text::new(
-                "Click / tap: select, move   Right-drag, WASD, touch drag: pan\n\
-                 Wheel, pinch: zoom   Alt (hold) / T: heights   U: undo\n\
+                "Click / tap: select, move   Middle-drag, WASD, touch drag: pan\n\
+                 Right-drag, Q / E, two-finger twist: turn   Wheel, pinch: zoom\n\
+                 Alt (hold) / T: heights   U: undo\n\
                  N: new board   1 / 2 / 3: 8x8 / 16x16 / 32x32\n\
                  H: AI / hotseat   F: swap sides   - / =: AI level",
             ),
@@ -114,6 +117,8 @@ fn setup(mut commands: Commands) {
                 Tool::AiDown,
                 Tool::AiUp,
                 Tool::Heights,
+                Tool::TurnLeft,
+                Tool::TurnRight,
             ] {
                 bar.spawn((
                     Button,
@@ -160,6 +165,8 @@ fn tool_clicks(
             Tool::AiDown => Action::AiLevel(-1),
             Tool::AiUp => Action::AiLevel(1),
             Tool::Heights => Action::ToggleHeights,
+            Tool::TurnLeft => Action::Turn(-1),
+            Tool::TurnRight => Action::Turn(1),
         });
     }
 }
@@ -180,6 +187,8 @@ fn update_toolbar(
             Tool::AiDown => "AI -".into(),
             Tool::AiUp => "AI +".into(),
             Tool::Heights => "Heights".into(),
+            Tool::TurnLeft => "<".into(),
+            Tool::TurnRight => ">".into(),
         };
         if text.0 != s {
             text.0 = s;

@@ -1,81 +1,109 @@
-//! Draws the board as 2:1 isometric blocks (PLAN.md §8): every square is a column
-//! with a diamond top and two shaded side faces, raised `LIFT` px per height level.
-//! a1 is the bottom corner, files run up-right and ranks up-left. Columns are drawn
-//! back to front, so nearer and taller columns hide what stands behind them.
+//! Draws the board in 3D (PLAN.md §8). Every square is a column block: its top is the
+//! square's ground tile and its sides are cliff art, raised `LEVEL` per height level.
+//! Pieces and props are upright pixel-art cards that turn to face the camera, so the
+//! board can be orbited while everything keeps the sprite look. All materials are
+//! unlit; faces are shaded by direction as if lit from the south-east.
+//!
+//! World axes: +X is east (files), -Z is north (ranks), +Y is up. One square is one unit.
 
+use bevy::asset::RenderAssetUsages;
+use bevy::camera::visibility::RenderLayers;
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
+use bevy::window::PrimaryWindow;
+use std::collections::HashMap;
 use tc_core::movegen::Ctx;
 use tc_core::terrain::TileKind;
 use tc_core::{Feature, MoveKind, Obstacle, PieceKind, Side, Sq};
 
-use crate::atlas::Atlas;
+use crate::atlas::{Atlas, Uv};
 use crate::game::GameState;
+use crate::input::MainCamera;
 
-/// Diamond top of one square (matches ISO_* in tools/process_sprites.py).
-pub const TILE_W: f32 = 48.0;
-pub const TILE_H: f32 = 24.0;
-/// Screen px per height level.
-pub const LIFT: f32 = 12.0;
-/// Heights 0..=3 have face sprites.
-const MAX_LEVEL: u8 = 3;
+/// World height of one terrain level.
+pub const LEVEL: f32 = 0.4;
+/// Column height below level 0, so the board reads as a slab.
+const BASE: f32 = 0.3;
+/// World size of one sprite pixel (ground tiles are 32 px across a square).
+const PX: f32 = 1.0 / 30.0;
+/// Render layer of move markers, drawn by the marker camera on top of everything.
+pub const MARKER_LAYER: RenderLayers = RenderLayers::layer(1);
+/// Overlays float this far above a top face to avoid z-fighting.
+const LIFT_TINT: f32 = 0.004;
+const LIFT_MARK: f32 = 0.008;
 
-/// Depth layers within one depth band (squares with the same x + y).
-mod layer {
-    pub const FACE: f32 = 0.0;
-    pub const GROUND: f32 = 0.05;
-    pub const EDGE: f32 = 0.1;
-    pub const DECAL: f32 = 0.2;
-    pub const TINT: f32 = 0.3;
-    pub const ACTOR: f32 = 0.6;
+/// Height of a square's top face.
+pub fn top_y(height: u8) -> f32 {
+    height as f32 * LEVEL
 }
 
-/// Rim drawn around every diamond top so neighbouring squares stay distinct.
-const OUTLINE: Color = Color::srgba(0.05, 0.06, 0.10, 0.45);
-
-/// Move markers and height badges sit above every column, so a cliff or a tall piece
-/// in front never hides where you can move.
-const MARKER_Z: f32 = 100.0;
-
-/// Screen position of the centre of a square's diamond top.
-pub fn tile_top(sq: Sq, height: u8) -> Vec2 {
-    let (x, y) = (sq.x as f32, sq.y as f32);
-    Vec2::new((x - y) * TILE_W / 2.0, (x + y) * TILE_H / 2.0 + height as f32 * LIFT)
+/// Centre of a square's top face.
+pub fn square_top(sq: Sq, height: u8) -> Vec3 {
+    Vec3::new(sq.x as f32, top_y(height), -(sq.y as f32))
 }
 
-/// Squares further from the viewer (larger x + y) are drawn first.
-pub fn depth_z(sq: Sq, layer: f32) -> f32 {
-    -((sq.x + sq.y) as f32) + layer
+/// Middle of the board at ground level.
+pub fn board_center(size: u8) -> Vec3 {
+    let c = (size as f32 - 1.0) / 2.0;
+    Vec3::new(c, LEVEL, -c)
 }
 
-/// Centre of the board and the screen size it covers at zoom 1, for fitting the camera.
-pub fn board_bounds(size: u8) -> (Vec2, Vec2) {
-    let n = size as f32;
-    let center = Vec2::new(0.0, (n - 1.0) * TILE_H / 2.0 + LIFT);
-    // Diamond span, plus room for the tallest columns and pieces.
-    (center, Vec2::new(n * TILE_W, n * TILE_H + 4.0 * LIFT + 40.0))
-}
-
-/// Screen px of side face under a column of this height.
-fn column_depth(height: u8) -> f32 {
-    6.0 + height as f32 * LIFT
-}
-
-/// Square whose top or side face is under `p`. Nearest columns are tested first
-/// since they are drawn on top.
-pub fn pick_tile(state: &GameState, p: Vec2) -> Option<Sq> {
+/// Square whose column the ray hits first.
+pub fn pick_square(state: &GameState, ray: Ray3d) -> Option<Sq> {
     let t = &state.game.terrain;
-    let mut squares: Vec<Sq> = tc_core::board::squares(state.size).collect();
-    squares.sort_by_key(|sq| sq.x + sq.y);
-    squares.into_iter().find(|&sq| {
-        let d = p - tile_top(sq, t.height(sq));
-        let (hw, hh) = (TILE_W / 2.0, TILE_H / 2.0);
-        if d.x.abs() > hw {
-            return false;
+    let o = ray.origin;
+    let d = *ray.direction;
+    let mut best: Option<(f32, Sq)> = None;
+    for sq in tc_core::board::squares(state.size) {
+        let c = square_top(sq, t.height(sq));
+        let lo = Vec3::new(c.x - 0.5, -BASE, c.z - 0.5);
+        let hi = Vec3::new(c.x + 0.5, c.y, c.z + 0.5);
+        // Slab test against the column's box.
+        let (mut t0, mut t1) = (f32::NEG_INFINITY, f32::INFINITY);
+        for i in 0..3 {
+            if d[i].abs() < 1e-6 {
+                if o[i] < lo[i] || o[i] > hi[i] {
+                    t1 = f32::NEG_INFINITY;
+                }
+                continue;
+            }
+            let (a, b) = ((lo[i] - o[i]) / d[i], (hi[i] - o[i]) / d[i]);
+            t0 = t0.max(a.min(b));
+            t1 = t1.min(a.max(b));
         }
-        // The lower diamond edge at this x; the column hangs below it.
-        let lower = -hh + d.x.abs() * hh / hw;
-        d.y <= -lower && d.y >= lower - column_depth(t.height(sq))
-    })
+        if t0 <= t1 && t1 >= 0.0 && best.is_none_or(|(bt, _)| t0 < bt) {
+            best = Some((t0, sq));
+        }
+    }
+    best.map(|(_, sq)| sq)
+}
+
+/// Square of the piece whose sprite is under screen position `cursor`, nearest first.
+/// `zoom` is screen px per world unit.
+pub fn pick_piece(
+    state: &GameState,
+    atlas: &Atlas,
+    camera: (&Camera, &GlobalTransform),
+    zoom: f32,
+    cursor: Vec2,
+) -> Option<Sq> {
+    let (cam, gtf) = camera;
+    let forward = gtf.forward();
+    state
+        .game
+        .pos
+        .pieces()
+        .filter_map(|(sq, piece)| {
+            let feet = piece_spot(state, sq);
+            let p = cam.world_to_viewport(gtf, feet).ok()?;
+            // Cards are stretched to keep their full height on screen; the sides of a
+            // sprite are mostly transparent, so only the middle counts.
+            let size = atlas.px(&piece_sprite_name(piece.kind, piece.side)) * PX * zoom;
+            let hit = (cursor.x - p.x).abs() <= size.x * 0.35 && cursor.y <= p.y && cursor.y >= p.y - size.y;
+            hit.then(|| (sq, forward.dot(feet)))
+        })
+        .min_by(|a, b| a.1.total_cmp(&b.1))
+        .map(|(sq, _)| sq)
 }
 
 #[derive(Component)]
@@ -87,13 +115,21 @@ struct PieceSprite;
 #[derive(Component)]
 struct Overlay;
 
+/// One of the two shallow-water frames; the other is hidden.
 #[derive(Component)]
-struct AnimatedWater {
-    frames: [&'static str; 2],
-}
+struct WaterFrame(usize);
 
+/// Upright card that turns about the vertical axis to face the camera.
 #[derive(Component)]
-pub struct HeightBadge;
+struct Billboard;
+
+/// UI label with a square's height, kept over the square on screen.
+#[derive(Component)]
+struct HeightBadge(Vec3);
+
+/// Height badges stay on while set (toolbar / T); holding Alt shows them briefly.
+#[derive(Resource, Default)]
+pub struct ShowHeights(pub bool);
 
 /// Hop from one spot to another along a small arc.
 #[derive(Component)]
@@ -105,6 +141,32 @@ struct Hop {
 }
 
 const HOP_SECS: f32 = 0.22;
+
+/// Shared materials and card meshes.
+#[derive(Resource)]
+struct Look {
+    terrain: Handle<StandardMaterial>,
+    cards: Handle<StandardMaterial>,
+    /// Card meshes by sprite name and horizontal flip.
+    card_meshes: HashMap<(String, bool), Handle<Mesh>>,
+}
+
+fn setup_look(mut commands: Commands, atlas: Res<Atlas>, mut materials: ResMut<Assets<StandardMaterial>>) {
+    let terrain = materials.add(StandardMaterial {
+        base_color_texture: Some(atlas.image.clone()),
+        unlit: true,
+        cull_mode: None,
+        ..default()
+    });
+    let cards = materials.add(StandardMaterial {
+        base_color_texture: Some(atlas.image.clone()),
+        unlit: true,
+        cull_mode: None,
+        alpha_mode: AlphaMode::Mask(0.5),
+        ..default()
+    });
+    commands.insert_resource(Look { terrain, cards, card_meshes: HashMap::new() });
+}
 
 /// A per-square number for picking tile variants without flicker.
 fn hash(sq: Sq, salt: u32) -> u32 {
@@ -124,10 +186,85 @@ fn cave_color(link: u8) -> Color {
     ][link as usize % 4]
 }
 
+/// Collects textured, vertex-shaded quads into one mesh.
+#[derive(Default)]
+struct Quads {
+    pos: Vec<[f32; 3]>,
+    normal: Vec<[f32; 3]>,
+    uv: Vec<[f32; 2]>,
+    color: Vec<[f32; 4]>,
+    idx: Vec<u32>,
+}
+
+impl Quads {
+    /// Corners in order bottom-left, bottom-right, top-right, top-left as seen from
+    /// outside, with texture coordinates to match. `shade` darkens the texture.
+    fn add(&mut self, corners: [Vec3; 4], uv: [[f32; 2]; 4], shade: f32) {
+        let n = (corners[1] - corners[0]).cross(corners[3] - corners[0]).normalize_or_zero();
+        let c = Color::srgb(shade, shade, shade).to_linear().to_f32_array();
+        let base = self.pos.len() as u32;
+        for (p, t) in corners.into_iter().zip(uv) {
+            self.pos.push(p.to_array());
+            self.normal.push(n.to_array());
+            self.uv.push(t);
+            self.color.push(c);
+        }
+        self.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
+    }
+
+    fn mesh(self) -> Mesh {
+        Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+            .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.pos)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normal)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uv)
+            .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, self.color)
+            .with_inserted_indices(Indices::U32(self.idx))
+    }
+}
+
+/// Texture corners for a whole sprite, matching `Quads::add` corner order.
+fn full_uv(uv: Uv) -> [[f32; 2]; 4] {
+    [uv.at(0.0, 1.0), uv.at(1.0, 1.0), uv.at(1.0, 0.0), uv.at(0.0, 0.0)]
+}
+
+/// A flat quad lying on a top face, centred at `c`.
+fn flat(c: Vec3, size: Vec2) -> [Vec3; 4] {
+    let (hx, hz) = (size.x / 2.0, size.y / 2.0);
+    [
+        c + Vec3::new(-hx, 0.0, hz),
+        c + Vec3::new(hx, 0.0, hz),
+        c + Vec3::new(hx, 0.0, -hz),
+        c + Vec3::new(-hx, 0.0, -hz),
+    ]
+}
+
+/// Walls of one column side from `lo` up to `hi`: grass lip under the top edge, stone
+/// below. `a` → `b` runs left to right along the bottom as seen from outside.
+fn wall(q: &mut Quads, atlas: &Atlas, a: Vec3, b: Vec3, lo: f32, hi: f32, shade: f32) {
+    let mut top = hi;
+    let mut first = true;
+    while top > lo + 1e-4 {
+        let bottom = (top - LEVEL).max(lo);
+        let uv = atlas.uv(if first { "wall_lip" } else { "wall_stone" });
+        let frac = (top - bottom) / LEVEL;
+        let at = |p: Vec3, y: f32| Vec3::new(p.x, y, p.z);
+        q.add(
+            [at(a, bottom), at(b, bottom), at(b, top), at(a, top)],
+            [uv.at(0.0, frac), uv.at(1.0, frac), uv.at(1.0, 0.0), uv.at(0.0, 0.0)],
+            shade,
+        );
+        top = bottom;
+        first = false;
+    }
+}
+
 fn spawn_terrain(
     mut commands: Commands,
     mut state: ResMut<GameState>,
     atlas: Res<Atlas>,
+    mut look: ResMut<Look>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     old: Query<Entity, With<TerrainPart>>,
 ) {
     if !state.terrain_dirty {
@@ -139,80 +276,76 @@ fn spawn_terrain(
     }
     let size = state.size;
     let t = state.game.terrain.clone();
+    let mut solid = Quads::default();
+    let mut water = [Quads::default(), Quads::default()];
     for sq in tc_core::board::squares(size) {
         let tile = *t.get(sq);
-        let top = tile_top(sq, tile.height);
+        let top = square_top(sq, tile.height);
 
-        // Ground, with a light checker and brighter high ground for readability.
-        let (name, water) = match tile.kind {
-            TileKind::Grass => {
-                (["grass_0", "grass_1", "grass_0", "grass_dark"][hash(sq, 1) as usize % 4], None)
-            }
-            TileKind::Stone => (["cobble", "flagstone"][hash(sq, 2) as usize % 2], None),
-            TileKind::Sand => ("sand", None),
-            TileKind::ShallowWater => ("shallow_0", Some(["iso_shallow_0", "iso_shallow_1"])),
-            TileKind::DeepWater => ("deep", None),
-            TileKind::Void => ("void", None),
+        // Top face, with a light checker and brighter high ground.
+        let name = match tile.kind {
+            TileKind::Grass => ["grass_0", "grass_1", "grass_0", "grass_dark"][hash(sq, 1) as usize % 4],
+            TileKind::Stone => ["cobble", "flagstone"][hash(sq, 2) as usize % 2],
+            TileKind::Sand => "sand",
+            TileKind::ShallowWater => "shallow_0",
+            TileKind::DeepWater => "deep",
+            TileKind::Void => "void",
         };
-        let checker = if (sq.x + sq.y) % 2 == 0 { 0.9 } else { 1.0 };
-        let shade = checker * (0.84 + 0.07 * tile.height as f32);
-        let (mut sprite, anchor) = atlas.sprite(&format!("iso_{name}"));
-        sprite.color = Color::srgb(shade, shade, shade);
-        let mut ground = commands.spawn((
-            TerrainPart,
-            sprite,
-            anchor,
-            Transform::from_translation(top.extend(depth_z(sq, layer::GROUND))),
-        ));
-        if let Some(frames) = water {
-            ground.insert(AnimatedWater { frames });
+        let checker = if (sq.x + sq.y) % 2 == 0 { 0.88 } else { 1.0 };
+        let shade = checker * (0.86 + 0.06 * tile.height as f32).min(1.05);
+        let corners = flat(top, Vec2::ONE);
+        if tile.kind == TileKind::ShallowWater {
+            for (i, frame) in ["shallow_0", "shallow_1"].into_iter().enumerate() {
+                water[i].add(corners, full_uv(atlas.uv(frame)), shade);
+            }
+        } else {
+            solid.add(corners, full_uv(atlas.uv(name)), shade);
         }
-        let (mut rim, anchor) = atlas.sprite("iso_outline");
-        rim.color = OUTLINE;
-        commands.spawn((
-            TerrainPart,
-            rim,
-            anchor,
-            Transform::from_translation(top.extend(depth_z(sq, layer::EDGE))),
-        ));
 
-        // Side faces: the left one in shade, the right one half lit.
-        let level = tile.height.min(MAX_LEVEL);
-        for (side, x, light) in [("l", -TILE_W / 2.0, 0.58), ("r", 0.0, 0.8)] {
-            let (mut face, anchor) = atlas.sprite(&format!("iso_face_{side}_{level}"));
-            let light = light + 0.04 * tile.height as f32;
-            face.color = Color::srgb(light, light, light);
-            commands.spawn((
-                TerrainPart,
-                face,
-                anchor,
-                Transform::from_translation(Vec3::new(top.x + x, top.y, depth_z(sq, layer::FACE))),
-            ));
+        // Sides, only where they show: above a lower neighbour or at the board edge.
+        let (x, z) = (top.x, top.z);
+        for ((dx, dy), a, b, shade) in [
+            ((0i8, -1i8), Vec3::new(x - 0.5, 0.0, z + 0.5), Vec3::new(x + 0.5, 0.0, z + 0.5), 0.84),
+            ((1, 0), Vec3::new(x + 0.5, 0.0, z + 0.5), Vec3::new(x + 0.5, 0.0, z - 0.5), 0.72),
+            ((0, 1), Vec3::new(x + 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z - 0.5), 0.56),
+            ((-1, 0), Vec3::new(x - 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z + 0.5), 0.62),
+        ] {
+            let lo = match sq.offset(dx, dy, size) {
+                Some(n) => top_y(t.height(n)),
+                None => -BASE,
+            };
+            wall(&mut solid, &atlas, a, b, lo, top.y, shade + 0.03 * tile.height as f32);
         }
 
         match tile.feature {
             Feature::Cave(link) => {
-                let (mut sprite, anchor) = atlas.sprite("cave_rune_0");
-                sprite.color = cave_color(link);
-                sprite.custom_size = Some(Vec2::new(24.0, 13.0));
-                commands.spawn((
-                    TerrainPart,
-                    sprite,
-                    anchor,
-                    Transform::from_translation(top.extend(depth_z(sq, layer::DECAL))),
-                ));
+                let rune = materials.add(StandardMaterial {
+                    base_color: cave_color(link),
+                    base_color_texture: Some(atlas.image.clone()),
+                    unlit: true,
+                    alpha_mode: AlphaMode::Mask(0.5),
+                    ..default()
+                });
+                let mut q = Quads::default();
+                q.add(
+                    flat(top + Vec3::Y * LIFT_TINT, Vec2::new(0.8, 0.5)),
+                    full_uv(atlas.uv("cave_rune_0")),
+                    1.0,
+                );
+                commands.spawn((TerrainPart, Mesh3d(meshes.add(q.mesh())), MeshMaterial3d(rune)));
             }
             Feature::Obstacle(kind) => {
                 let name = match kind {
                     Obstacle::Rock => ["rock", "rock_mossy"][hash(sq, 4) as usize % 2],
                     Obstacle::Tree => ["pine", "pine", "dead_tree"][hash(sq, 5) as usize % 3],
                 };
-                let (sprite, anchor) = atlas.sprite(name);
+                let mesh = card_mesh(&mut look, &mut meshes, &atlas, name, false);
                 commands.spawn((
                     TerrainPart,
-                    sprite,
-                    anchor,
-                    Transform::from_translation(Vec3::new(top.x, top.y - 3.0, depth_z(sq, layer::ACTOR))),
+                    Billboard,
+                    Mesh3d(mesh),
+                    MeshMaterial3d(look.cards.clone()),
+                    Transform::from_translation(top),
                 ));
             }
             _ => {}
@@ -220,15 +353,57 @@ fn spawn_terrain(
 
         commands.spawn((
             TerrainPart,
-            HeightBadge,
-            Text2d::new(tile.height.to_string()),
-            TextFont { font_size: 14.0.into(), ..default() },
+            HeightBadge(top + Vec3::Y * 0.02),
+            Node {
+                position_type: PositionType::Absolute,
+                padding: UiRect::horizontal(Val::Px(3.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.1, 0.11, 0.17, 0.75)),
+            Text::new(tile.height.to_string()),
+            TextFont { font_size: 12.0.into(), ..default() },
             TextColor(Color::WHITE),
             Visibility::Hidden,
-            Transform::from_translation(Vec3::new(top.x, top.y + 1.0, MARKER_Z + 1.0))
-                .with_scale(Vec3::splat(0.75)),
         ));
     }
+    let material = MeshMaterial3d(look.terrain.clone());
+    commands.spawn((TerrainPart, Mesh3d(meshes.add(solid.mesh())), material.clone()));
+    for (i, q) in water.into_iter().enumerate() {
+        commands.spawn((TerrainPart, WaterFrame(i), Mesh3d(meshes.add(q.mesh())), material.clone()));
+    }
+}
+
+/// An upright card for a sprite, feet at the origin, facing +Z.
+fn card_mesh(
+    look: &mut Look,
+    meshes: &mut Assets<Mesh>,
+    atlas: &Atlas,
+    name: &str,
+    flip: bool,
+) -> Handle<Mesh> {
+    look.card_meshes
+        .entry((name.to_string(), flip))
+        .or_insert_with(|| {
+            let size = atlas.px(name) * PX;
+            let hw = size.x / 2.0;
+            let mut uv = full_uv(atlas.uv(name));
+            if flip {
+                uv = [uv[1], uv[0], uv[3], uv[2]];
+            }
+            let mut q = Quads::default();
+            q.add(
+                [
+                    Vec3::new(-hw, 0.0, 0.0),
+                    Vec3::new(hw, 0.0, 0.0),
+                    Vec3::new(hw, size.y, 0.0),
+                    Vec3::new(-hw, size.y, 0.0),
+                ],
+                uv,
+                1.0,
+            );
+            meshes.add(q.mesh())
+        })
+        .clone()
 }
 
 fn piece_sprite_name(kind: PieceKind, side: Side) -> String {
@@ -247,16 +422,18 @@ fn piece_sprite_name(kind: PieceKind, side: Side) -> String {
     format!("{side}_{kind}")
 }
 
-/// Where a piece's feet go on a tile.
+/// Where a piece's feet go on a square.
 fn piece_spot(state: &GameState, sq: Sq) -> Vec3 {
-    let top = tile_top(sq, state.game.terrain.height(sq));
-    Vec3::new(top.x, top.y - 3.0, depth_z(sq, layer::ACTOR + 0.05))
+    square_top(sq, state.game.terrain.height(sq))
 }
 
 fn spawn_pieces(
     mut commands: Commands,
     mut state: ResMut<GameState>,
     atlas: Res<Atlas>,
+    mut look: ResMut<Look>,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     old: Query<Entity, Or<(With<PieceSprite>, With<Overlay>)>>,
 ) {
     if !state.pieces_dirty {
@@ -269,74 +446,108 @@ fn spawn_pieces(
     let animate = state.animate.take();
 
     for (sq, piece) in state.game.pos.pieces() {
-        let (mut sprite, anchor) = atlas.sprite(&piece_sprite_name(piece.kind, piece.side));
         // Characters face right; the undead court faces the other way.
-        sprite.flip_x = piece.side == Side::Black;
+        let name = piece_sprite_name(piece.kind, piece.side);
+        let mesh = card_mesh(&mut look, &mut meshes, &atlas, &name, piece.side == Side::Black);
         let spot = piece_spot(&state, sq);
-        let mut e = commands.spawn((PieceSprite, sprite, anchor, Transform::from_translation(spot)));
+        let mut e = commands.spawn((
+            PieceSprite,
+            Billboard,
+            Mesh3d(mesh),
+            MeshMaterial3d(look.cards.clone()),
+            Transform::from_translation(spot),
+        ));
         if let Some(mv) = animate.filter(|m| m.to == sq) {
             let from = piece_spot(&state, mv.from);
-            // Draw the moving piece above everything it passes over.
-            let top_z = spot.z.max(from.z) + 0.01;
             let height = match (piece.kind, mv.kind) {
                 (_, MoveKind::Cave) => 0.0,
-                (PieceKind::Knight, _) => 26.0,
-                _ => 8.0 + (from.y - spot.y).abs().min(LIFT) * 0.5,
+                (PieceKind::Knight, _) => 0.8,
+                _ => 0.25 + (from.y - spot.y).abs().min(LEVEL) * 0.5,
             };
-            e.insert((
-                Transform::from_translation(from.with_z(top_z)),
-                Hop { from: from.with_z(top_z), to: spot, t: 0.0, height },
-            ));
+            e.insert((Transform::from_translation(from), Hop { from, to: spot, t: 0.0, height }));
         }
         if let Some(MoveKind::Castle { rook_to, rook_from }) = animate.map(|m| m.kind)
             && sq == rook_to
         {
             let from = piece_spot(&state, rook_from);
-            e.insert((Transform::from_translation(from), Hop { from, to: spot, t: 0.0, height: 6.0 }));
+            e.insert((Transform::from_translation(from), Hop { from, to: spot, t: 0.0, height: 0.2 }));
         }
     }
 
-    spawn_overlays(&mut commands, &state, &atlas);
+    spawn_overlays(&mut commands, &state, &atlas, &mut meshes, &mut materials);
 }
 
-fn spawn_overlays(commands: &mut Commands, state: &GameState, atlas: &Atlas) {
-    let t = &state.game.terrain;
-    let tint = |commands: &mut Commands, sq: Sq, color: Color| {
-        let (mut sprite, anchor) = atlas.sprite("iso_fill");
-        sprite.color = color;
-        let p = tile_top(sq, t.height(sq)).extend(depth_z(sq, layer::TINT));
-        commands.spawn((Overlay, sprite, anchor, Transform::from_translation(p)));
-    };
-    // Markers are flattened to lie on the diamond.
-    let mark = |commands: &mut Commands, sq: Sq, name: &str, size: Vec2, color: Color| {
-        let (mut sprite, anchor) = atlas.sprite(name);
-        sprite.custom_size = Some(size);
-        sprite.color = color;
-        let p = tile_top(sq, t.height(sq)).extend(MARKER_Z - (sq.x + sq.y) as f32 * 0.01);
-        commands.spawn((Overlay, sprite, anchor, Transform::from_translation(p)));
-    };
+/// Flat highlights and markers lying on top faces.
+struct OverlayPainter<'a, 'w, 's> {
+    commands: &'a mut Commands<'w, 's>,
+    state: &'a GameState,
+    atlas: &'a Atlas,
+    meshes: &'a mut Assets<Mesh>,
+    materials: &'a mut Assets<StandardMaterial>,
+}
 
+impl OverlayPainter<'_, '_, '_> {
+    fn quad(&mut self, sq: Sq, sprite: Option<&str>, size: f32, color: Color, lift: f32) {
+        let material = self.materials.add(StandardMaterial {
+            base_color: color,
+            base_color_texture: sprite.map(|_| self.atlas.image.clone()),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        });
+        let uv = sprite.map(|s| full_uv(self.atlas.uv(s))).unwrap_or([[0.0; 2]; 4]);
+        let top = square_top(sq, self.state.game.terrain.height(sq)) + Vec3::Y * lift;
+        let mut q = Quads::default();
+        q.add(flat(top, Vec2::splat(size)), uv, 1.0);
+        let mut e =
+            self.commands.spawn((Overlay, Mesh3d(self.meshes.add(q.mesh())), MeshMaterial3d(material)));
+        if sprite.is_some() {
+            // Markers go to the marker camera, which draws over the scene so a column or
+            // piece in front never hides where you can move.
+            e.insert(MARKER_LAYER);
+        }
+    }
+
+    /// Colour wash over a whole square.
+    fn tint(&mut self, sq: Sq, color: Color) {
+        self.quad(sq, None, 1.0, color, LIFT_TINT);
+    }
+
+    fn mark(&mut self, sq: Sq, name: &str, size: f32, color: Color) {
+        self.quad(sq, Some(name), size, color, LIFT_MARK);
+    }
+}
+
+fn spawn_overlays(
+    commands: &mut Commands,
+    state: &GameState,
+    atlas: &Atlas,
+    meshes: &mut Assets<Mesh>,
+    materials: &mut Assets<StandardMaterial>,
+) {
+    let mut paint = OverlayPainter { commands, state, atlas, meshes, materials };
+    let t = &state.game.terrain;
     if let Some(last) = state.game.moves.last() {
         for sq in [last.from, last.to] {
-            tint(commands, sq, Color::srgba(1.0, 0.9, 0.35, 0.28));
+            paint.tint(sq, Color::srgba(1.0, 0.9, 0.35, 0.3));
         }
     }
     if state.game.in_check()
         && let Some(k) = state.game.pos.king(state.game.pos.side_to_move)
     {
-        tint(commands, k, Color::srgba(0.9, 0.1, 0.15, 0.45));
+        paint.tint(k, Color::srgba(0.9, 0.1, 0.15, 0.5));
     }
     let Some(sel) = state.selected else { return };
-    mark(commands, sel, "ov_select", Vec2::new(40.0, 22.0), Color::WHITE);
+    paint.mark(sel, "ov_select", 0.95, Color::WHITE);
     let moves = state.selected_moves();
     for mv in &moves {
         let capture = state.game.pos.get(mv.to).is_some() || mv.kind == MoveKind::EnPassant;
         if capture {
-            mark(commands, mv.to, "ov_capture", Vec2::new(40.0, 22.0), Color::WHITE);
+            paint.mark(mv.to, "ov_capture", 0.95, Color::WHITE);
         } else if mv.kind == MoveKind::Cave {
-            mark(commands, mv.to, "ov_ring", Vec2::new(26.0, 14.0), Color::WHITE);
+            paint.mark(mv.to, "ov_ring", 0.7, Color::WHITE);
         } else {
-            mark(commands, mv.to, "ov_dot", Vec2::new(10.0, 6.0), Color::srgba(1.0, 1.0, 1.0, 0.85));
+            paint.mark(mv.to, "ov_dot", 0.3, Color::srgba(1.0, 1.0, 1.0, 0.9));
         }
     }
     // Neighbouring squares the piece could reach on flat ground but a cliff blocks, and
@@ -352,7 +563,7 @@ fn spawn_overlays(commands: &mut Commands, state: &GameState, atlas: &Atlas) {
         });
         for sq in blocked {
             if !moves.iter().any(|m| m.to == sq) {
-                mark(commands, sq, "ov_blocked", Vec2::new(16.0, 12.0), Color::srgba(1.0, 1.0, 1.0, 0.7));
+                paint.mark(sq, "ov_blocked", 0.5, Color::srgba(1.0, 1.0, 1.0, 0.8));
             }
         }
     }
@@ -388,12 +599,12 @@ fn cliff_blocked(ctx: &Ctx, from: Sq, piece: tc_core::Piece) -> Vec<Sq> {
         .collect()
 }
 
-fn animate_water(time: Res<Time>, atlas: Res<Atlas>, mut q: Query<(&AnimatedWater, &mut Sprite)>) {
+fn animate_water(time: Res<Time>, mut q: Query<(&WaterFrame, &mut Visibility)>) {
     let frame = (time.elapsed_secs() / 0.7) as usize % 2;
-    for (water, mut sprite) in &mut q {
-        let rect = atlas.sprite(water.frames[frame]).0.rect;
-        if sprite.rect != rect {
-            sprite.rect = rect;
+    for (water, mut v) in &mut q {
+        let want = if water.0 == frame { Visibility::Inherited } else { Visibility::Hidden };
+        if *v != want {
+            *v = want;
         }
     }
 }
@@ -405,7 +616,6 @@ fn animate_hops(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &
         let eased = k * k * (3.0 - 2.0 * k);
         let mut p = hop.from.lerp(hop.to, eased);
         p.y += hop.height * 4.0 * k * (1.0 - k);
-        p.z = if k >= 1.0 { hop.to.z } else { hop.from.z };
         tf.translation = p;
         if k >= 1.0 {
             // The piece may have been rebuilt by a move this same frame.
@@ -414,20 +624,44 @@ fn animate_hops(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &
     }
 }
 
-/// Height badges stay on while set (toolbar / T); holding Alt shows them briefly.
-#[derive(Resource, Default)]
-pub struct ShowHeights(pub bool);
+/// Turn cards to face the camera, and stretch them so the tilt doesn't squash them.
+fn face_camera(
+    camera: Single<&Transform, (With<MainCamera>, Without<Billboard>)>,
+    mut cards: Query<&mut Transform, With<Billboard>>,
+) {
+    let back = camera.back();
+    let yaw = back.x.atan2(back.z);
+    let pitch = back.y.clamp(-0.99, 0.99).asin();
+    let rotation = Quat::from_rotation_y(yaw);
+    let scale = Vec3::new(1.0, 1.0 / pitch.cos(), 1.0);
+    for mut tf in &mut cards {
+        tf.rotation = rotation;
+        tf.scale = scale;
+    }
+}
 
-fn toggle_height_badges(
+fn place_height_badges(
     keys: Res<ButtonInput<KeyCode>>,
     pinned: Res<ShowHeights>,
-    mut q: Query<&mut Visibility, With<HeightBadge>>,
+    window: Single<&Window, With<PrimaryWindow>>,
+    camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    mut badges: Query<(&HeightBadge, &mut Node, &ComputedNode, &mut Visibility)>,
 ) {
     let show = pinned.0 || keys.any_pressed([KeyCode::AltLeft, KeyCode::AltRight]);
-    let want = if show { Visibility::Inherited } else { Visibility::Hidden };
-    for mut v in &mut q {
+    let (cam, gtf) = *camera;
+    let scale = window.scale_factor();
+    for (badge, mut node, computed, mut v) in &mut badges {
+        let want = if show { Visibility::Inherited } else { Visibility::Hidden };
         if *v != want {
             *v = want;
+        }
+        if !show {
+            continue;
+        }
+        if let Ok(p) = cam.world_to_viewport(gtf, badge.0) {
+            let half = computed.size() / scale / 2.0;
+            node.left = Val::Px(p.x - half.x);
+            node.top = Val::Px(p.y - half.y);
         }
     }
 }
@@ -436,9 +670,15 @@ pub struct BoardViewPlugin;
 
 impl Plugin for BoardViewPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ShowHeights>().add_systems(
+        app.init_resource::<ShowHeights>().add_systems(Startup, setup_look).add_systems(
             Update,
-            ((spawn_terrain, spawn_pieces).chain(), animate_water, animate_hops, toggle_height_badges),
+            (
+                (spawn_terrain, spawn_pieces).chain(),
+                animate_water,
+                animate_hops,
+                face_camera,
+                place_height_badges,
+            ),
         );
     }
 }

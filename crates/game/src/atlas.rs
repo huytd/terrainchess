@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use bevy::sprite::Anchor;
 use serde::Deserialize;
 
 /// Embedded so the web build doesn't need an extra fetch.
@@ -11,6 +10,7 @@ const MANIFEST: &str = include_str!("../../../assets/atlas.ron");
 
 #[derive(Deserialize)]
 struct Manifest {
+    size: (u32, u32),
     sprites: HashMap<String, SpriteRect>,
 }
 
@@ -20,26 +20,49 @@ struct SpriteRect {
     y: u32,
     w: u32,
     h: u32,
-    /// Pivot in image space: (0, 0) top-left, (1, 1) bottom-right.
-    anchor: (f32, f32),
 }
 
 #[derive(Resource)]
 pub struct Atlas {
-    image: Handle<Image>,
+    pub image: Handle<Image>,
+    size: Vec2,
     rects: HashMap<String, SpriteRect>,
 }
 
+/// Where a sprite sits in the atlas, in texture coordinates (0..1, y down).
+#[derive(Clone, Copy)]
+pub struct Uv {
+    pub min: Vec2,
+    pub max: Vec2,
+}
+
+impl Uv {
+    /// Texture coordinate of a point given as fractions across (u) and down (v) the sprite.
+    pub fn at(&self, u: f32, v: f32) -> [f32; 2] {
+        [self.min.x + (self.max.x - self.min.x) * u, self.min.y + (self.max.y - self.min.y) * v]
+    }
+}
+
 impl Atlas {
-    /// A sprite and its pivot. Unknown names panic: the manifest is generated.
-    pub fn sprite(&self, name: &str) -> (Sprite, Anchor) {
-        let r = self.rects.get(name).unwrap_or_else(|| panic!("no sprite {name} in atlas.ron"));
-        let sprite = Sprite {
-            image: self.image.clone(),
-            rect: Some(Rect::new(r.x as f32, r.y as f32, (r.x + r.w) as f32, (r.y + r.h) as f32)),
-            ..default()
-        };
-        (sprite, Anchor(Vec2::new(r.anchor.0 - 0.5, 0.5 - r.anchor.1)))
+    fn rect(&self, name: &str) -> SpriteRect {
+        *self.rects.get(name).unwrap_or_else(|| panic!("no sprite {name} in atlas.ron"))
+    }
+
+    /// Texture coordinates of a sprite. Unknown names panic: the manifest is generated.
+    pub fn uv(&self, name: &str) -> Uv {
+        let r = self.rect(name);
+        // A small inset keeps nearest sampling from bleeding into the neighbouring sprite.
+        let inset = 0.02;
+        Uv {
+            min: Vec2::new(r.x as f32 + inset, r.y as f32 + inset) / self.size,
+            max: Vec2::new((r.x + r.w) as f32 - inset, (r.y + r.h) as f32 - inset) / self.size,
+        }
+    }
+
+    /// Size of a sprite in pixels.
+    pub fn px(&self, name: &str) -> Vec2 {
+        let r = self.rect(name);
+        Vec2::new(r.w as f32, r.h as f32)
     }
 }
 
@@ -49,6 +72,7 @@ impl Plugin for AtlasPlugin {
     fn build(&self, app: &mut App) {
         let manifest: Manifest = ron::from_str(MANIFEST).expect("assets/atlas.ron is invalid");
         let image = app.world().resource::<AssetServer>().load("atlas.png");
-        app.insert_resource(Atlas { image, rects: manifest.sprites });
+        let size = Vec2::new(manifest.size.0 as f32, manifest.size.1 as f32);
+        app.insert_resource(Atlas { image, size, rects: manifest.sprites });
     }
 }

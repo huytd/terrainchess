@@ -23,14 +23,16 @@ cargo run -p tc_core --example dump -- 42 8   # print a generated board
 cargo run --release -p tc_ai --example selfplay -- 20 8 100   # AI vs AI on 20 boards
 
 cd web && trunk serve                # browser build at http://localhost:8080
+cd web && trunk build --release      # optimised browser build in web/dist (about half the size)
 ```
 
-You play the Ashen Sun against the AI by default. Controls: click to select and move · right-drag /
-WASD to pan · wheel to zoom · hold Alt (or T to toggle) for tile heights · U undo · N new board ·
-1/2/3 for 8×8, 16×16, 32×32 · H toggles AI / hotseat · F swaps sides with the AI · -/= changes AI
-level (0–7). The toolbar at the bottom has the same commands.
+You play the Ashen Sun against the AI by default. Controls: click to select and move · right-drag
+or Q/E to turn the board · middle-drag / WASD to pan · wheel to zoom · hold Alt (or T to toggle) for
+tile heights · U undo · N new board · 1/2/3 for 8×8, 16×16, 32×32 · H toggles AI / hotseat · F swaps
+sides with the AI · -/= changes AI level (0–7). The toolbar at the bottom has the same commands.
 
-On phones and tablets (web build): tap to select and move · drag to pan · pinch to zoom.
+On phones and tablets (web build): tap to select and move · drag to pan · pinch to zoom · twist two
+fingers to turn the board.
 
 ## Art
 
