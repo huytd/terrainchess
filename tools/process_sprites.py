@@ -141,6 +141,14 @@ SPRITES = [
     ("ov_hover", (618, 1668, 712, 1760), None, CENTER),
     ("ov_blocked", (730, 1676, 806, 1752), None, CENTER),
     ("ov_ring", (822, 1668, 918, 1760), None, CENTER),
+    # Cards, UI panels, and pickups
+    ("card_common", (1443, 1682, 1528, 1793), None, CENTER),
+    ("card_uncommon", (1541, 1682, 1625, 1793), None, CENTER),
+    ("card_rare", (1639, 1682, 1723, 1793), None, CENTER),
+    ("panel_parchment", (1029, 1687, 1225, 1900), None, CENTER),
+    ("panel_wood", (1237, 1690, 1429, 1900), None, CENTER),
+    ("chest", (789, 941, 875, 1013), 20, BOTTOM),
+    ("orb", (1548, 866, 1611, 928), 14, CENTER),
 ]
 
 HORIZON_STRIPS = [

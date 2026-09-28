@@ -15,9 +15,10 @@ use bevy::window::PrimaryWindow;
 
 use crate::atlas::Atlas;
 use crate::board_view::{board_center, pick_piece, pick_square, square_top};
-use tc_core::{PieceKind, Side};
+use tc_core::{Outcome, PieceKind, Side};
 
 use crate::game::{GameState, MAX_AI_LEVEL};
+use crate::run::{self, Run, RunPhase};
 
 /// Camera distance from the point it looks at, the zoom.
 const MIN_DISTANCE: f32 = 3.0;
@@ -39,14 +40,36 @@ const START_YAW: f32 = -FRAC_PI_4;
 #[derive(Message, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Undo,
-    /// A fresh board of this size.
-    NewBoard(u8),
-    ToggleAi,
+    /// Start a new run of this size.
+    NewRun(u8),
+    ToggleSandbox,
     SwapSides,
     AiLevel(i8),
     Deselect,
     /// Turn the view by this many eighths of a full turn.
     Turn(i8),
+    /// Arm the spell card at this 0-based index.
+    ArmSpell(usize),
+    /// Dev cheat: give one charge of every castable spell.
+    CheatSpells,
+    /// Dev cheat: win current run match.
+    CheatWin,
+    /// Dev cheat: lose current run match.
+    CheatLoss,
+}
+
+#[derive(Resource, Clone, Copy, Debug, Default)]
+pub struct DevMode(pub bool);
+
+fn read_dev_flag() -> bool {
+    #[cfg(target_arch = "wasm32")]
+    {
+        web_sys::window().and_then(|w| w.location().search().ok()).is_some_and(|s| s.contains("dev"))
+    }
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        std::env::var("TC_DEV").is_ok_and(|v| v == "1")
+    }
 }
 
 /// The touch gesture in progress, from the first finger down until the last one lifts.
@@ -184,14 +207,25 @@ fn apply_orbit(
         Transform::from_translation(orbit.focus + dir * orbit.distance).looking_at(orbit.focus, Vec3::Y);
 }
 
+#[allow(clippy::too_many_arguments)]
 fn mouse_camera(
     keys: Res<ButtonInput<KeyCode>>,
     mouse: Res<ButtonInput<MouseButton>>,
     motion: Res<AccumulatedMouseMotion>,
     scroll: Res<AccumulatedMouseScroll>,
     time: Res<Time>,
+    run: Res<Run>,
+    ui_query: Query<&Interaction>,
     mut orbit: ResMut<Orbit>,
 ) {
+    if run.phase != RunPhase::Playing {
+        return;
+    }
+    if ui_query.iter().any(|&i| i != Interaction::None)
+        && (mouse.just_pressed(MouseButton::Right) || mouse.just_pressed(MouseButton::Middle))
+    {
+        return;
+    }
     if scroll.delta.y != 0.0 {
         orbit.zoom_by(1.15f32.powf(scroll.delta.y.signum()));
     }
@@ -233,15 +267,27 @@ fn mouse_camera(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn touch_gestures(
     touches: Res<Touches>,
     mut gesture: ResMut<Gesture>,
     mut orbit: ResMut<Orbit>,
     mut state: ResMut<GameState>,
     atlas: Res<Atlas>,
+    run: Res<Run>,
+    ui_query: Query<&Interaction>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
 ) {
+    if run.phase != RunPhase::Playing {
+        if gesture.active {
+            *gesture = Gesture::default();
+        }
+        return;
+    }
     if touches.any_just_pressed() && !gesture.active {
+        if ui_query.iter().any(|&i| i != Interaction::None) {
+            return;
+        }
         *gesture = Gesture { active: true, ..default() };
     }
     if !gesture.active {
@@ -280,15 +326,24 @@ fn touch_gestures(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn click_board(
     mouse: Res<ButtonInput<MouseButton>>,
     orbit: Res<Orbit>,
     mut state: ResMut<GameState>,
     atlas: Res<Atlas>,
+    run: Res<Run>,
+    ui_query: Query<&Interaction>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
 ) {
+    if run.phase != RunPhase::Playing {
+        return;
+    }
     if !mouse.just_pressed(MouseButton::Left) {
+        return;
+    }
+    if ui_query.iter().any(|&i| i != Interaction::None) {
         return;
     }
     if let Some(cursor) = window.cursor_position() {
@@ -308,12 +363,15 @@ fn tap_board(
         return;
     }
     let (cam, gtf) = camera;
-    // A tap close to a move marker means that square, even when a column in front
+    // A tap close to a move or spell marker means that square, even when a column in front
     // covers part of it.
-    let marked = state
-        .selected_moves()
+    let marked_squares = if state.armed_spell.is_some() {
+        state.cast_target_squares()
+    } else {
+        state.selected_moves().into_iter().map(|m| m.to).collect()
+    };
+    let marked = marked_squares
         .into_iter()
-        .map(|m| m.to)
         .filter_map(|sq| {
             let p = cam.world_to_viewport(gtf, square_top(sq, state.game.terrain.height(sq))).ok()?;
             Some((sq, p.distance(cursor)))
@@ -325,10 +383,39 @@ fn tap_board(
     let piece = pick_piece(state, atlas, camera, cursor);
     let ground = || cam.viewport_to_world(gtf, cursor).ok().and_then(|ray| pick_square(state, ray));
     let Some(sq) = marked.or(piece).or_else(ground) else {
-        state.selected = None;
-        state.pieces_dirty = true;
+        if state.armed_spell.is_some() {
+            state.disarm();
+        } else {
+            state.selected = None;
+            state.pieces_dirty = true;
+        }
         return;
     };
+
+    if let Some(spell) = state.armed_spell {
+        let targets = state.cast_target_squares();
+        if targets.contains(&sq) {
+            match spell {
+                tc_core::SpellId::RaiseEarth => state.cast(tc_core::SpellCast::RaiseEarth(sq)),
+                tc_core::SpellId::LowerEarth => state.cast(tc_core::SpellCast::LowerEarth(sq)),
+                tc_core::SpellId::Freeze => state.cast(tc_core::SpellCast::Freeze(sq)),
+                tc_core::SpellId::Shield => state.cast(tc_core::SpellCast::Shield(sq)),
+                tc_core::SpellId::Swap => {
+                    if let Some(first) = state.swap_first {
+                        state.cast(tc_core::SpellCast::Swap(first, sq));
+                    } else {
+                        state.swap_first = Some(sq);
+                        state.pieces_dirty = true;
+                    }
+                }
+                _ => state.disarm(),
+            }
+        } else {
+            state.disarm();
+        }
+        return;
+    }
+
     let side = state.game.pos.side_to_move;
     let moves: Vec<_> = state.selected_moves().into_iter().filter(|m| m.to == sq).collect();
     // Several moves to one square only happens with promotions; there is no picker yet,
@@ -344,13 +431,23 @@ fn tap_board(
     }
 }
 
-fn hotkeys(keys: Res<ButtonInput<KeyCode>>, state: Res<GameState>, mut actions: MessageWriter<Action>) {
+fn hotkeys(
+    keys: Res<ButtonInput<KeyCode>>,
+    state: Res<GameState>,
+    dev: Res<DevMode>,
+    mut actions: MessageWriter<Action>,
+) {
     for (key, action) in [
-        (KeyCode::Digit1, Action::NewBoard(8)),
-        (KeyCode::Digit2, Action::NewBoard(16)),
-        (KeyCode::Digit3, Action::NewBoard(32)),
-        (KeyCode::KeyN, Action::NewBoard(state.size)),
-        (KeyCode::KeyH, Action::ToggleAi),
+        (KeyCode::Digit1, Action::NewRun(8)),
+        (KeyCode::Digit2, Action::NewRun(16)),
+        (KeyCode::Digit3, Action::NewRun(32)),
+        (KeyCode::Digit5, Action::ArmSpell(0)),
+        (KeyCode::Digit6, Action::ArmSpell(1)),
+        (KeyCode::Digit7, Action::ArmSpell(2)),
+        (KeyCode::Digit8, Action::ArmSpell(3)),
+        (KeyCode::Digit9, Action::ArmSpell(4)),
+        (KeyCode::KeyN, Action::NewRun(state.size)),
+        (KeyCode::KeyH, Action::ToggleSandbox),
         (KeyCode::KeyF, Action::SwapSides),
         (KeyCode::Minus, Action::AiLevel(-1)),
         (KeyCode::Equal, Action::AiLevel(1)),
@@ -364,27 +461,44 @@ fn hotkeys(keys: Res<ButtonInput<KeyCode>>, state: Res<GameState>, mut actions: 
             actions.write(action);
         }
     }
+
+    if dev.0 {
+        if keys.just_pressed(KeyCode::F7) {
+            actions.write(Action::CheatSpells);
+        }
+        if keys.just_pressed(KeyCode::F8) {
+            actions.write(Action::CheatWin);
+        }
+        if keys.just_pressed(KeyCode::F9) {
+            actions.write(Action::CheatLoss);
+        }
+    }
 }
 
 fn apply_actions(
     mut actions: MessageReader<Action>,
     mut state: ResMut<GameState>,
+    mut run: ResMut<Run>,
     mut orbit: ResMut<Orbit>,
     time: Res<Time>,
 ) {
     for &action in actions.read() {
-        match action {
-            Action::NewBoard(size) => {
-                // Time since start is a good enough source of a fresh seed on every platform.
-                let seed = time.elapsed().as_nanos() as u64 ^ state.seed.rotate_left(17);
-                *state = state.restart(size, seed);
+        if run.phase != RunPhase::Playing {
+            if let Action::NewRun(size) = action {
+                let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
+                run::start_new_run(size, &mut run, &mut state, seed);
             }
-            Action::ToggleAi => {
-                // Toggle between playing the AI (as the Ashen Sun) and hotseat.
-                state.ai_side = match state.ai_side {
-                    Some(_) => None,
-                    None => Some(Side::Black),
-                };
+            continue;
+        }
+
+        match action {
+            Action::NewRun(size) => {
+                let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
+                run::start_new_run(size, &mut run, &mut state, seed);
+            }
+            Action::ToggleSandbox => {
+                let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
+                run::toggle_sandbox(&mut run, &mut state, seed);
             }
             Action::SwapSides if state.ai_side.is_some() => {
                 state.ai_side = state.ai_side.map(Side::opposite);
@@ -399,7 +513,50 @@ fn apply_actions(
             }
             Action::Undo => state.undo(),
             Action::Turn(eighths) => orbit.target_yaw += eighths as f32 * FRAC_PI_4,
+            Action::ArmSpell(index) => {
+                let spells = state.castable_spells();
+                if let Some(&(spell, _)) = spells.get(index) {
+                    if state.armed_spell == Some(spell) {
+                        state.disarm();
+                    } else {
+                        state.arm_spell(spell);
+                    }
+                }
+            }
+            Action::CheatSpells => {
+                const ALL_SPELLS: [tc_core::SpellId; 8] = [
+                    tc_core::SpellId::RaiseEarth,
+                    tc_core::SpellId::LowerEarth,
+                    tc_core::SpellId::Freeze,
+                    tc_core::SpellId::Bridge,
+                    tc_core::SpellId::DigTunnel,
+                    tc_core::SpellId::Shield,
+                    tc_core::SpellId::Swap,
+                    tc_core::SpellId::Rewind,
+                ];
+                for spell in ALL_SPELLS {
+                    if spell.is_castable() {
+                        if let Some(entry) =
+                            state.game.charges[Side::White.index()].iter_mut().find(|(s, _)| *s == spell)
+                        {
+                            entry.1 = entry.1.saturating_add(1);
+                        } else {
+                            state.game.charges[Side::White.index()].push((spell, 1));
+                        }
+                    }
+                }
+                state.pieces_dirty = true;
+            }
+            Action::CheatWin => {
+                state.outcome = Some(Outcome::Checkmate { winner: Side::White });
+                state.pieces_dirty = true;
+            }
+            Action::CheatLoss => {
+                state.outcome = Some(Outcome::Checkmate { winner: Side::Black });
+                state.pieces_dirty = true;
+            }
             Action::Deselect => {
+                state.disarm();
                 state.selected = None;
                 state.pieces_dirty = true;
             }
@@ -414,6 +571,7 @@ impl Plugin for InputPlugin {
         app.init_resource::<FitCamera>()
             .init_resource::<Gesture>()
             .init_resource::<Orbit>()
+            .insert_resource(DevMode(read_dev_flag()))
             .add_message::<Action>()
             .add_systems(Startup, setup_camera)
             .add_systems(

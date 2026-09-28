@@ -44,13 +44,19 @@ impl Uv {
 }
 
 impl Atlas {
-    fn rect(&self, name: &str) -> SpriteRect {
+    fn sprite_rect(&self, name: &str) -> SpriteRect {
         *self.rects.get(name).unwrap_or_else(|| panic!("no sprite {name} in atlas.ron"))
+    }
+
+    /// Pixel rect of a sprite for UI `ImageNode { image, rect, .. }`.
+    pub fn rect(&self, name: &str) -> Rect {
+        let r = self.sprite_rect(name);
+        Rect::new(r.x as f32, r.y as f32, (r.x + r.w) as f32, (r.y + r.h) as f32)
     }
 
     /// Texture coordinates of a sprite. Unknown names panic: the manifest is generated.
     pub fn uv(&self, name: &str) -> Uv {
-        let r = self.rect(name);
+        let r = self.sprite_rect(name);
         // A small inset keeps nearest sampling from bleeding into the neighbouring sprite.
         let inset = 0.02;
         Uv {
@@ -61,7 +67,7 @@ impl Atlas {
 
     /// Size of a sprite in pixels.
     pub fn px(&self, name: &str) -> Vec2 {
-        let r = self.rect(name);
+        let r = self.sprite_rect(name);
         Vec2::new(r.w as f32, r.h as f32)
     }
 }

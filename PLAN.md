@@ -181,17 +181,17 @@ Target: **modern indie pixel art** like the grassland screenshot reference (bold
 
 ## 9. Milestones
 
-| # | Milestone | Done when |
-|---|---|---|
-| M0 | Workspace scaffold + native & web build pipeline | An empty Bevy scene runs natively and in the browser via `trunk serve` |
-| M1 | `core`: standard chess on a flat 8×8 board | Perft tests pass |
-| M2 | Terrain model, generator and terrain move rules | Rule-fixture tests pass, and the validator rejects unfair or sealed boards |
-| M3 | 2D board rendering (placeholder coloured tiles + letters for pieces) + height/cliff drawing + camera + picking + playable hotseat | Two humans can play a full game on generated terrain |
-| M4 | AI opponent | It plays legal terrain moves within a time budget, also on the web |
-| M5 | Roguelike loop: floors, reward draft, items, spells, pickups, save/reset | A complete run can be won or lost, and the save persists and is wiped when you lose |
-| M6 | 16×16 / 32×32 armies and scaling, balance pass | All sizes can be played at a steady 60 fps on the web |
-| M7 | Art & juice: generate the atlas from SPRITES.md, run the processing script, add autotiling, VFX, audio, menus | It matches the look of the pixel-art reference image |
-| M8 | Web deploy (static hosting) + size optimisation (`wasm-opt`, `opt-level="z"` for wasm) | A public URL loads in under 10 s |
+| # | Milestone | Status | Done when |
+|---|---|---|---|
+| M0 | Workspace scaffold + native & web build pipeline | Done | An empty Bevy scene runs natively and in the browser via `trunk serve` |
+| M1 | `core`: standard chess on a flat 8×8 board | Done | Perft tests pass |
+| M2 | Terrain model, generator and terrain move rules | Done | Rule-fixture tests pass, and the validator rejects unfair or sealed boards |
+| M3 | 2D board rendering (placeholder coloured tiles + letters for pieces) + height/cliff drawing + camera + picking + playable hotseat | Done | Two humans can play a full game on generated terrain |
+| M4 | AI opponent | Done | It plays legal terrain moves within a time budget, also on the web |
+| M5 | Roguelike loop: floors, reward draft, items, spells, pickups, save/reset | Done | A complete run can be won or lost, and the save persists and is wiped when you lose |
+| M6 | 16×16 / 32×32 armies and scaling, balance pass | | All sizes can be played at a steady 60 fps on the web |
+| M7 | Art & juice: generate the atlas from SPRITES.md, run the processing script, add autotiling, VFX, audio, menus | Partly done (3D pixel-art board, environment art) | It matches the look of the pixel-art reference image |
+| M8 | Web deploy (static hosting) + size optimisation (`wasm-opt`, `opt-level="z"` for wasm) | Partly done (web deploy with wasm-opt) | A public URL loads in under 10 s |
 
 ## 10. Risks
 

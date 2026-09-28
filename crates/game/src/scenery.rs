@@ -306,8 +306,8 @@ fn setup_birds(
     let center = board_center(state.size);
     for i in 0..4 {
         let is_crow = i == 3;
-        let radius = 6.0 + 2.5 * i as f32;
-        let height = 5.0 + 1.2 * i as f32;
+        let radius = 14.0 + 3.0 * i as f32;
+        let height = 10.0 + 1.5 * i as f32;
         let flap_period = if is_crow { 0.22 } else { 0.18 };
         let dir = if i % 2 == 0 { 1.0 } else { -1.0 };
         let speed = 0.25 + 0.05 * i as f32;

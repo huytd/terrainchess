@@ -7,7 +7,10 @@ mod ai;
 mod atlas;
 mod board_view;
 mod game;
+mod hud;
 mod input;
+mod run;
+mod save;
 mod scenery;
 
 use bevy::asset::AssetMetaCheck;
@@ -35,10 +38,12 @@ fn main() {
         .add_plugins((
             atlas::AtlasPlugin,
             ai::AiPlugin,
+            run::RunPlugin,
             game::GamePlugin,
             board_view::BoardViewPlugin,
             scenery::SceneryPlugin,
             input::InputPlugin,
+            hud::HudPlugin,
         ))
         .run();
 }

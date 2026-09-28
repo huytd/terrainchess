@@ -136,6 +136,16 @@ struct TerrainPart;
 struct PieceSprite;
 
 #[derive(Component)]
+struct PickupSprite;
+
+/// Up-and-down oscillation for board pickups (PLAN.md §8).
+#[derive(Component)]
+struct PickupBob {
+    base_y: f32,
+    phase: f32,
+}
+
+#[derive(Component)]
 struct Overlay;
 
 /// One of the two shallow-water frames; the other is hidden.
@@ -373,7 +383,9 @@ fn spawn_terrain(
     let material = MeshMaterial3d(look.terrain.clone());
     commands.spawn((TerrainPart, Mesh3d(meshes.add(solid.mesh())), material.clone()));
     for (i, q) in water.into_iter().enumerate() {
-        commands.spawn((TerrainPart, WaterFrame(i), Mesh3d(meshes.add(q.mesh())), material.clone()));
+        if !q.pos.is_empty() {
+            commands.spawn((TerrainPart, WaterFrame(i), Mesh3d(meshes.add(q.mesh())), material.clone()));
+        }
     }
 }
 
@@ -440,7 +452,7 @@ fn spawn_pieces(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut markers: ResMut<Assets<MarkerMaterial>>,
-    old: Query<Entity, Or<(With<PieceSprite>, With<Overlay>)>>,
+    old: Query<Entity, Or<(With<PieceSprite>, With<Overlay>, With<PickupSprite>)>>,
 ) {
     if !state.pieces_dirty {
         return;
@@ -478,6 +490,25 @@ fn spawn_pieces(
             let from = piece_spot(&state, rook_from);
             e.insert((Transform::from_translation(from), Hop { from, to: spot, t: 0.0, height: 0.2 }));
         }
+    }
+
+    // Pickups on the board: SpellCharge -> orb, RunItem -> chest, bobbing at 1.5 Hz.
+    for &(sq, pickup) in &state.game.pickups {
+        let sprite_name = match pickup {
+            tc_core::Pickup::SpellCharge(_) => "orb",
+            tc_core::Pickup::RunItem => "chest",
+        };
+        let mesh = card_mesh(&mut look, &mut meshes, &atlas, sprite_name, false);
+        let spot = square_top(sq, state.game.terrain.height(sq));
+        let phase = sq.x as f32 * 1.3 + sq.y as f32 * 0.9;
+        commands.spawn((
+            PickupSprite,
+            Billboard,
+            Mesh3d(mesh),
+            MeshMaterial3d(look.cards.clone()),
+            Transform::from_translation(spot + Vec3::Y * 0.06),
+            PickupBob { base_y: spot.y + 0.06, phase },
+        ));
     }
 
     spawn_overlays(&mut commands, &state, &atlas, &mut meshes, &mut materials, &mut markers);
@@ -545,6 +576,20 @@ fn spawn_overlays(
         && let Some(k) = state.game.pos.king(state.game.pos.side_to_move)
     {
         paint.tint(k, Color::srgba(0.9, 0.1, 0.15, 0.5));
+    }
+    if let Some((sq, _)) = state.game.pos.shield {
+        paint.mark(sq, "ov_ring", 0.7, Color::srgb_u8(0xFF, 0xD3, 0x5A));
+    }
+    if let Some(spell) = state.armed_spell {
+        if spell == tc_core::SpellId::Swap
+            && let Some(first) = state.swap_first
+        {
+            paint.mark(first, "ov_select", 0.95, Color::WHITE);
+        }
+        for sq in state.cast_target_squares() {
+            paint.mark(sq, "ov_rune", 0.7, Color::WHITE);
+        }
+        return;
     }
     let Some(sel) = state.selected else { return };
     paint.mark(sel, "ov_select", 0.95, Color::WHITE);
@@ -633,6 +678,15 @@ fn animate_hops(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &
     }
 }
 
+/// Oscillate pickups at 1.5 Hz with an amplitude of 0.06 world units (PLAN.md §6).
+fn animate_pickups(time: Res<Time>, mut q: Query<(&PickupBob, &mut Transform)>) {
+    let t = time.elapsed_secs();
+    for (bob, mut tf) in &mut q {
+        let offset = (t * 1.5 * std::f32::consts::TAU + bob.phase).sin() * 0.06;
+        tf.translation.y = bob.base_y + offset;
+    }
+}
+
 /// Turn cards to face the camera, and stretch them so the tilt doesn't squash them.
 fn face_camera(
     camera: Single<&Transform, (With<MainCamera>, Without<Billboard>)>,
@@ -657,7 +711,13 @@ impl Plugin for BoardViewPlugin {
             .add_systems(Startup, setup_look)
             .add_systems(
                 Update,
-                ((spawn_terrain, spawn_pieces).chain(), animate_water, animate_hops, face_camera),
+                (
+                    (spawn_terrain, spawn_pieces).chain(),
+                    animate_water,
+                    animate_hops,
+                    animate_pickups,
+                    face_camera,
+                ),
             );
     }
 }
