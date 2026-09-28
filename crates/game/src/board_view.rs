@@ -209,6 +209,9 @@ pub(crate) const HOP_SECS: f32 = 0.22;
 pub(crate) struct Look {
     pub(crate) terrain: Handle<StandardMaterial>,
     pub(crate) cards: Handle<StandardMaterial>,
+    pub(crate) shadows: Handle<StandardMaterial>,
+    pub(crate) shadow_mesh_small: Handle<Mesh>,
+    pub(crate) shadow_mesh_large: Handle<Mesh>,
     /// Card meshes by sprite name and horizontal flip.
     pub(crate) card_meshes: HashMap<(String, bool), Handle<Mesh>>,
     /// Shared on-top material for threat arrows onto the player's pieces.
@@ -224,6 +227,7 @@ const ARROW_AMBER: Color = Color::srgba(1.0, 0.72, 0.15, 0.85);
 fn setup_look(
     mut commands: Commands,
     atlas: Res<Atlas>,
+    mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut markers: ResMut<Assets<MarkerMaterial>>,
 ) {
@@ -240,6 +244,22 @@ fn setup_look(
         alpha_mode: AlphaMode::Mask(0.5),
         ..default()
     });
+    let shadows = materials.add(StandardMaterial {
+        base_color_texture: Some(atlas.image.clone()),
+        unlit: true,
+        cull_mode: None,
+        alpha_mode: AlphaMode::Blend,
+        fog_enabled: true,
+        ..default()
+    });
+    let mut q_small = Quads::default();
+    q_small.add(flat(Vec3::ZERO, Vec2::new(0.55, 0.28)), full_uv(atlas.uv("shadow_ellipse")), 1.0);
+    let shadow_mesh_small = meshes.add(q_small.mesh());
+
+    let mut q_large = Quads::default();
+    q_large.add(flat(Vec3::ZERO, Vec2::new(0.8, 0.4)), full_uv(atlas.uv("shadow_ellipse")), 1.0);
+    let shadow_mesh_large = meshes.add(q_large.mesh());
+
     let arrow_material = |color: Color| MarkerMaterial {
         base: StandardMaterial {
             base_color: color,
@@ -252,7 +272,16 @@ fn setup_look(
     };
     let arrow_red = markers.add(arrow_material(ARROW_RED));
     let arrow_amber = markers.add(arrow_material(ARROW_AMBER));
-    commands.insert_resource(Look { terrain, cards, card_meshes: HashMap::new(), arrow_red, arrow_amber });
+    commands.insert_resource(Look {
+        terrain,
+        cards,
+        shadows,
+        shadow_mesh_small,
+        shadow_mesh_large,
+        card_meshes: HashMap::new(),
+        arrow_red,
+        arrow_amber,
+    });
 }
 
 /// A per-cell number for picking tile variants without flicker.
@@ -365,6 +394,10 @@ pub(crate) fn flat(c: Vec3, size: Vec2) -> [Vec3; 4] {
 /// Walls of one column side from `lo` up to `hi`: grass lip under the top edge, stone
 /// below. `a` → `b` runs left to right along the bottom as seen from outside.
 pub(crate) fn wall(q: &mut Quads, atlas: &Atlas, a: Vec3, b: Vec3, lo: f32, hi: f32, shade: f32) {
+    wall_tinted(q, atlas, a, b, lo, hi, Color::srgb(shade, shade, shade));
+}
+
+pub(crate) fn wall_tinted(q: &mut Quads, atlas: &Atlas, a: Vec3, b: Vec3, lo: f32, hi: f32, tint: Color) {
     let mut top = hi;
     let mut first = true;
     while top > lo + 1e-4 {
@@ -372,10 +405,10 @@ pub(crate) fn wall(q: &mut Quads, atlas: &Atlas, a: Vec3, b: Vec3, lo: f32, hi: 
         let uv = atlas.uv(if first { "wall_lip" } else { "wall_stone" });
         let frac = (top - bottom) / LEVEL;
         let at = |p: Vec3, y: f32| Vec3::new(p.x, y, p.z);
-        q.add(
+        q.add_tinted(
             [at(a, bottom), at(b, bottom), at(b, top), at(a, top)],
             [uv.at(0.0, frac), uv.at(1.0, frac), uv.at(1.0, 0.0), uv.at(0.0, 0.0)],
-            shade,
+            tint,
         );
         top = bottom;
         first = false;
@@ -406,25 +439,30 @@ fn spawn_terrain(
         let tile = *t.get(sq);
         let top = square_top(sq, tile.height);
 
-        // Top face, with a light checker and brighter high ground.
+        // Top face: board land tops use board_stone; water/ice use dark navy without checker.
         let name = match tile.kind {
-            TileKind::Grass | TileKind::Stone | TileKind::Sand | TileKind::Bridge => "flagstone",
+            TileKind::Grass | TileKind::Stone | TileKind::Sand | TileKind::Bridge => "board_stone",
             TileKind::ShallowWater => "shallow_0",
             TileKind::DeepWater => "deep",
             TileKind::Ice => "ice",
             TileKind::Void => "void",
         };
-        let mut tint = if (sq.x + sq.y) % 2 != 0 {
-            Color::srgb(0.93, 0.87, 0.74)
+        let tint = if tile.kind == TileKind::DeepWater {
+            Color::srgb(0.506, 0.283, 0.344)
+        } else if tile.kind == TileKind::ShallowWater {
+            Color::srgb(0.410, 0.284, 0.427)
+        } else if tile.kind == TileKind::Ice {
+            Color::srgb(0.150, 0.184, 0.264)
         } else {
-            Color::srgb(0.47, 0.50, 0.58)
+            let base_tint = if (sq.x + sq.y) % 2 != 0 {
+                Color::srgb(1.097, 1.060, 0.927)
+            } else {
+                Color::srgb(0.869, 0.846, 0.755)
+            };
+            let bright = 1.0 + 0.03 * tile.height as f32;
+            let c = base_tint.to_srgba();
+            Color::srgb(c.red * bright, c.green * bright, c.blue * bright)
         };
-        if tile.is_water() || tile.kind == TileKind::Ice {
-            tint = tint.mix(&Color::WHITE, 0.3);
-        }
-        let bright = 0.9 + 0.05 * tile.height as f32;
-        let c = tint.to_srgba();
-        let tint = Color::srgb(c.red * bright, c.green * bright, c.blue * bright);
         let corners = flat(top, Vec2::ONE);
         if tile.kind == TileKind::ShallowWater {
             for (i, frame) in ["shallow_0", "shallow_1"].into_iter().enumerate() {
@@ -441,30 +479,31 @@ fn spawn_terrain(
             };
             let patch_0 = patch_uv("shore_0");
             let patch_1 = patch_uv("shore_1");
+            let foam_tint = Color::srgb(0.287, 0.298, 0.471);
             for (dir, (dx, dy), offset, edge_size) in [
-                (0, (0i8, 1i8), Vec3::new(0.0, 0.003, -0.44), Vec2::new(1.0, 0.12)),
-                (1, (1, 0), Vec3::new(0.44, 0.003, 0.0), Vec2::new(0.12, 1.0)),
-                (2, (0, -1), Vec3::new(0.0, 0.003, 0.44), Vec2::new(1.0, 0.12)),
-                (3, (-1, 0), Vec3::new(-0.44, 0.003, 0.0), Vec2::new(0.12, 1.0)),
+                (0, (0i8, 1i8), Vec3::new(0.0, 0.003, -0.45), Vec2::new(1.0, 0.10)),
+                (1, (1, 0), Vec3::new(0.45, 0.003, 0.0), Vec2::new(0.10, 1.0)),
+                (2, (0, -1), Vec3::new(0.0, 0.003, 0.45), Vec2::new(1.0, 0.10)),
+                (3, (-1, 0), Vec3::new(-0.45, 0.003, 0.0), Vec2::new(0.10, 1.0)),
             ] {
                 let is_water_neighbour = sq.offset(dx, dy, size).is_some_and(|n| t.get(n).is_water());
                 if !is_water_neighbour {
                     let foam_corners = flat(top + offset, edge_size);
                     let uv_0 = rotate_uv(patch_0, dir);
                     let uv_1 = rotate_uv(patch_1, dir);
-                    water[0].add_tinted(foam_corners, uv_0, tint);
-                    water[1].add_tinted(foam_corners, uv_1, tint);
+                    water[0].add_tinted(foam_corners, uv_0, foam_tint);
+                    water[1].add_tinted(foam_corners, uv_1, foam_tint);
                 }
             }
         }
 
-        // Sides, only where they show: above a lower neighbour or at the board edge.
+        // Sides: south/east 30% darker (0.588, 0.504), north/west 15% darker (0.476, 0.527).
         let (x, z) = (top.x, top.z);
         for ((dx, dy), a, b, shade) in [
-            ((0i8, -1i8), Vec3::new(x - 0.5, 0.0, z + 0.5), Vec3::new(x + 0.5, 0.0, z + 0.5), 0.84),
-            ((1, 0), Vec3::new(x + 0.5, 0.0, z + 0.5), Vec3::new(x + 0.5, 0.0, z - 0.5), 0.72),
-            ((0, 1), Vec3::new(x + 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z - 0.5), 0.56),
-            ((-1, 0), Vec3::new(x - 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z + 0.5), 0.62),
+            ((0i8, -1i8), Vec3::new(x - 0.5, 0.0, z + 0.5), Vec3::new(x + 0.5, 0.0, z + 0.5), 0.588),
+            ((1, 0), Vec3::new(x + 0.5, 0.0, z + 0.5), Vec3::new(x + 0.5, 0.0, z - 0.5), 0.504),
+            ((0, 1), Vec3::new(x + 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z - 0.5), 0.476),
+            ((-1, 0), Vec3::new(x - 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z + 0.5), 0.527),
         ] {
             let lo = match sq.offset(dx, dy, size) {
                 Some(n) => top_y(t.height(n) as i8),
@@ -572,6 +611,17 @@ fn piece_spot(state: &GameState, sq: Sq) -> Vec3 {
     square_top(sq, state.game.terrain.height(sq))
 }
 
+#[derive(Component)]
+struct PieceShadow;
+
+#[derive(Component)]
+struct ShadowHop {
+    from: Vec3,
+    to: Vec3,
+    t: f32,
+    y: f32,
+}
+
 #[allow(clippy::too_many_arguments)] // a Bevy system: one parameter per resource
 fn spawn_pieces(
     mut commands: Commands,
@@ -584,7 +634,7 @@ fn spawn_pieces(
     run: Res<Run>,
     title_menu: Res<TitleMenu>,
     arrows_enabled: Res<ArrowsEnabled>,
-    old: Query<Entity, Or<(With<PieceSprite>, With<Overlay>, With<PickupSprite>)>>,
+    old: Query<Entity, Or<(With<PieceSprite>, With<PieceShadow>, With<Overlay>, With<PickupSprite>)>>,
 ) {
     if !state.pieces_dirty {
         return;
@@ -600,13 +650,30 @@ fn spawn_pieces(
         let name = piece_sprite_name(piece.kind, piece.side);
         let mesh = card_mesh(&mut look, &mut meshes, &atlas, &name, piece.side == Side::Black);
         let spot = piece_spot(&state, sq);
-        let mut e = commands.spawn((
-            PieceSprite,
-            Billboard,
-            Mesh3d(mesh),
-            MeshMaterial3d(look.cards.clone()),
-            Transform::from_translation(spot),
-        ));
+        let piece_e = commands
+            .spawn((
+                PieceSprite,
+                Billboard,
+                Mesh3d(mesh),
+                MeshMaterial3d(look.cards.clone()),
+                Transform::from_translation(spot),
+            ))
+            .id();
+
+        let shadow_mesh = match piece.kind {
+            PieceKind::Knight | PieceKind::Rook => look.shadow_mesh_large.clone(),
+            _ => look.shadow_mesh_small.clone(),
+        };
+        let shadow_spot = Vec3::new(spot.x, spot.y + LIFT_TINT, spot.z);
+        let shadow_e = commands
+            .spawn((
+                PieceShadow,
+                Mesh3d(shadow_mesh),
+                MeshMaterial3d(look.shadows.clone()),
+                Transform::from_translation(shadow_spot),
+            ))
+            .id();
+
         if let Some(mv) = animate.filter(|m| m.to == sq) {
             let from = piece_spot(&state, mv.from);
             let height = match (piece.kind, mv.kind) {
@@ -614,13 +681,27 @@ fn spawn_pieces(
                 (PieceKind::Knight, _) => 0.8,
                 _ => 0.25 + (from.y - spot.y).abs().min(LEVEL) * 0.5,
             };
-            e.insert((Transform::from_translation(from), Hop { from, to: spot, t: 0.0, height }));
+            commands
+                .entity(piece_e)
+                .insert((Transform::from_translation(from), Hop { from, to: spot, t: 0.0, height }));
+            let hop_y = from.y.min(spot.y) + LIFT_TINT;
+            commands.entity(shadow_e).insert((
+                Transform::from_translation(Vec3::new(from.x, hop_y, from.z)),
+                ShadowHop { from, to: spot, t: 0.0, y: hop_y },
+            ));
         }
         if let Some(MoveKind::Castle { rook_to, rook_from }) = animate.map(|m| m.kind)
             && sq == rook_to
         {
             let from = piece_spot(&state, rook_from);
-            e.insert((Transform::from_translation(from), Hop { from, to: spot, t: 0.0, height: 0.2 }));
+            commands
+                .entity(piece_e)
+                .insert((Transform::from_translation(from), Hop { from, to: spot, t: 0.0, height: 0.2 }));
+            let hop_y = from.y.min(spot.y) + LIFT_TINT;
+            commands.entity(shadow_e).insert((
+                Transform::from_translation(Vec3::new(from.x, hop_y, from.z)),
+                ShadowHop { from, to: spot, t: 0.0, y: hop_y },
+            ));
         }
     }
 
@@ -893,6 +974,27 @@ fn animate_hops(mut commands: Commands, time: Res<Time>, mut q: Query<(Entity, &
     }
 }
 
+fn animate_shadow_hops(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut q: Query<(Entity, &mut ShadowHop, &mut Transform)>,
+) {
+    for (e, mut hop, mut tf) in &mut q {
+        hop.t = (hop.t + time.delta_secs() / HOP_SECS).min(1.0);
+        let k = hop.t;
+        let eased = k * k * (3.0 - 2.0 * k);
+        let p = hop.from.lerp(hop.to, eased);
+        let shrink = 1.0 - 0.3 * (4.0 * k * (1.0 - k));
+        tf.translation = Vec3::new(p.x, hop.y, p.z);
+        tf.scale = Vec3::splat(shrink);
+        if k >= 1.0 {
+            tf.translation = Vec3::new(hop.to.x, hop.to.y + LIFT_TINT, hop.to.z);
+            tf.scale = Vec3::ONE;
+            commands.entity(e).try_remove::<ShadowHop>();
+        }
+    }
+}
+
 /// Oscillate pickups at 1.5 Hz with an amplitude of 0.06 world units (PLAN.md §6).
 fn animate_pickups(time: Res<Time>, mut q: Query<(&PickupBob, &mut Transform)>) {
     let t = time.elapsed_secs();
@@ -930,6 +1032,7 @@ impl Plugin for BoardViewPlugin {
                     (spawn_terrain, spawn_pieces).chain(),
                     animate_water,
                     animate_hops,
+                    animate_shadow_hops,
                     animate_pickups,
                     face_camera,
                 ),

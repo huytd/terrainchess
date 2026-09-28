@@ -7,7 +7,7 @@ use tc_core::Sq;
 
 use crate::atlas::Atlas;
 use crate::board_view::{
-    Billboard, Look, PX, Quads, board_center, card_mesh, flat, full_uv, hash, rotate_uv, top_y, wall,
+    Billboard, Look, PX, Quads, board_center, card_mesh, flat, full_uv, hash, rotate_uv, top_y, wall_tinted,
 };
 use crate::game::GameState;
 use crate::input::MainCamera;
@@ -381,6 +381,7 @@ fn rebuild_scenery(
     atlas: Res<Atlas>,
     look: Option<ResMut<Look>>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
     old: Query<Entity, With<SceneryPart>>,
     mut last: Local<Option<(u64, u8)>>,
 ) {
@@ -392,6 +393,15 @@ fn rebuild_scenery(
     for e in &old {
         commands.entity(e).despawn();
     }
+
+    let prop_material = materials.add(StandardMaterial {
+        base_color: Color::srgb(0.62, 0.70, 0.80),
+        base_color_texture: Some(atlas.image.clone()),
+        unlit: true,
+        cull_mode: None,
+        alpha_mode: AlphaMode::Mask(0.5),
+        ..default()
+    });
 
     let n = state.size as i32;
     let r = 6 + n / 4;
@@ -468,7 +478,8 @@ fn rebuild_scenery(
             match cell {
                 CellType::Grass(_) => {
                     let tile = ["grass_0", "grass_1", "grass_dark", "moss"][hash(x, y, 1) as usize % 4];
-                    solid.add(corners, full_uv(atlas.uv(tile)), shade);
+                    let grass_tint = Color::srgb(shade * 0.62, shade * 0.70, shade * 0.80);
+                    solid.add_tinted(corners, full_uv(atlas.uv(tile)), grass_tint);
 
                     if (hash(x, y, 200) % 100) < 30 {
                         let decal_idx = (hash(x, y, 201) % 8) as usize;
@@ -479,7 +490,8 @@ fn rebuild_scenery(
                         let decal_rot = hash(x, y, 202) % 4;
                         let uv = rotate_uv(full_uv(atlas.uv(decal_name)), decal_rot);
                         let decal_corners = flat(top + Vec3::Y * 0.003, Vec2::splat(0.7));
-                        decals.add(decal_corners, uv, 0.75);
+                        let decal_tint = Color::srgb(0.75 * 0.62, 0.75 * 0.70, 0.75 * 0.80);
+                        decals.add_tinted(decal_corners, uv, decal_tint);
                     }
                 }
                 CellType::Shore => {
@@ -498,11 +510,14 @@ fn rebuild_scenery(
                     if let Some(dir) = sea_dir {
                         let uv_0 = rotate_uv(full_uv(atlas.uv("shore_0")), dir);
                         let uv_1 = rotate_uv(full_uv(atlas.uv("shore_1")), dir);
-                        sea_quads[0].add(corners, uv_0, shade);
-                        sea_quads[1].add(corners, uv_1, shade);
+                        let foam_tint = Color::srgb(0.279, 0.325, 0.560);
+                        sea_quads[0].add_tinted(corners, uv_0, foam_tint);
+                        sea_quads[1].add_tinted(corners, uv_1, foam_tint);
                     } else {
                         let name = if hash(x, y, 3).is_multiple_of(4) { "sand_shells" } else { "sand_dry" };
-                        solid.add(corners, full_uv(atlas.uv(name)), shade);
+                        let sand_shade = shade * 0.80;
+                        let sand_tint = Color::srgb(sand_shade * 0.62, sand_shade * 0.70, sand_shade * 0.80);
+                        solid.add_tinted(corners, full_uv(atlas.uv(name)), sand_tint);
                     }
                 }
                 CellType::Board(_) | CellType::Sea => unreachable!(),
@@ -517,7 +532,8 @@ fn rebuild_scenery(
                 let n_cell = cell_at(x + dx as i32, y + dy as i32);
                 let n_top = height_at(n_cell);
                 if n_top < top_h {
-                    wall(&mut solid, &atlas, a, b, n_top, top_h, side_shade);
+                    let wall_tint = Color::srgb(side_shade * 0.62, side_shade * 0.70, side_shade * 0.80);
+                    wall_tinted(&mut solid, &atlas, a, b, n_top, top_h, wall_tint);
                 }
             }
 
@@ -546,7 +562,7 @@ fn rebuild_scenery(
                             SceneryPart,
                             Billboard,
                             Mesh3d(mesh),
-                            MeshMaterial3d(look.cards.clone()),
+                            MeshMaterial3d(prop_material.clone()),
                             Transform::from_translation(pos),
                         ));
                     }
@@ -591,10 +607,13 @@ fn rebuild_scenery(
                 };
 
             let corners = flat(Vec3::new(x as f32, SEA_Y, -(y as f32)), Vec2::ONE);
-            let (frame_0, frame_1) =
-                if is_shallow { ("sea_shallow_0", "sea_shallow_1") } else { ("sea_deep_0", "sea_deep_1") };
-            sea_quads[0].add(corners, full_uv(atlas.uv(frame_0)), 1.0);
-            sea_quads[1].add(corners, full_uv(atlas.uv(frame_1)), 1.0);
+            let (frame_0, frame_1, sea_tint) = if is_shallow {
+                ("sea_shallow_0", "sea_shallow_1", Color::srgb(0.566, 0.276, 0.363))
+            } else {
+                ("sea_deep_0", "sea_deep_1", Color::srgb(0.632, 0.346, 0.351))
+            };
+            sea_quads[0].add_tinted(corners, full_uv(atlas.uv(frame_0)), sea_tint);
+            sea_quads[1].add_tinted(corners, full_uv(atlas.uv(frame_1)), sea_tint);
         }
     }
 
@@ -605,6 +624,8 @@ fn rebuild_scenery(
     let center = board_center(state.size);
     let (cx, cz) = (center.x, center.z);
     let k_fine = (sea_max - sea_min + 1) / 4;
+
+    let deep_tint = Color::srgb(0.632, 0.346, 0.351);
 
     for k in -35..=(35 + k_fine) {
         let qx = fine_min_x - 2.0 + 4.0 * k as f32;
@@ -624,8 +645,8 @@ fn rebuild_scenery(
                 continue;
             }
             let corners = flat(Vec3::new(qx, SEA_Y, qz), Vec2::splat(4.0));
-            sea_quads[0].add(corners, full_uv(atlas.uv("sea_deep_0")), 1.0);
-            sea_quads[1].add(corners, full_uv(atlas.uv("sea_deep_1")), 1.0);
+            sea_quads[0].add_tinted(corners, full_uv(atlas.uv("sea_deep_0")), deep_tint);
+            sea_quads[1].add_tinted(corners, full_uv(atlas.uv("sea_deep_1")), deep_tint);
         }
     }
 
@@ -643,8 +664,8 @@ fn rebuild_scenery(
                 continue;
             }
             let corners = flat(Vec3::new(qx, SEA_Y, qz), Vec2::splat(8.0));
-            sea_quads[0].add(corners, full_uv(atlas.uv("sea_deep_0")), 1.0);
-            sea_quads[1].add(corners, full_uv(atlas.uv("sea_deep_1")), 1.0);
+            sea_quads[0].add_tinted(corners, full_uv(atlas.uv("sea_deep_0")), deep_tint);
+            sea_quads[1].add_tinted(corners, full_uv(atlas.uv("sea_deep_1")), deep_tint);
         }
     }
 

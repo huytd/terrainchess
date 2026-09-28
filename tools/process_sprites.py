@@ -462,9 +462,49 @@ def process(src, src_sky, src_ground, src_gui, palette):
         s = target_h / h if target_h else SCALE
         return downscale(rgb, mask.astype(np.float32), max(1, round(w * s)), max(1, round(h * s)))
 
+    rim_color = np.array([0xA4, 0x92, 0xC9], dtype=np.float32)
     for name, box, target_h, anchor in SPRITES:
-        out[name] = (trimmed(crop(box), target_h), anchor)
+        img = trimmed(crop(box), target_h)
+        if name.startswith("black_"):
+            alpha = img[..., 3]
+            is_opaque = alpha > 0
+            sh, sw = alpha.shape
+            upper_trans = np.zeros((sh, sw), dtype=bool)
+            upper_trans[0, :] = True
+            upper_trans[1:, :] = alpha[:-1, :] == 0
+            left_trans = np.zeros((sh, sw), dtype=bool)
+            left_trans[:, 0] = True
+            left_trans[:, 1:] = alpha[:, :-1] == 0
+            rim_mask = is_opaque & (upper_trans | left_trans)
+            img[rim_mask, :3] = img[rim_mask, :3] * 0.3 + rim_color * 0.7
+        out[name] = (img, anchor)
     out["white_king"] = (trimmed(white_king(crop), PIECE_H["king"]), BOTTOM)
+
+    # Generated sprite: board_stone (compressed contrast, lifted mortar, desaturated)
+    flag = out["flagstone"][0].copy()
+    flag_rgb = flag[..., :3]
+    mean = flag_rgb.mean(axis=(0, 1), keepdims=True)
+    comp = mean + (flag_rgb - mean) * (1.0 - 0.65)
+    floor_val = mean * (1.0 - 0.15)
+    comp = np.maximum(comp, floor_val)
+    lum = 0.299 * comp[..., 0:1] + 0.587 * comp[..., 1:2] + 0.114 * comp[..., 2:3]
+    desat = comp * 0.70 + lum * 0.30
+    flag[..., :3] = desat
+    out["board_stone"] = (flag, CENTER)
+
+    # Generated sprite: shadow_ellipse (32x16, black, 0.45 alpha inside, 1px dithered edge)
+    sw, sh = 32, 16
+    cx, cy = (sw - 1) / 2.0, (sh - 1) / 2.0
+    a, b = 15.9, 7.9
+    y, x = np.mgrid[:sh, :sw]
+    outer = ((x - cx) / a) ** 2 + ((y - cy) / b) ** 2 <= 1.0
+    inner = ((x - cx) / (a - 1.0)) ** 2 + ((y - cy) / (b - 1.0)) ** 2 <= 1.0
+    ring = outer & ~inner
+    checker = (x + y) % 2 == 0
+    shadow = np.zeros((sh, sw, 4), dtype=np.float32)
+    shadow[inner, 3] = 0.45 * 255.0
+    shadow[ring & checker, 3] = 0.45 * 255.0
+    out["shadow_ellipse"] = (shadow, CENTER)
 
     # Environment sky: horizon strips
     for name, (x0, y0, x1, y1) in HORIZON_STRIPS:
