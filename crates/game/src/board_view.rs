@@ -17,6 +17,8 @@ pub const LIFT: f32 = 16.0;
 /// Depth layers within one board row.
 mod layer {
     pub const GROUND: f32 = 0.0;
+    /// Grid lines, height edges and contact shadows drawn on the ground.
+    pub const EDGE: f32 = 0.05;
     pub const FACE: f32 = 0.1;
     pub const DECAL: f32 = 0.2;
     pub const TINT: f32 = 0.3;
@@ -36,6 +38,15 @@ pub fn tile_top(sq: Sq, height: u8) -> Vec2 {
 pub fn row_z(y: u8, layer: f32) -> f32 {
     -(y as f32) + layer
 }
+
+/// Grid line between squares.
+const GRID: Color = Color::srgba(0.05, 0.06, 0.10, 0.30);
+/// Crest of a square that is higher than its neighbour.
+const LIP: Color = Color::srgba(1.0, 0.97, 0.85, 0.45);
+/// Outline where a higher square drops to a lower one.
+const DROP_EDGE: Color = Color::srgba(0.04, 0.04, 0.08, 0.75);
+/// Shadow a higher square casts on the lower square beside it.
+const SHADOW: Color = Color::srgba(0.0, 0.0, 0.05, 0.32);
 
 /// Tile whose top surface or cliff face is under `p`, front-most first.
 pub fn pick_tile(state: &GameState, p: Vec2) -> Option<Sq> {
@@ -141,7 +152,7 @@ fn spawn_terrain(
             TileKind::Void => ("void", None),
         };
         let checker = if (sq.x + sq.y) % 2 == 0 { 0.86 } else { 1.0 };
-        let shade = checker * (0.88 + 0.06 * tile.height as f32);
+        let shade = checker * (0.80 + 0.10 * tile.height as f32).min(1.1);
         let (mut sprite, anchor) = atlas.sprite(name);
         sprite.color = Color::srgb(shade, shade, shade);
         let mut ground = commands.spawn((
@@ -153,6 +164,8 @@ fn spawn_terrain(
         if let Some(frames) = water {
             ground.insert(AnimatedWater { frames });
         }
+
+        spawn_height_edges(&mut commands, &state, sq, top);
 
         // Cliff face below the tile.
         let depth = face_depth(&state, sq);
@@ -217,6 +230,47 @@ fn spawn_terrain(
             Transform::from_translation(Vec3::new(top.x + 9.0, top.y + 8.0, MARKER_Z + 1.0))
                 .with_scale(Vec3::splat(0.75)),
         ));
+    }
+}
+
+/// Lines that make each square and each change in height readable: a faint grid on
+/// every square, and where a neighbour is lower, a bright lip on this square's edge, a
+/// dark outline along the drop and a shadow on the lower square.
+fn spawn_height_edges(commands: &mut Commands, state: &GameState, sq: Sq, top: Vec2) {
+    let t = &state.game.terrain;
+    let h = t.height(sq);
+    let z = row_z(sq.y, layer::EDGE);
+    let half = TILE / 2.0;
+    let mut quad = |color: Color, center: Vec2, size: Vec2, z: f32| {
+        commands.spawn((
+            TerrainPart,
+            Sprite::from_color(color, size),
+            Transform::from_translation(center.extend(z)),
+        ));
+    };
+    // Grid: each square draws its west and north edges, so every seam is one line.
+    quad(GRID, top + Vec2::new(-half + 0.5, 0.0), Vec2::new(1.0, TILE), z);
+    quad(GRID, top + Vec2::new(0.0, half - 0.5), Vec2::new(TILE, 1.0), z);
+
+    for (dx, dy) in [(-1i8, 0i8), (1, 0), (0, 1), (0, -1)] {
+        let Some(n) = sq.offset(dx, dy, state.size) else { continue };
+        let nh = t.height(n);
+        if nh >= h {
+            continue;
+        }
+        let dir = Vec2::new(dx as f32, dy as f32);
+        let thick = |w: f32| if dx == 0 { Vec2::new(TILE, w) } else { Vec2::new(w, TILE) };
+        // Lip just inside this square's edge, outline right on the edge.
+        quad(LIP, top + dir * (half - 2.5), thick(1.0), z);
+        quad(DROP_EDGE, top + dir * (half - 1.0), thick(2.0), z);
+        if dy == 1 {
+            // The north neighbour is mostly hidden behind this square; no shadow to cast.
+            continue;
+        }
+        // Shadow on the lower square along the shared edge, deeper for bigger drops.
+        let depth = (4.0 + 2.0 * (h - nh) as f32).min(10.0);
+        let center = tile_top(n, nh) - dir * (half - depth / 2.0);
+        quad(SHADOW, center, thick(depth), row_z(n.y, layer::EDGE));
     }
 }
 
