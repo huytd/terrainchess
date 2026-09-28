@@ -165,7 +165,7 @@ struct Hop {
     height: f32,
 }
 
-const HOP_SECS: f32 = 0.22;
+pub(crate) const HOP_SECS: f32 = 0.22;
 
 /// Shared materials and card meshes.
 #[derive(Resource)]
@@ -252,6 +252,16 @@ pub(crate) fn full_uv(uv: Uv) -> [[f32; 2]; 4] {
     [uv.at(0.0, 1.0), uv.at(1.0, 1.0), uv.at(1.0, 0.0), uv.at(0.0, 0.0)]
 }
 
+pub(crate) fn rotate_uv(uv: [[f32; 2]; 4], step: u32) -> [[f32; 2]; 4] {
+    let [bl, br, tr, tl] = uv;
+    match step % 4 {
+        0 => [bl, br, tr, tl],
+        1 => [br, tr, tl, bl],
+        2 => [tr, tl, bl, br],
+        _ => [tl, bl, br, tr],
+    }
+}
+
 /// A flat quad lying on a top face, centred at `c`.
 pub(crate) fn flat(c: Vec3, size: Vec2) -> [Vec3; 4] {
     let (hx, hz) = (size.x / 2.0, size.y / 2.0);
@@ -327,6 +337,19 @@ fn spawn_terrain(
             }
         } else {
             solid.add(corners, full_uv(atlas.uv(name)), shade);
+        }
+
+        if tile.is_water() {
+            let foam_corners = flat(top + Vec3::Y * 0.003, Vec2::ONE);
+            for (dir, (dx, dy)) in [(0, (0i8, 1i8)), (1, (1, 0)), (2, (0, -1)), (3, (-1, 0))] {
+                let is_water_neighbour = sq.offset(dx, dy, size).is_some_and(|n| t.get(n).is_water());
+                if !is_water_neighbour {
+                    let uv_0 = rotate_uv(full_uv(atlas.uv("shore_0")), dir);
+                    let uv_1 = rotate_uv(full_uv(atlas.uv("shore_1")), dir);
+                    water[0].add(foam_corners, uv_0, shade);
+                    water[1].add(foam_corners, uv_1, shade);
+                }
+            }
         }
 
         // Sides, only where they show: above a lower neighbour or at the board edge.
@@ -690,7 +713,7 @@ fn animate_pickups(time: Res<Time>, mut q: Query<(&PickupBob, &mut Transform)>) 
 /// Turn cards to face the camera, and stretch them so the tilt doesn't squash them.
 fn face_camera(
     camera: Single<&Transform, (With<MainCamera>, Without<Billboard>)>,
-    mut cards: Query<&mut Transform, With<Billboard>>,
+    mut cards: Query<&mut Transform, (With<Billboard>, Without<MainCamera>)>,
 ) {
     let back = camera.back();
     let yaw = back.x.atan2(back.z);

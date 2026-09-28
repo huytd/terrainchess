@@ -5,7 +5,8 @@ use tc_run::ItemKind;
 
 use crate::atlas::Atlas;
 use crate::game::GameState;
-use crate::run::{PickCard, Run, RunPhase, StartRun};
+use crate::run::{PickCard, Run, RunPhase, StartRun, TitleMenu, ToggleSandbox};
+use crate::save;
 
 /// Ink colour on light wood.
 pub const INK_WOOD: Color = Color::srgb_u8(0xF7, 0xED, 0xD0);
@@ -19,6 +20,21 @@ struct FloorBadge;
 
 #[derive(Component)]
 struct FloorBadgeText;
+
+#[derive(Component)]
+struct TitleOverlay;
+
+#[derive(Component)]
+struct MenuButton;
+
+#[derive(Component)]
+struct TitleContinueButton;
+
+#[derive(Component)]
+struct TitleNewRunButton(u8);
+
+#[derive(Component)]
+struct TitleSandboxButton;
 
 #[derive(Component)]
 struct DraftOverlay;
@@ -68,6 +84,34 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
             TextFont { font_size: FontSize::Px(16.0), ..default() },
             TextColor(INK_WOOD),
             FloorBadgeText,
+        ));
+
+    // Menu button at the top-right corner
+    commands
+        .spawn((
+            Button,
+            Interaction::default(),
+            MenuButton,
+            Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(16.0),
+                top: Val::Px(16.0),
+                padding: UiRect::axes(Val::Px(16.0), Val::Px(8.0)),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            ImageNode {
+                image: atlas.image.clone(),
+                rect: Some(atlas.rect("panel_wood")),
+                image_mode: NodeImageMode::Stretch,
+                ..default()
+            },
+        ))
+        .with_child((
+            Text::new("Menu"),
+            TextFont { font_size: FontSize::Px(16.0), ..default() },
+            TextColor(INK_WOOD),
         ));
 }
 
@@ -190,9 +234,9 @@ fn sync_overlays(
                                     ItemKind::Relic { .. } => "Relic".to_string(),
                                     ItemKind::Spell { charges, .. } => {
                                         if *charges == 1 {
-                                            "Spell · 1 charge".to_string()
+                                            "Spell - 1 charge".to_string()
                                         } else {
-                                            format!("Spell · {charges} charges")
+                                            format!("Spell - {charges} charges")
                                         }
                                     }
                                 };
@@ -379,11 +423,13 @@ fn sync_spell_bar(
     mut commands: Commands,
     state: Res<GameState>,
     run: Res<Run>,
+    title_menu: Res<TitleMenu>,
     atlas: Res<Atlas>,
     mut last_key: Local<Option<(bool, Vec<(tc_core::SpellId, u8)>, Option<tc_core::SpellId>)>>,
     spell_bar_query: Query<Entity, With<SpellBar>>,
 ) {
-    let show = !run.sandbox
+    let show = !title_menu.open
+        && !run.sandbox
         && run.phase == RunPhase::Playing
         && state.game.pos.side_to_move == Side::White
         && !state.ai_to_move()
@@ -551,6 +597,214 @@ fn handle_new_run_button(
     }
 }
 
+fn sync_title_menu(
+    mut commands: Commands,
+    title_menu: Res<TitleMenu>,
+    run: Res<Run>,
+    atlas: Res<Atlas>,
+    mut last_open: Local<Option<bool>>,
+    overlay_query: Query<Entity, With<TitleOverlay>>,
+) {
+    if *last_open == Some(title_menu.open) {
+        return;
+    }
+    *last_open = Some(title_menu.open);
+
+    for e in &overlay_query {
+        commands.entity(e).despawn();
+    }
+
+    if !title_menu.open {
+        return;
+    }
+
+    let has_save = save::has_save();
+    let floor_label = format!("Floor {} / 8", run.state.floor + 1);
+
+    commands
+        .spawn((
+            TitleOverlay,
+            GlobalZIndex(200),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(0.0),
+                right: Val::Px(0.0),
+                top: Val::Px(0.0),
+                bottom: Val::Px(0.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                flex_direction: FlexDirection::Column,
+                row_gap: Val::Px(14.0),
+                padding: UiRect::all(Val::Px(24.0)),
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.08, 0.09, 0.14, 0.72)),
+        ))
+        .with_children(|parent| {
+            // Title banner: large light ink on a panel_wood banner
+            parent
+                .spawn((
+                    Node {
+                        min_width: Val::Px(320.0),
+                        padding: UiRect::axes(Val::Px(32.0), Val::Px(14.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    ImageNode {
+                        image: atlas.image.clone(),
+                        rect: Some(atlas.rect("panel_wood")),
+                        image_mode: NodeImageMode::Stretch,
+                        ..default()
+                    },
+                ))
+                .with_child((
+                    Text::new("Terrain Chess"),
+                    TextFont { font_size: FontSize::Px(36.0), ..default() },
+                    TextColor(INK_WOOD),
+                    TextLayout { justify: Justify::Center, ..default() },
+                ));
+
+            // Column of panel_wood buttons (min 220 x 48 px, 18 px text)
+            parent
+                .spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(10.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|col| {
+                    if has_save {
+                        col.spawn((
+                            Button,
+                            Interaction::default(),
+                            TitleContinueButton,
+                            Node {
+                                min_width: Val::Px(220.0),
+                                min_height: Val::Px(48.0),
+                                padding: UiRect::axes(Val::Px(20.0), Val::Px(10.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            ImageNode {
+                                image: atlas.image.clone(),
+                                rect: Some(atlas.rect("panel_wood")),
+                                image_mode: NodeImageMode::Stretch,
+                                ..default()
+                            },
+                        ))
+                        .with_child((
+                            Text::new(format!("Continue ({floor_label})")),
+                            TextFont { font_size: FontSize::Px(18.0), ..default() },
+                            TextColor(INK_WOOD),
+                        ));
+                    }
+
+                    for (size, label) in [(8, "New run 8x8"), (16, "New run 16x16"), (32, "New run 32x32")] {
+                        col.spawn((
+                            Button,
+                            Interaction::default(),
+                            TitleNewRunButton(size),
+                            Node {
+                                min_width: Val::Px(220.0),
+                                min_height: Val::Px(48.0),
+                                padding: UiRect::axes(Val::Px(20.0), Val::Px(10.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            ImageNode {
+                                image: atlas.image.clone(),
+                                rect: Some(atlas.rect("panel_wood")),
+                                image_mode: NodeImageMode::Stretch,
+                                ..default()
+                            },
+                        ))
+                        .with_child((
+                            Text::new(label),
+                            TextFont { font_size: FontSize::Px(18.0), ..default() },
+                            TextColor(INK_WOOD),
+                        ));
+                    }
+
+                    col.spawn((
+                        Button,
+                        Interaction::default(),
+                        TitleSandboxButton,
+                        Node {
+                            min_width: Val::Px(220.0),
+                            min_height: Val::Px(48.0),
+                            padding: UiRect::axes(Val::Px(20.0), Val::Px(10.0)),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        ImageNode {
+                            image: atlas.image.clone(),
+                            rect: Some(atlas.rect("panel_wood")),
+                            image_mode: NodeImageMode::Stretch,
+                            ..default()
+                        },
+                    ))
+                    .with_child((
+                        Text::new("Sandbox"),
+                        TextFont { font_size: FontSize::Px(18.0), ..default() },
+                        TextColor(INK_WOOD),
+                    ));
+                });
+
+            // Control hints under it (keys, mouse, touch in two short lines, 13 px)
+            parent.spawn((
+                Text::new("Mouse: Left-click select/move  |  Right-drag orbit  |  Wheel zoom  |  WASD pan\nTouch: Tap select  |  Drag pan  |  Pinch zoom  |  Keys: 5-9 Spells  |  M Mute  |  Esc Menu"),
+                TextFont { font_size: FontSize::Px(13.0), ..default() },
+                TextColor(INK_WOOD),
+                TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
+                Node { max_width: Val::Percent(90.0), ..default() },
+            ));
+        });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_title_buttons(
+    continue_q: Query<&Interaction, (Changed<Interaction>, With<TitleContinueButton>)>,
+    new_run_q: Query<(&Interaction, &TitleNewRunButton), (Changed<Interaction>, With<Button>)>,
+    sandbox_q: Query<&Interaction, (Changed<Interaction>, With<TitleSandboxButton>)>,
+    menu_q: Query<&Interaction, (Changed<Interaction>, With<MenuButton>)>,
+    mut title_menu: ResMut<TitleMenu>,
+    mut start_writer: MessageWriter<StartRun>,
+    mut toggle_writer: MessageWriter<ToggleSandbox>,
+    run: Res<Run>,
+) {
+    for interaction in &continue_q {
+        if *interaction == Interaction::Pressed {
+            title_menu.open = false;
+        }
+    }
+
+    for (interaction, btn) in &new_run_q {
+        if *interaction == Interaction::Pressed {
+            start_writer.write(StartRun(btn.0));
+            title_menu.open = false;
+        }
+    }
+
+    for interaction in &sandbox_q {
+        if *interaction == Interaction::Pressed {
+            if !run.sandbox {
+                toggle_writer.write(ToggleSandbox);
+            }
+            title_menu.open = false;
+        }
+    }
+
+    for interaction in &menu_q {
+        if *interaction == Interaction::Pressed {
+            title_menu.open = true;
+        }
+    }
+}
+
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -560,9 +814,11 @@ impl Plugin for HudPlugin {
             (
                 update_floor_badge,
                 sync_overlays,
+                sync_title_menu,
                 update_draft_card_sizes,
                 handle_card_interaction,
                 handle_new_run_button,
+                handle_title_buttons,
                 handle_spell_card_interaction,
                 sync_spell_bar,
             )

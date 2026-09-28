@@ -18,6 +18,18 @@ pub enum RunPhase {
     Over { won: bool },
 }
 
+/// Title menu display state.
+#[derive(Resource, Debug, Clone)]
+pub struct TitleMenu {
+    pub open: bool,
+}
+
+impl Default for TitleMenu {
+    fn default() -> Self {
+        Self { open: true }
+    }
+}
+
 /// Active run state and progression.
 #[derive(Resource)]
 pub struct Run {
@@ -144,7 +156,9 @@ fn handle_run_messages(
 }
 
 fn initial_run_and_game() -> (Run, GameState) {
-    let run_state = match save::load() {
+    let saved = save::load();
+    let has_save = saved.is_some();
+    let run_state = match saved {
         Some(state) => state,
         None => {
             let seed = time_seed();
@@ -153,7 +167,9 @@ fn initial_run_and_game() -> (Run, GameState) {
     };
     let setup = run_state.match_setup();
     let game_state = GameState::from_setup(&setup);
-    save::store(&run_state);
+    if has_save {
+        save::store(&run_state);
+    }
     let run = Run { state: run_state, phase: RunPhase::Playing, sandbox: false };
     (run, game_state)
 }
@@ -165,6 +181,7 @@ impl Plugin for RunPlugin {
         let (run, game_state) = initial_run_and_game();
         app.insert_resource(run)
             .insert_resource(game_state)
+            .init_resource::<TitleMenu>()
             .add_message::<PickCard>()
             .add_message::<StartRun>()
             .add_message::<ToggleSandbox>()

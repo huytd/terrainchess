@@ -6,6 +6,7 @@ use bevy::prelude::*;
 use tc_ai::{Limits, SearchJob};
 
 use crate::game::GameState;
+use crate::run::TitleMenu;
 
 /// Search time per frame.
 const SLICE_MS: f64 = 8.0;
@@ -27,7 +28,15 @@ impl Default for Thinker {
     }
 }
 
-fn think(time: Res<Time>, mut thinker: ResMut<Thinker>, mut state: ResMut<GameState>) {
+fn think(
+    time: Res<Time>,
+    title_menu: Res<TitleMenu>,
+    mut thinker: ResMut<Thinker>,
+    mut state: ResMut<GameState>,
+) {
+    if title_menu.open {
+        return;
+    }
     let key = (state.seed, state.game.moves.len());
     if !state.ai_to_move() {
         if thinker.job.is_some() {

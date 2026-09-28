@@ -149,6 +149,20 @@ SPRITES = [
     ("panel_wood", (1237, 1690, 1429, 1900), None, CENTER),
     ("chest", (789, 941, 875, 1013), 20, BOTTOM),
     ("orb", (1548, 866, 1611, 928), 14, CENTER),
+    # Visual effects and icons (M7a)
+    ("fx_smoke", (9, 1850, 93, 1938), None, CENTER),
+    ("fx_splash", (108, 1855, 199, 1939), None, CENTER),
+    ("fx_dust", (211, 1885, 301, 1938), None, CENTER),
+    ("fx_tornado", (314, 1851, 403, 1938), None, CENTER),
+    ("fx_sparkle", (433, 1864, 490, 1924), None, CENTER),
+    ("fx_bubble", (519, 1850, 607, 1939), None, CENTER),
+    ("fx_dirt", (624, 1851, 709, 1938), None, CENTER),
+    ("fx_snowflake", (725, 1851, 812, 1937), None, CENTER),
+    ("fx_slash_gold", (824, 1847, 919, 1941), None, CENTER),
+    ("fx_slash_violet", (928, 1849, 1018, 1938), None, CENTER),
+    ("icon_crown_gold", (7, 1963, 93, 2029), None, CENTER),
+    ("icon_crown_violet", (110, 1955, 196, 2031), None, CENTER),
+    ("fx_pillar", (829, 1949, 912, 2041), None, CENTER),
 ]
 
 HORIZON_STRIPS = [

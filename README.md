@@ -29,7 +29,8 @@ cd web && trunk build --release      # optimised browser build in web/dist (abou
 You play the Ashen Sun against the AI by default. Controls: click to select and move · right-drag
 or Q/E to turn the board · right-drag up/down or Z/X to tilt · middle-drag / WASD to pan · wheel
 to zoom · U undo · N new run · 1/2/3 new run of 8/16/32 · H sandbox · F swaps sides with the AI ·
--/= changes AI level (0–7) · spells: click a spell card or 5–9, then a highlighted square (Esc cancels).
+-/= changes AI level (0–7) · M mute · Menu button or Esc opens the title menu ·
+spells: click a spell card or 5–9, then a highlighted square (Esc cancels).
 Pawns promote to a queen automatically.
 
 On phones and tablets (web build): tap to select and move · drag to pan · pinch to zoom · twist two

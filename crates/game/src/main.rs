@@ -6,12 +6,14 @@
 mod ai;
 mod atlas;
 mod board_view;
+mod fx;
 mod game;
 mod hud;
 mod input;
 mod run;
 mod save;
 mod scenery;
+mod sfx;
 
 use bevy::asset::AssetMetaCheck;
 use bevy::prelude::*;
@@ -44,6 +46,8 @@ fn main() {
             scenery::SceneryPlugin,
             input::InputPlugin,
             hud::HudPlugin,
+            fx::FxPlugin,
+            sfx::SfxPlugin,
         ))
         .run();
 }

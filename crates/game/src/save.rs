@@ -48,6 +48,11 @@ pub fn load() -> Option<RunState> {
     }
 }
 
+/// Returns true if a saved run state exists.
+pub fn has_save() -> bool {
+    load().is_some()
+}
+
 /// Store the current run state.
 pub fn store(state: &RunState) {
     #[cfg(not(target_arch = "wasm32"))]

@@ -7,7 +7,7 @@ use tc_core::Sq;
 
 use crate::atlas::Atlas;
 use crate::board_view::{
-    Billboard, Look, PX, Quads, board_center, card_mesh, flat, full_uv, hash, top_y, wall,
+    Billboard, Look, PX, Quads, board_center, card_mesh, flat, full_uv, hash, rotate_uv, top_y, wall,
 };
 use crate::game::GameState;
 use crate::input::MainCamera;
@@ -52,16 +52,6 @@ enum CellType {
     Shore,
     Grass(i8),
     Sea,
-}
-
-fn rotate_uv(uv: [[f32; 2]; 4], step: u32) -> [[f32; 2]; 4] {
-    let [bl, br, tr, tl] = uv;
-    match step % 4 {
-        0 => [bl, br, tr, tl],
-        1 => [br, tr, tl, bl],
-        2 => [tr, tl, bl, br],
-        _ => [tl, bl, br, tr],
-    }
 }
 
 fn haze_color(factor: f32) -> Color {
@@ -269,7 +259,7 @@ fn update_sky_dome(state: Res<GameState>, mut sky: Query<&mut Transform, With<Sk
 fn update_clouds(
     time: Res<Time>,
     state: Res<GameState>,
-    camera: Single<&Transform, With<MainCamera>>,
+    camera: Single<&Transform, (With<MainCamera>, Without<CloudCard>)>,
     mut clouds: Query<(&CloudCard, &mut Transform), Without<MainCamera>>,
 ) {
     let back = camera.back();

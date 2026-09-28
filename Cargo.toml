@@ -17,6 +17,8 @@ bevy = { version = "=0.19.1", default-features = false, features = [
     "async_executor",
     "multi_threaded",
     "bevy_asset",
+    "bevy_audio",
+    "wav",
     "bevy_log",
     "bevy_window",
     "bevy_winit",

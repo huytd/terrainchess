@@ -5,6 +5,17 @@ use tc_core::worldgen::{GenParams, generate};
 use tc_core::{Match, Move, Outcome, Position, Rules, Side, SpellCast, SpellId, Sq};
 use tc_run::MatchSetup;
 
+#[derive(Clone, Debug, PartialEq)]
+pub enum GameEvent {
+    Moved { to: Sq, landed_height_change: bool },
+    Captured { at: Sq, by_side: Side },
+    Cast { spell: SpellId, squares: Vec<Sq> },
+    Promoted { at: Sq },
+    Check { king: Sq },
+    Pickup { at: Sq },
+    Selected { sq: Sq },
+}
+
 #[derive(Resource)]
 pub struct GameState {
     pub size: u8,
@@ -28,6 +39,8 @@ pub struct GameState {
     pub armed_spell: Option<SpellId>,
     /// For Swap: first square selected.
     pub swap_first: Option<Sq>,
+    /// Events that occurred during the latest move or spell cast.
+    pub events: Vec<GameEvent>,
 }
 
 pub const MAX_AI_LEVEL: u8 = 7;
@@ -54,6 +67,7 @@ impl GameState {
             ai_level: setup.ai_level,
             armed_spell: None,
             swap_first: None,
+            events: Vec::new(),
         }
     }
 
@@ -74,6 +88,7 @@ impl GameState {
             ai_level,
             armed_spell: None,
             swap_first: None,
+            events: Vec::new(),
         }
     }
 
@@ -182,11 +197,36 @@ impl GameState {
     pub fn cast(&mut self, cast: SpellCast) {
         let before = self.game.clone();
         let spell = cast.spell_id();
+        let squares = match cast {
+            SpellCast::RaiseEarth(sq) | SpellCast::LowerEarth(sq) | SpellCast::Shield(sq) => vec![sq],
+            SpellCast::Swap(a, b) => vec![a, b],
+            SpellCast::Freeze(sq) => {
+                let size = before.terrain.size;
+                let mut frozen = Vec::new();
+                for dy in -1..=1i8 {
+                    for dx in -1..=1i8 {
+                        if let Some(n) = sq.offset(dx, dy, size)
+                            && before.terrain.get(n).is_water()
+                        {
+                            frozen.push(n);
+                        }
+                    }
+                }
+                frozen
+            }
+        };
+
         if self.game.cast(cast).is_ok() {
             self.undo.push(before);
             self.outcome = self.game.outcome();
             if matches!(spell, SpellId::RaiseEarth | SpellId::LowerEarth | SpellId::Freeze) {
                 self.terrain_dirty = true;
+            }
+            self.events.push(GameEvent::Cast { spell, squares });
+            if self.game.in_check()
+                && let Some(king) = self.game.pos.king(self.game.pos.side_to_move)
+            {
+                self.events.push(GameEvent::Check { king });
             }
         }
         self.disarm();
@@ -194,10 +234,43 @@ impl GameState {
 
     pub fn play(&mut self, mv: Move) {
         let before = self.game.clone();
+        let moving_side = before.pos.side_to_move;
+        let from_height = before.terrain.height(mv.from);
+        let capture_info = if let Some(target) = before.pos.get(mv.to) {
+            if target.side != moving_side { Some((mv.to, moving_side)) } else { None }
+        } else if mv.kind == tc_core::MoveKind::EnPassant {
+            Some((Sq::new(mv.to.x, mv.from.y), moving_side))
+        } else {
+            None
+        };
+        let pickup_at = before.pickups.iter().find(|(sq, _)| *sq == mv.to).map(|(sq, _)| *sq);
+
         if self.game.play(mv).is_ok() {
             self.undo.push(before);
             self.outcome = self.game.outcome();
             self.animate = Some(mv);
+
+            if let Some((at, by_side)) = capture_info {
+                self.events.push(GameEvent::Captured { at, by_side });
+            }
+
+            let to_height = self.game.terrain.height(mv.to);
+            let landed_height_change = from_height != to_height;
+            self.events.push(GameEvent::Moved { to: mv.to, landed_height_change });
+
+            if let Some(at) = pickup_at {
+                self.events.push(GameEvent::Pickup { at });
+            }
+
+            if mv.promotion.is_some() {
+                self.events.push(GameEvent::Promoted { at: mv.to });
+            }
+
+            if self.game.in_check()
+                && let Some(king) = self.game.pos.king(self.game.pos.side_to_move)
+            {
+                self.events.push(GameEvent::Check { king });
+            }
         }
         self.disarm();
         self.selected = None;
@@ -216,6 +289,7 @@ impl GameState {
         self.outcome = None;
         self.selected = None;
         self.animate = None;
+        self.events.clear();
         self.terrain_dirty = true;
         self.pieces_dirty = true;
     }

@@ -17,8 +17,9 @@ use crate::atlas::Atlas;
 use crate::board_view::{board_center, pick_piece, pick_square, square_top};
 use tc_core::{Outcome, PieceKind, Side};
 
-use crate::game::{GameState, MAX_AI_LEVEL};
-use crate::run::{self, Run, RunPhase};
+use crate::game::{GameEvent, GameState, MAX_AI_LEVEL};
+use crate::run::{self, Run, RunPhase, TitleMenu};
+use crate::save;
 
 /// Camera distance from the point it looks at, the zoom.
 const MIN_DISTANCE: f32 = 3.0;
@@ -192,9 +193,14 @@ fn fit_camera(
 fn apply_orbit(
     time: Res<Time>,
     window: Single<&Window, With<PrimaryWindow>>,
+    title_menu: Res<TitleMenu>,
     mut orbit: ResMut<Orbit>,
     mut camera: Single<&mut Transform, With<MainCamera>>,
 ) {
+    if title_menu.open {
+        let rot_speed = 4.0 * std::f32::consts::PI / 180.0;
+        orbit.target_yaw += rot_speed * time.delta_secs();
+    }
     orbit.view_h = window.height().max(1.0);
     let ease = (time.delta_secs() * 12.0).min(1.0);
     orbit.yaw += (orbit.target_yaw - orbit.yaw) * ease;
@@ -215,10 +221,11 @@ fn mouse_camera(
     scroll: Res<AccumulatedMouseScroll>,
     time: Res<Time>,
     run: Res<Run>,
+    title_menu: Res<TitleMenu>,
     ui_query: Query<&Interaction>,
     mut orbit: ResMut<Orbit>,
 ) {
-    if run.phase != RunPhase::Playing {
+    if title_menu.open || run.phase != RunPhase::Playing {
         return;
     }
     if ui_query.iter().any(|&i| i != Interaction::None)
@@ -275,10 +282,11 @@ fn touch_gestures(
     mut state: ResMut<GameState>,
     atlas: Res<Atlas>,
     run: Res<Run>,
+    title_menu: Res<TitleMenu>,
     ui_query: Query<&Interaction>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
 ) {
-    if run.phase != RunPhase::Playing {
+    if title_menu.open || run.phase != RunPhase::Playing {
         if gesture.active {
             *gesture = Gesture::default();
         }
@@ -333,11 +341,12 @@ fn click_board(
     mut state: ResMut<GameState>,
     atlas: Res<Atlas>,
     run: Res<Run>,
+    title_menu: Res<TitleMenu>,
     ui_query: Query<&Interaction>,
     window: Single<&Window, With<PrimaryWindow>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
 ) {
-    if run.phase != RunPhase::Playing {
+    if title_menu.open || run.phase != RunPhase::Playing {
         return;
     }
     if !mouse.just_pressed(MouseButton::Left) {
@@ -425,7 +434,12 @@ fn tap_board(
         Some(&mv) => state.play(mv),
         None => {
             let own = state.game.pos.get(sq).is_some_and(|p| p.side == side);
-            state.selected = if own && state.selected != Some(sq) { Some(sq) } else { None };
+            if own && state.selected != Some(sq) {
+                state.selected = Some(sq);
+                state.events.push(GameEvent::Selected { sq });
+            } else {
+                state.selected = None;
+            }
             state.pieces_dirty = true;
         }
     }
@@ -435,8 +449,25 @@ fn hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     state: Res<GameState>,
     dev: Res<DevMode>,
+    mut title_menu: ResMut<TitleMenu>,
     mut actions: MessageWriter<Action>,
 ) {
+    if keys.just_pressed(KeyCode::Escape) {
+        if title_menu.open {
+            if save::has_save() {
+                title_menu.open = false;
+            }
+        } else if state.armed_spell.is_some() || state.selected.is_some() {
+            actions.write(Action::Deselect);
+        } else {
+            title_menu.open = true;
+        }
+    }
+
+    if title_menu.open {
+        return;
+    }
+
     for (key, action) in [
         (KeyCode::Digit1, Action::NewRun(8)),
         (KeyCode::Digit2, Action::NewRun(16)),
@@ -453,7 +484,6 @@ fn hotkeys(
         (KeyCode::Equal, Action::AiLevel(1)),
         (KeyCode::Backspace, Action::Undo),
         (KeyCode::KeyU, Action::Undo),
-        (KeyCode::Escape, Action::Deselect),
         (KeyCode::KeyQ, Action::Turn(1)),
         (KeyCode::KeyE, Action::Turn(-1)),
     ] {
