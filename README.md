@@ -29,10 +29,9 @@ cd web && trunk build --release      # optimised browser build in web/dist (abou
 You play the Ashen Sun against the AI by default. Controls: click to select and move · right-drag
 or Q/E to turn the board · right-drag up/down or Z/X to tilt · middle-drag / WASD to pan · wheel
 to zoom · U undo · N new run · 1/2/3 new run of 8/16/32 · H sandbox · F swaps sides with the AI ·
--/= changes AI level (0–7) · A toggles threat arrows · M mute · Menu button or Esc opens the title menu ·
+-/= changes AI level (0–7) · A toggles threat markers · M mute · Menu button or Esc opens the title menu ·
 spells: 15-card deck with 3-card hand; click a card or 5–7 to arm, then a highlighted square (Esc cancels); spends the card and auto-draws up to 3 when empty; D or Discard button redraws a fresh hand when unused.
-Pawns promote to a queen automatically. Red arrows show every capture the opponent could make against
-you right now; selecting a piece also draws amber arrows from anything that could capture it.
+Pawns promote to a queen automatically. Red frame + sword = your piece can be captured, amber frame = the piece that threatens it.
 
 On phones and tablets (web build): tap to select and move · drag to pan · pinch to zoom · twist two
 fingers to turn the board · two-finger vertical drag to tilt.

@@ -60,14 +60,14 @@ pub enum Action {
     CheatWin,
     /// Dev cheat: lose current run match.
     CheatLoss,
-    /// Show or hide threat arrows.
+    /// Show or hide threat markers.
     ToggleArrows,
 }
 
 #[derive(Resource, Clone, Copy, Debug, Default)]
 pub struct DevMode(pub bool);
 
-/// Whether threat arrows are drawn, toggled by `A`. On by default.
+/// Whether threat markers are drawn, toggled by `A`. On by default.
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct ArrowsEnabled(pub bool);
 

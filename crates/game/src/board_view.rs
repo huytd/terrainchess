@@ -6,14 +6,15 @@
 //!
 //! World axes: +X is east (files), -Z is north (ranks), +Y is up. One square is one unit.
 
-use bevy::asset::RenderAssetUsages;
+use bevy::asset::{RenderAssetUsages, load_internal_asset, uuid_handle};
 use bevy::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline};
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, CompareFunction, RenderPipelineDescriptor, SpecializedMeshPipelineError,
+    AsBindGroup, CompareFunction, DepthBiasState, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
-use std::collections::HashMap;
+use bevy::shader::ShaderRef;
+use std::collections::{HashMap, HashSet};
 use tc_core::movegen::Ctx;
 use tc_core::terrain::TileKind;
 use tc_core::{Feature, MoveKind, Obstacle, PieceKind, Side, Sq};
@@ -51,6 +52,34 @@ impl MaterialExtension for OnTop {
 }
 
 type MarkerMaterial = ExtendedMaterial<StandardMaterial, OnTop>;
+
+const OCCLUDED_SHADER_HANDLE: Handle<Shader> = uuid_handle!("b1a9f62c-8821-4f16-953e-2f9e4210d654");
+
+/// Draws a faction-coloured silhouette only where a piece is occluded by nearer geometry.
+#[derive(Asset, AsBindGroup, Reflect, Debug, Clone, Default)]
+pub struct Occluded {}
+
+impl MaterialExtension for Occluded {
+    fn fragment_shader() -> ShaderRef {
+        OCCLUDED_SHADER_HANDLE.into()
+    }
+
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        _key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        if let Some(depth) = descriptor.depth_stencil.as_mut() {
+            depth.depth_compare = Some(CompareFunction::Less);
+            depth.depth_write_enabled = Some(false);
+            depth.bias = DepthBiasState { constant: 10, slope_scale: 1.0, clamp: 0.0 };
+        }
+        Ok(())
+    }
+}
+
+type OccludedMaterial = ExtendedMaterial<StandardMaterial, Occluded>;
 /// Overlays float this far above a top face to avoid z-fighting.
 const LIFT_TINT: f32 = 0.004;
 const LIFT_MARK: f32 = 0.008;
@@ -173,6 +202,16 @@ struct TerrainPart;
 struct PieceSprite;
 
 #[derive(Component)]
+struct PieceSilhouette;
+
+/// Small intent badge floating above threatened pieces.
+#[derive(Component)]
+struct ThreatBadge {
+    base_y: f32,
+    sprite_h: f32,
+}
+
+#[derive(Component)]
 struct PickupSprite;
 
 /// Up-and-down oscillation for board pickups (PLAN.md §8).
@@ -214,15 +253,61 @@ pub(crate) struct Look {
     pub(crate) shadow_mesh_large: Handle<Mesh>,
     /// Card meshes by sprite name and horizontal flip.
     pub(crate) card_meshes: HashMap<(String, bool), Handle<Mesh>>,
-    /// Shared on-top material for threat arrows onto the player's pieces.
-    pub(crate) arrow_red: Handle<MarkerMaterial>,
-    /// Shared on-top material for arrows onto the selected piece.
-    pub(crate) arrow_amber: Handle<MarkerMaterial>,
+    /// Shared on-top material for threat victim frame.
+    pub(crate) threat_victim: Handle<MarkerMaterial>,
+    /// Shared on-top material for threat attacker frame.
+    pub(crate) threat_attacker: Handle<MarkerMaterial>,
+    /// Shared on-top material for threat intent badge.
+    pub(crate) threat_badge: Handle<MarkerMaterial>,
+    pub(crate) victim_frame_mesh: Handle<Mesh>,
+    pub(crate) attacker_frame_mesh: Handle<Mesh>,
+    pub(crate) badge_mesh: Handle<Mesh>,
+    pub(crate) occluded_white: Handle<OccludedMaterial>,
+    pub(crate) occluded_black: Handle<OccludedMaterial>,
 }
 
-/// Threat arrows to the player's pieces, and to the piece currently selected.
-const ARROW_RED: Color = Color::srgba(0.92, 0.2, 0.18, 0.85);
-const ARROW_AMBER: Color = Color::srgba(1.0, 0.72, 0.15, 0.85);
+/// Creates a 1.0 x 1.0 top-face frame decal consisting of four thin strips.
+fn frame_mesh(inset: f32, width: f32) -> Mesh {
+    let ro = 0.5 - inset;
+    let ri = ro - width;
+    let mut q = Quads::default();
+    let uv = [[0.0, 0.0]; 4];
+    // North strip (-Z)
+    q.add(
+        [
+            Vec3::new(-ro, 0.0, -ri),
+            Vec3::new(ro, 0.0, -ri),
+            Vec3::new(ro, 0.0, -ro),
+            Vec3::new(-ro, 0.0, -ro),
+        ],
+        uv,
+        1.0,
+    );
+    // South strip (+Z)
+    q.add(
+        [Vec3::new(-ro, 0.0, ro), Vec3::new(ro, 0.0, ro), Vec3::new(ro, 0.0, ri), Vec3::new(-ro, 0.0, ri)],
+        uv,
+        1.0,
+    );
+    // West strip (-X)
+    q.add(
+        [
+            Vec3::new(-ro, 0.0, ri),
+            Vec3::new(-ri, 0.0, ri),
+            Vec3::new(-ri, 0.0, -ri),
+            Vec3::new(-ro, 0.0, -ri),
+        ],
+        uv,
+        1.0,
+    );
+    // East strip (+X)
+    q.add(
+        [Vec3::new(ri, 0.0, ri), Vec3::new(ro, 0.0, ri), Vec3::new(ro, 0.0, -ri), Vec3::new(ri, 0.0, -ri)],
+        uv,
+        1.0,
+    );
+    q.mesh()
+}
 
 fn setup_look(
     mut commands: Commands,
@@ -230,6 +315,7 @@ fn setup_look(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut markers: ResMut<Assets<MarkerMaterial>>,
+    mut occluded_materials: ResMut<Assets<OccludedMaterial>>,
 ) {
     let terrain = materials.add(StandardMaterial {
         base_color_texture: Some(atlas.image.clone()),
@@ -260,18 +346,81 @@ fn setup_look(
     q_large.add(flat(Vec3::ZERO, Vec2::new(0.8, 0.4)), full_uv(atlas.uv("shadow_ellipse")), 1.0);
     let shadow_mesh_large = meshes.add(q_large.mesh());
 
-    let arrow_material = |color: Color| MarkerMaterial {
+    let victim_frame_mesh = meshes.add(frame_mesh(0.13, 0.07));
+    let attacker_frame_mesh = meshes.add(frame_mesh(0.06, 0.05));
+
+    let px = atlas.px("icon_sword");
+    let badge_h = 0.32;
+    let badge_w = badge_h * (px.x / px.y);
+    let hw = badge_w / 2.0;
+    let mut q_badge = Quads::default();
+    q_badge.add(
+        [
+            Vec3::new(-hw, 0.0, 0.0),
+            Vec3::new(hw, 0.0, 0.0),
+            Vec3::new(hw, badge_h, 0.0),
+            Vec3::new(-hw, badge_h, 0.0),
+        ],
+        full_uv(atlas.uv("icon_sword")),
+        1.0,
+    );
+    let badge_mesh = meshes.add(q_badge.mesh());
+
+    let threat_victim = markers.add(MarkerMaterial {
         base: StandardMaterial {
-            base_color: color,
+            base_color: Color::srgb_u8(0xE0, 0x3A, 0x2F).with_alpha(1.0),
             unlit: true,
             cull_mode: None,
             alpha_mode: AlphaMode::Blend,
             ..default()
         },
         extension: OnTop {},
-    };
-    let arrow_red = markers.add(arrow_material(ARROW_RED));
-    let arrow_amber = markers.add(arrow_material(ARROW_AMBER));
+    });
+    let threat_attacker = markers.add(MarkerMaterial {
+        base: StandardMaterial {
+            base_color: Color::srgb_u8(0xF2, 0xB3, 0x3D).with_alpha(0.85),
+            unlit: true,
+            cull_mode: None,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        },
+        extension: OnTop {},
+    });
+    let threat_badge = markers.add(MarkerMaterial {
+        base: StandardMaterial {
+            base_color: Color::srgb_u8(0xFF, 0x6B, 0x5E),
+            base_color_texture: Some(atlas.image.clone()),
+            unlit: true,
+            cull_mode: None,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        },
+        extension: OnTop {},
+    });
+
+    let occluded_white = occluded_materials.add(OccludedMaterial {
+        base: StandardMaterial {
+            base_color: Color::srgb_u8(0xD9, 0xBF, 0x40).with_alpha(0.55),
+            base_color_texture: Some(atlas.image.clone()),
+            unlit: true,
+            cull_mode: None,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        },
+        extension: Occluded {},
+    });
+    let occluded_black = occluded_materials.add(OccludedMaterial {
+        base: StandardMaterial {
+            base_color: Color::srgb_u8(0xA4, 0x92, 0xC9).with_alpha(0.55),
+            base_color_texture: Some(atlas.image.clone()),
+            unlit: true,
+            cull_mode: None,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        },
+        extension: Occluded {},
+    });
+
     commands.insert_resource(Look {
         terrain,
         cards,
@@ -279,8 +428,14 @@ fn setup_look(
         shadow_mesh_small,
         shadow_mesh_large,
         card_meshes: HashMap::new(),
-        arrow_red,
-        arrow_amber,
+        threat_victim,
+        threat_attacker,
+        threat_badge,
+        victim_frame_mesh,
+        attacker_frame_mesh,
+        badge_mesh,
+        occluded_white,
+        occluded_black,
     });
 }
 
@@ -339,20 +494,6 @@ impl Quads {
             self.color.push(c);
         }
         self.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
-    }
-
-    /// A flat triangle; `corners` in order, with `shade` darkening as in `add`.
-    pub(crate) fn add_tri(&mut self, corners: [Vec3; 3], shade: f32) {
-        let n = (corners[1] - corners[0]).cross(corners[2] - corners[0]).normalize_or_zero();
-        let c = Color::srgb(shade, shade, shade).to_linear().to_f32_array();
-        let base = self.pos.len() as u32;
-        for p in corners {
-            self.pos.push(p.to_array());
-            self.normal.push(n.to_array());
-            self.uv.push([0.0, 0.0]);
-            self.color.push(c);
-        }
-        self.idx.extend([base, base + 1, base + 2]);
     }
 
     pub(crate) fn mesh(self) -> Mesh {
@@ -634,7 +775,10 @@ fn spawn_pieces(
     run: Res<Run>,
     title_menu: Res<TitleMenu>,
     arrows_enabled: Res<ArrowsEnabled>,
-    old: Query<Entity, Or<(With<PieceSprite>, With<PieceShadow>, With<Overlay>, With<PickupSprite>)>>,
+    old: Query<
+        Entity,
+        Or<(With<PieceSprite>, With<PieceShadow>, With<Overlay>, With<PickupSprite>, With<PieceSilhouette>)>,
+    >,
 ) {
     if !state.pieces_dirty {
         return;
@@ -650,14 +794,26 @@ fn spawn_pieces(
         let name = piece_sprite_name(piece.kind, piece.side);
         let mesh = card_mesh(&mut look, &mut meshes, &atlas, &name, piece.side == Side::Black);
         let spot = piece_spot(&state, sq);
+        let occluded_mat = match piece.side {
+            Side::White => look.occluded_white.clone(),
+            Side::Black => look.occluded_black.clone(),
+        };
         let piece_e = commands
             .spawn((
                 PieceSprite,
                 Billboard,
-                Mesh3d(mesh),
+                Mesh3d(mesh.clone()),
                 MeshMaterial3d(look.cards.clone()),
                 Transform::from_translation(spot),
             ))
+            .with_children(|parent| {
+                parent.spawn((
+                    PieceSilhouette,
+                    Mesh3d(mesh),
+                    MeshMaterial3d(occluded_mat),
+                    Transform::IDENTITY,
+                ));
+            })
             .id();
 
         let shadow_mesh = match piece.kind {
@@ -723,11 +879,11 @@ fn spawn_pieces(
         ));
     }
 
-    // No arrows behind a title/draft/run-over overlay; red ones only on the turn of the
+    // No threat markers behind a title/draft/run-over overlay; red ones only on the turn of the
     // side they warn, amber ones (attackers of the selection) whenever selecting is possible.
     let overlay_open = title_menu.open || run.phase != RunPhase::Playing;
-    let amber_arrows = arrows_enabled.0 && !overlay_open;
-    let red_arrows = amber_arrows && !state.ai_to_move() && state.outcome.is_none();
+    let amber_threats = arrows_enabled.0 && !overlay_open;
+    let red_threats = amber_threats && !state.ai_to_move() && state.outcome.is_none();
     spawn_overlays(
         &mut commands,
         &state,
@@ -736,8 +892,8 @@ fn spawn_pieces(
         &mut materials,
         &mut markers,
         &look,
-        red_arrows,
-        amber_arrows,
+        red_threats,
+        amber_threats,
     );
 }
 
@@ -784,51 +940,36 @@ impl OverlayPainter<'_, '_, '_> {
         self.quad(sq, Some(name), size, color, LIFT_MARK);
     }
 
-    /// A flat arrow lying above both squares, shaft plus triangular head, pointing from
-    /// the attacker's square to the victim's. Uses the shared on-top marker material for
-    /// `red`, so the arrow is never hidden by columns or pieces in front of it.
-    fn arrow(&mut self, from: Sq, to: Sq, red: bool) {
-        const NEAR_GAP: f32 = 0.25;
-        const TIP_GAP: f32 = 0.3;
-        const SHAFT_HALF_WIDTH: f32 = 0.045;
-        const HEAD_LEN: f32 = 0.28;
-        const HEAD_HALF_WIDTH: f32 = 0.15;
+    fn victim_frame(&mut self, sq: Sq) {
+        let top = square_top(sq, self.state.game.terrain.height(sq)) + Vec3::Y * LIFT_MARK;
+        self.commands.spawn((
+            Overlay,
+            Mesh3d(self.look.victim_frame_mesh.clone()),
+            MeshMaterial3d(self.look.threat_victim.clone()),
+            Transform::from_translation(top),
+        ));
+    }
 
-        let t = &self.state.game.terrain;
-        let mut a = square_top(from, t.height(from));
-        let mut b = square_top(to, t.height(to));
-        let h = a.y.max(b.y) + 0.02;
-        a.y = h;
-        b.y = h;
-        let delta = b - a;
-        if delta.length_squared() < 1e-6 {
-            return;
-        }
-        let dir = delta.normalize();
-        // Rotate 90 degrees in the XZ plane.
-        let perp = Vec3::new(-dir.z, 0.0, dir.x);
+    fn attacker_frame(&mut self, sq: Sq) {
+        let top = square_top(sq, self.state.game.terrain.height(sq)) + Vec3::Y * LIFT_MARK;
+        self.commands.spawn((
+            Overlay,
+            Mesh3d(self.look.attacker_frame_mesh.clone()),
+            MeshMaterial3d(self.look.threat_attacker.clone()),
+            Transform::from_translation(top),
+        ));
+    }
 
-        let shaft_start = a + dir * NEAR_GAP;
-        let tip = b - dir * TIP_GAP;
-        let head_base = tip - dir * HEAD_LEN;
-
-        let mut q = Quads::default();
-        if (head_base - shaft_start).dot(dir) > 0.0 {
-            q.add(
-                [
-                    shaft_start - perp * SHAFT_HALF_WIDTH,
-                    shaft_start + perp * SHAFT_HALF_WIDTH,
-                    head_base + perp * SHAFT_HALF_WIDTH,
-                    head_base - perp * SHAFT_HALF_WIDTH,
-                ],
-                [[0.0; 2]; 4],
-                1.0,
-            );
-        }
-        q.add_tri([tip, head_base - perp * HEAD_HALF_WIDTH, head_base + perp * HEAD_HALF_WIDTH], 1.0);
-
-        let material = if red { self.look.arrow_red.clone() } else { self.look.arrow_amber.clone() };
-        self.commands.spawn((Overlay, Mesh3d(self.meshes.add(q.mesh())), MeshMaterial3d(material)));
+    fn intent_badge(&mut self, sq: Sq, sprite_h: f32) {
+        let spot = piece_spot(self.state, sq);
+        self.commands.spawn((
+            Overlay,
+            Billboard,
+            ThreatBadge { base_y: spot.y, sprite_h },
+            Mesh3d(self.look.badge_mesh.clone()),
+            MeshMaterial3d(self.look.threat_badge.clone()),
+            Transform::from_translation(spot),
+        ));
     }
 }
 
@@ -841,8 +982,8 @@ fn spawn_overlays(
     materials: &mut Assets<StandardMaterial>,
     markers: &mut Assets<MarkerMaterial>,
     look: &Look,
-    red_arrows: bool,
-    amber_arrows: bool,
+    red_threats: bool,
+    amber_threats: bool,
 ) {
     let mut paint = OverlayPainter { commands, state, atlas, meshes, materials, markers, look };
     let t = &state.game.terrain;
@@ -859,21 +1000,35 @@ fn spawn_overlays(
     if let Some((sq, _)) = state.game.pos.shield {
         paint.mark(sq, "ov_ring", 0.7, Color::srgb_u8(0xFF, 0xD3, 0x5A));
     }
-    if red_arrows {
+    let mut victims = HashSet::new();
+    let mut attackers = HashSet::new();
+    if red_threats {
         // Threats onto whichever side is to move, so hotseat/sandbox always reads as
         // "danger to the player about to act."
         for (from, to) in state.game.threats(state.game.pos.side_to_move) {
-            paint.arrow(from, to, true);
+            attackers.insert(from);
+            victims.insert(to);
         }
     }
-    if amber_arrows
+    if amber_threats
         && let Some(sel) = state.selected
         && let Some(piece) = state.game.pos.get(sel)
     {
         for (from, to) in state.game.threats(piece.side) {
             if to == sel {
-                paint.arrow(from, to, false);
+                attackers.insert(from);
+                victims.insert(to);
             }
+        }
+    }
+    for &from in &attackers {
+        paint.attacker_frame(from);
+    }
+    for &to in &victims {
+        paint.victim_frame(to);
+        if let Some(piece) = state.game.pos.get(to) {
+            let piece_h = atlas.px(&piece_sprite_name(piece.kind, piece.side)).y;
+            paint.intent_badge(to, piece_h);
         }
     }
     if let Some(spell) = state.armed_spell {
@@ -1004,6 +1159,38 @@ fn animate_pickups(time: Res<Time>, mut q: Query<(&PickupBob, &mut Transform)>) 
     }
 }
 
+/// Pulse the shared threat frame materials' alpha at 1.6 Hz.
+fn animate_threat_materials(time: Res<Time>, look: Res<Look>, mut markers: ResMut<Assets<MarkerMaterial>>) {
+    let t = time.elapsed_secs();
+    let phase = t * 1.6 * std::f32::consts::TAU;
+    let s = phase.sin();
+    // Victim: red #E03A2F, pulsing alpha 0.55 -> 1.0 at 1.6 Hz.
+    let alpha_victim = 0.775 + 0.225 * s;
+    if let Some(mut mat) = markers.get_mut(&look.threat_victim) {
+        mat.base.base_color = Color::srgb_u8(0xE0, 0x3A, 0x2F).with_alpha(alpha_victim);
+    }
+    // Attacker: amber #F2B33D, pulsing in counter-phase, alpha 0.4 -> 0.85.
+    let alpha_attacker = 0.625 - 0.225 * s;
+    if let Some(mut mat) = markers.get_mut(&look.threat_attacker) {
+        mat.base.base_color = Color::srgb_u8(0xF2, 0xB3, 0x3D).with_alpha(alpha_attacker);
+    }
+}
+
+/// Float the intent badge 0.18 above the piece sprite, bobbing 0.04 at 1.2 Hz.
+fn animate_threat_badges(
+    time: Res<Time>,
+    camera: Single<&Transform, (With<MainCamera>, Without<Billboard>)>,
+    mut badges: Query<(&ThreatBadge, &mut Transform), (With<Billboard>, Without<MainCamera>)>,
+) {
+    let back = camera.back();
+    let pitch = back.y.clamp(-0.99, 0.99).asin();
+    let stretch = 1.0 / pitch.cos();
+    let bob = (time.elapsed_secs() * 1.2 * std::f32::consts::TAU).sin() * 0.04;
+    for (badge, mut tf) in &mut badges {
+        tf.translation.y = badge.base_y + badge.sprite_h * PX * stretch + 0.18 + bob;
+    }
+}
+
 /// Turn cards to face the camera, and stretch them so the tilt doesn't squash them.
 fn face_camera(
     camera: Single<&Transform, (With<MainCamera>, Without<Billboard>)>,
@@ -1024,7 +1211,9 @@ pub struct BoardViewPlugin;
 
 impl Plugin for BoardViewPlugin {
     fn build(&self, app: &mut App) {
+        load_internal_asset!(app, OCCLUDED_SHADER_HANDLE, "occluded.wgsl", Shader::from_wgsl);
         app.add_plugins(MaterialPlugin::<MarkerMaterial>::default())
+            .add_plugins(MaterialPlugin::<OccludedMaterial>::default())
             .add_systems(Startup, setup_look)
             .add_systems(
                 Update,
@@ -1034,6 +1223,8 @@ impl Plugin for BoardViewPlugin {
                     animate_hops,
                     animate_shadow_hops,
                     animate_pickups,
+                    animate_threat_materials,
+                    animate_threat_badges,
                     face_camera,
                 ),
             );
