@@ -1,4 +1,4 @@
-//! Orbit camera and board interaction, by mouse, keyboard or touch.
+//! Orbit camera (perspective) and board interaction, by mouse, keyboard or touch.
 //!
 //! Mouse: click to select / move, right-drag to turn the board, middle-drag or WASD to
 //! pan, wheel to zoom, Q / E to turn by 45°. Touch: tap to select / move, drag to pan,
@@ -6,7 +6,6 @@
 
 use std::f32::consts::{FRAC_PI_4, PI};
 
-use bevy::camera::ScalingMode;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::input::touch::Touches;
@@ -19,16 +18,18 @@ use tc_core::Side;
 
 use crate::game::{GameState, MAX_AI_LEVEL};
 
-/// Screen px per square, the camera's zoom.
-const MIN_ZOOM: f32 = 8.0;
-const MAX_ZOOM: f32 = 180.0;
+/// Camera distance from the point it looks at, the zoom.
+const MIN_DISTANCE: f32 = 3.0;
+const MAX_DISTANCE: f32 = 150.0;
+/// Vertical field of view: enough for depth without distorting the board edges.
+const FOV: f32 = PI / 6.0;
 /// Screen px kept clear of the board for the status panel (top) and toolbar (bottom).
 const HUD_TOP: f32 = 30.0;
 const HUD_BOTTOM: f32 = 60.0;
 /// A touch that moves further than this (screen px) is a drag, not a tap.
 const TAP_SLOP: f32 = 12.0;
-/// Camera tilt above the board; 30° gives the 2:1 isometric look.
-const PITCH: f32 = PI / 6.0;
+/// Camera tilt above the board.
+const PITCH: f32 = 35.0 * PI / 180.0;
 /// Starting view: from White's side with a1 as the nearest corner.
 const START_YAW: f32 = -FRAC_PI_4;
 
@@ -72,12 +73,14 @@ struct Orbit {
     focus: Vec3,
     yaw: f32,
     target_yaw: f32,
-    zoom: f32,
+    distance: f32,
+    /// Window height in logical px, for converting drags to world distances.
+    view_h: f32,
 }
 
 impl Default for Orbit {
     fn default() -> Self {
-        Orbit { focus: Vec3::ZERO, yaw: START_YAW, target_yaw: START_YAW, zoom: 32.0 }
+        Orbit { focus: Vec3::ZERO, yaw: START_YAW, target_yaw: START_YAW, distance: 20.0, view_h: 800.0 }
     }
 }
 
@@ -89,16 +92,23 @@ impl Orbit {
         (right, forward)
     }
 
+    /// Screen px per world unit at the focus point.
+    fn px_per_unit(&self) -> f32 {
+        self.view_h / (2.0 * self.distance * (FOV / 2.0).tan())
+    }
+
     /// Move the view so the board follows a drag of `delta` screen px.
     fn pan(&mut self, delta: Vec2) {
         let (right, forward) = self.ground_axes();
-        self.focus -= right * delta.x / self.zoom;
+        let k = self.px_per_unit();
+        self.focus -= right * delta.x / k;
         // The ground is foreshortened on screen by the tilt.
-        self.focus += forward * delta.y / (self.zoom * PITCH.sin());
+        self.focus += forward * delta.y / (k * PITCH.sin());
     }
 
+    /// Zoom in by `factor` (above 1) or out (below 1).
     fn zoom_by(&mut self, factor: f32) {
-        self.zoom = (self.zoom * factor).clamp(MIN_ZOOM, MAX_ZOOM);
+        self.distance = (self.distance / factor).clamp(MIN_DISTANCE, MAX_DISTANCE);
     }
 
     /// Turn immediately (dragging), keeping any pending animated turn relative.
@@ -113,13 +123,7 @@ impl Orbit {
 struct FitCamera(Option<(Vec2, u64, u8)>);
 
 fn setup_camera(mut commands: Commands) {
-    let projection = || {
-        Projection::Orthographic(OrthographicProjection {
-            scaling_mode: ScalingMode::WindowSize,
-            far: 500.0,
-            ..OrthographicProjection::default_3d()
-        })
-    };
+    let projection = || Projection::Perspective(PerspectiveProjection { fov: FOV, ..default() });
     // Tonemapping off keeps the pixel-art colours exact; no MSAA keeps edges crisp.
     commands.spawn((
         Camera3d::default(),
@@ -156,9 +160,11 @@ fn fit_camera(
     // Size the board for its widest view (a diagonal), with room for tall pieces.
     let n = state.size as f32;
     let span = n * std::f32::consts::SQRT_2;
-    orbit.zoom = (win.x / (span + 1.0))
-        .min((win.y - HUD_TOP - HUD_BOTTOM) / (span * PITCH.sin() + 3.0))
-        .clamp(MIN_ZOOM, MAX_ZOOM);
+    let px_per_unit = (win.x / (span + 1.0)).min((win.y - HUD_TOP - HUD_BOTTOM) / (span * PITCH.sin() + 3.0));
+    // The near side of the board looks bigger in perspective; leave it some room.
+    orbit.view_h = win.y;
+    orbit.distance =
+        (1.1 * win.y / (2.0 * px_per_unit * (FOV / 2.0).tan())).clamp(MIN_DISTANCE, MAX_DISTANCE);
     orbit.focus = board_center(state.size);
     // Centre the board in the space between the HUD bars.
     orbit.pan(Vec2::new(0.0, (HUD_BOTTOM - HUD_TOP) / 2.0));
@@ -166,18 +172,18 @@ fn fit_camera(
 
 fn apply_orbit(
     time: Res<Time>,
+    window: Single<&Window, With<PrimaryWindow>>,
     mut orbit: ResMut<Orbit>,
-    mut cameras: Query<(&mut Transform, &mut Projection), With<OrbitCamera>>,
+    mut cameras: Query<&mut Transform, With<OrbitCamera>>,
 ) {
+    orbit.view_h = window.height().max(1.0);
     let ease = (time.delta_secs() * 12.0).min(1.0);
     orbit.yaw += (orbit.target_yaw - orbit.yaw) * ease;
     let dir = Vec3::new(orbit.yaw.sin() * PITCH.cos(), PITCH.sin(), orbit.yaw.cos() * PITCH.cos());
-    let view = Transform::from_translation(orbit.focus + dir * 100.0).looking_at(orbit.focus, Vec3::Y);
-    for (mut tf, mut proj) in &mut cameras {
+    let view =
+        Transform::from_translation(orbit.focus + dir * orbit.distance).looking_at(orbit.focus, Vec3::Y);
+    for mut tf in &mut cameras {
         *tf = view;
-        if let Projection::Orthographic(o) = &mut *proj {
-            o.scale = 1.0 / orbit.zoom;
-        }
     }
 }
 
@@ -259,7 +265,7 @@ fn touch_gestures(
     if down.is_empty() {
         let tap = touches.iter_just_released().next().filter(|_| !gesture.dragged && !gesture.on_ui);
         if let Some(t) = tap {
-            tap_board(&mut state, &atlas, *camera, orbit.zoom, t.position());
+            tap_board(&mut state, &atlas, *camera, orbit.px_per_unit(), t.position());
         }
         *gesture = Gesture::default();
     }
@@ -278,7 +284,7 @@ fn click_board(
         return;
     }
     if let Some(cursor) = window.cursor_position() {
-        tap_board(&mut state, &atlas, *camera, orbit.zoom, cursor);
+        tap_board(&mut state, &atlas, *camera, orbit.px_per_unit(), cursor);
     }
 }
 
@@ -287,7 +293,7 @@ fn tap_board(
     state: &mut GameState,
     atlas: &Atlas,
     camera: (&Camera, &GlobalTransform),
-    zoom: f32,
+    px_per_unit: f32,
     cursor: Vec2,
 ) {
     if state.pending_promotion.is_some() || state.outcome.is_some() || state.ai_to_move() {
@@ -304,11 +310,11 @@ fn tap_board(
             let p = cam.world_to_viewport(gtf, square_top(sq, state.game.terrain.height(sq))).ok()?;
             Some((sq, p.distance(cursor)))
         })
-        .filter(|&(_, d)| d < zoom * 0.35)
+        .filter(|&(_, d)| d < px_per_unit * 0.35)
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map(|(sq, _)| sq);
     // Then a piece's sprite, which stands in front of the ground behind it, then terrain.
-    let piece = pick_piece(state, atlas, camera, zoom, cursor);
+    let piece = pick_piece(state, atlas, camera, cursor);
     let ground = || cam.viewport_to_world(gtf, cursor).ok().and_then(|ray| pick_square(state, ray));
     let Some(sq) = marked.or(piece).or_else(ground) else {
         state.selected = None;

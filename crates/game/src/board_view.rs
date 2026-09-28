@@ -79,27 +79,28 @@ pub fn pick_square(state: &GameState, ray: Ray3d) -> Option<Sq> {
 }
 
 /// Square of the piece whose sprite is under screen position `cursor`, nearest first.
-/// `zoom` is screen px per world unit.
 pub fn pick_piece(
     state: &GameState,
     atlas: &Atlas,
     camera: (&Camera, &GlobalTransform),
-    zoom: f32,
     cursor: Vec2,
 ) -> Option<Sq> {
     let (cam, gtf) = camera;
     let forward = gtf.forward();
+    // Cards are stretched by 1 / cos(tilt) so they keep their full height on screen.
+    let stretch = 1.0 / Vec2::new(forward.x, forward.z).length().max(0.1);
     state
         .game
         .pos
         .pieces()
         .filter_map(|(sq, piece)| {
             let feet = piece_spot(state, sq);
+            let size = atlas.px(&piece_sprite_name(piece.kind, piece.side)) * PX;
             let p = cam.world_to_viewport(gtf, feet).ok()?;
-            // Cards are stretched to keep their full height on screen; the sides of a
-            // sprite are mostly transparent, so only the middle counts.
-            let size = atlas.px(&piece_sprite_name(piece.kind, piece.side)) * PX * zoom;
-            let hit = (cursor.x - p.x).abs() <= size.x * 0.35 && cursor.y <= p.y && cursor.y >= p.y - size.y;
+            let head = cam.world_to_viewport(gtf, feet + Vec3::Y * size.y * stretch).ok()?;
+            // The sides of a sprite are mostly transparent, so only the middle counts.
+            let side = cam.world_to_viewport(gtf, feet + gtf.right() * size.x * 0.35).ok()?;
+            let hit = (cursor.x - p.x).abs() <= (side.x - p.x).abs() && cursor.y <= p.y && cursor.y >= head.y;
             hit.then(|| (sq, forward.dot(feet)))
         })
         .min_by(|a, b| a.1.total_cmp(&b.1))
