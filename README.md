@@ -39,6 +39,11 @@ to zoom · U undo · N new run · 1/2/3 new run of 8/16/32 · F swaps sides with
 spells: 15-card deck with 3-card hand; click a card or 5–7 to arm, then a highlighted square (Esc cancels); spends the card and auto-draws up to 3 when empty; D discards the selected card (5 per match).
 Pawns promote to a queen automatically. Red frame + sword = your piece can be captured, amber frame = the piece that threatens it.
 
+Campaign ("New campaign" in the menu): click a map tile to preview the path, click it again to ride there · Enter
+or End turn ends the day · walking onto a camp offers a battle: rearrange your back two ranks on the deployment
+board (click a piece, then a square), then Start battle · Retreat (or R) leaves a battle, keeping your king ·
+winning recruits the camp's boss and offers a spell card. The floor-based run is still there as "Classic run".
+
 On phones and tablets (web build): tap to select and move · drag to pan · pinch to zoom · twist two
 fingers to turn the board · two-finger vertical drag to tilt.
 
