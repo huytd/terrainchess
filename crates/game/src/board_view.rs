@@ -1,4 +1,4 @@
-//! Draws the board in 3D (PLAN.md §8). Every square is a column block: its top is the
+//! Draws the board in 3D (specs/game-design.md §6). Every square is a column block: its top is the
 //! square's ground tile and its sides are cliff art, raised `LEVEL` per height level.
 //! Pieces and props are upright pixel-art cards that turn to face the camera, so the
 //! board can be orbited while everything keeps the sprite look. All materials are
@@ -241,7 +241,7 @@ struct ThreatBadge {
 #[derive(Component)]
 struct PickupSprite;
 
-/// Up-and-down oscillation for board pickups (PLAN.md §8).
+/// Up-and-down oscillation for board pickups (specs/game-design.md §6).
 #[derive(Component)]
 struct PickupBob {
     base_y: f32,
@@ -1278,7 +1278,7 @@ fn animate_shadow_hops(
     }
 }
 
-/// Oscillate pickups at 1.5 Hz with an amplitude of 0.06 world units (PLAN.md §6).
+/// Oscillate pickups at 1.5 Hz with an amplitude of 0.06 world units (specs/game-design.md §4).
 fn animate_pickups(time: Res<Time>, mut q: Query<(&PickupBob, &mut Transform)>) {
     let t = time.elapsed_secs();
     for (bob, mut tf) in &mut q {

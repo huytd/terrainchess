@@ -1,4 +1,4 @@
-//! Seeded terrain generator (PLAN.md §3). The board is mirrored across the middle
+//! Seeded terrain generator (specs/game-design.md §1). The board is mirrored across the middle
 //! rank so neither side gets an unfair board, then checked by the validator.
 
 mod validate;

@@ -1,4 +1,4 @@
-//! Roguelike run state, match setup, reward drafting, and save/load (PLAN.md §3, §6).
+//! Roguelike run state, match setup, reward drafting, and save/load (specs/game-design.md §1, §4).
 
 use serde::{Deserialize, Serialize};
 use tc_core::Pickup;
@@ -99,7 +99,7 @@ impl MatchSetup {
     }
 }
 
-/// The persistent state of a roguelike run (PLAN.md §3, §6).
+/// The persistent state of a roguelike run (specs/game-design.md §1, §4).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct RunState {
     /// Initial seed for the entire run.

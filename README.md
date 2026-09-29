@@ -4,12 +4,13 @@ A pixel-art chess roguelike where hills, cliffs, water and caves change how piec
 
 <img width="1000" height="516" alt="image" src="https://github.com/user-attachments/assets/7c179462-47d6-4707-88d5-5e11a56cf6d6" />
 
-Design: [PLAN.md](PLAN.md) · Art spec: [SPRITES.md](SPRITES.md).
+Specs live in [`specs/`](specs/README.md): [game design](specs/game-design.md), [project plan](specs/project-plan.md) and asset specs.
 
 ## Layout
 
 | Path | What |
 |---|---|
+| `specs/` | Specifications: game design, project plan, sprite specs |
 | `crates/core` (`tc_core`) | Rules, terrain, move generation, board generator. No Bevy. |
 | `crates/ai` (`tc_ai`) | Alpha-beta AI over `tc_core`, resumable in time slices. No Bevy. |
 | `crates/game` | Bevy 0.19 app: rendering, input, HUD (native + web) |

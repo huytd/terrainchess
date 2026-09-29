@@ -1,4 +1,4 @@
-//! Roguelike run flow, match progression, and drafting (PLAN.md §6).
+//! Roguelike run flow, match progression, and drafting (specs/game-design.md §4).
 
 use bevy::prelude::*;
 use tc_core::{Outcome, Side};

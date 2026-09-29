@@ -1,4 +1,4 @@
-//! Integration tests for tc_run (PLAN.md §6, §11 and /tmp/m5_phase1.md).
+//! Integration tests for tc_run (specs/game-design.md §4, specs/project-plan.md §5 and /tmp/m5_phase1.md).
 
 use std::collections::HashSet;
 

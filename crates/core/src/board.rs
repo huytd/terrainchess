@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-/// Supported board sizes (PLAN.md §5).
+/// Supported board sizes (specs/game-design.md §3).
 pub const SIZES: [u8; 3] = [8, 16, 32];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]

@@ -2,9 +2,9 @@
 
 Art for everything **around** the board: the sky and horizon, the sea, the island shore,
 ground details and small ambient life. The chess pieces and board tiles stay on the main
-sheet (`SPRITES.md`); this is a second, separate sheet.
+sheet (`assets-sprites.md`); this is a second, separate sheet.
 
-**Style:** the same as `SPRITES.md`: modern indie pixel art, bold clean outlines, vivid
+**Style:** the same as `assets-sprites.md`: modern indie pixel art, bold clean outlines, vivid
 readable colours, soft cel shading, chunky shapes. Fantasy with a dark edge. The board sits on
 the high plateau of a small island in a calm sea, under a wide late-afternoon sky.
 
@@ -25,7 +25,7 @@ the high plateau of a small island in a calm sea, under a wide late-afternoon sk
 | Light | From the **top-left**, warm late-afternoon sun |
 | Outline | 1 logical px dark navy `#1A1C2C` on props, birds and decals. **No outlines** on the horizon bands, clouds or seamless tiles |
 | Rendering | Crisp pixels, no anti-aliasing, no blur, no dithering noise, no text, no grid lines |
-| Palette | The §1 palette of `SPRITES.md`, plus soft sky tints (pale peach, lilac, haze blue) for §2 A–B |
+| Palette | The §1 palette of `assets-sprites.md`, plus soft sky tints (pale peach, lilac, haze blue) for §2 A–B |
 | Seamless | Horizon bands tile **left-to-right** (the left and right edges must join). Sea and sand tiles tile in **both** directions |
 
 **Cell numbering is 1-based: (row, col).** Pixel boxes are given as `x0,y0 – x1,y1`

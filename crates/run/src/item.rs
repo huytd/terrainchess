@@ -1,4 +1,4 @@
-//! Item data models and catalog loader (PLAN.md §2, §6).
+//! Item data models and catalog loader (specs/project-plan.md §2, specs/game-design.md §4).
 
 use std::sync::LazyLock;
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Turn the generated sprite sheet and environment sheets into the game's atlas (see SPRITES.md §0).
+"""Turn the generated sprite sheet and environment sheets into the game's atlas (see specs/assets-sprites.md §0).
 
     python3 tools/process_sprites.py [--palette] [--preview out.png]
 
@@ -10,7 +10,7 @@ Writes assets/atlas.png               (packed, transparent, 1 logical px = 1 px)
        assets/atlas.ron               (sprite name -> rect + anchor, read by the game)
 
 The generated sheet came out as a 16×16 grid of 128 px cells instead of the
-32×32 grid of 64 px cells in SPRITES.md, and some rows ignore the grid, so
+32×32 grid of 64 px cells in specs/assets-sprites.md, and some rows ignore the grid, so
 regions are listed by hand below. Tile regions are sliced strictly by cell.
 Sprite regions give a search box; the sprite is the non-background pixels found
 inside it, so small misalignments don't matter.
@@ -20,7 +20,7 @@ Pipeline per sprite:
      to drop the magenta fringe.
   2. Downscale 4× (128 px cell -> 32 px tile) with alpha-weighted box filtering,
      then threshold alpha so edges stay crisp.
-  3. Optionally snap colours to the SPRITES.md §1 palette (--palette).
+  3. Optionally snap colours to the specs/assets-sprites.md §1 palette (--palette).
 
 Requires Pillow, numpy and scipy.
 """
@@ -96,7 +96,7 @@ FACES = [
 BOTTOM = (0.5, 1.0)  # anchor: feet / base at the bottom centre
 CENTER = (0.5, 0.5)
 
-# Pieces: idle frames, pawn smallest to king tallest. Kept shorter than SPRITES.md §0 so a
+# Pieces: idle frames, pawn smallest to king tallest. Kept shorter than specs/assets-sprites.md §0 so a
 # piece covers at most about half of the square behind it.
 PIECE_H = {"pawn": 26, "knight": 30, "rook": 32, "bishop": 36, "queen": 38, "king": 40}
 
@@ -312,7 +312,7 @@ WHITE_KING = {
 }
 
 
-# SPRITES.md §1
+# specs/assets-sprites.md §1
 PALETTE = """
 1A1C2C 2E6B3A 3F8F45 6BBF4E A6DB6A 24503A 33704A 1F4A45 2F6B57 4FA36B 86D07A
 2E4A55 44707A 6C9DA3 A5CCD0 2D6F7A 3F9BA0 7FD0CC E8FFF8 3B5A3A 52774A 7A9A5A
@@ -604,7 +604,7 @@ def write_ron(rects, size, path):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--palette", action="store_true", help="snap colours to the SPRITES.md palette")
+    ap.add_argument("--palette", action="store_true", help="snap colours to the specs/assets-sprites.md palette")
     ap.add_argument("--preview", help="also write a 4× preview of the atlas here")
     args = ap.parse_args()
 

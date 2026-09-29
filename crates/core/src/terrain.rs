@@ -1,4 +1,4 @@
-//! Heightmap terrain (PLAN.md §3). One standable surface per square.
+//! Heightmap terrain (specs/game-design.md §1). One standable surface per square.
 
 use serde::{Deserialize, Serialize};
 

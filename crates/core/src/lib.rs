@@ -1,5 +1,5 @@
 //! Terrain Chess rules engine. Pure Rust, no Bevy, so the rules can be tested
-//! headlessly and shared with the AI (see PLAN.md §2).
+//! headlessly and shared with the AI (see specs/project-plan.md §2).
 
 pub mod board;
 pub mod movegen;
