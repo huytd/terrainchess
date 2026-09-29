@@ -1262,6 +1262,7 @@ fn sync_title_menu(
                         align_items: AlignItems::Center,
                         row_gap: Val::Px(10.0),
                         padding: UiRect::all(Val::Px(20.0)),
+                        flex_shrink: 0.0,
                         ..default()
                     },
                     ImageNode {
@@ -1302,7 +1303,8 @@ fn sync_title_menu(
                             flex_direction: FlexDirection::Column,
                             row_gap: Val::Px(10.0),
                             align_items: AlignItems::Center,
-                            margin: UiRect::top(Val::Px(16.0)),
+                            margin: UiRect { top: Val::Px(16.0), bottom: Val::Px(16.0), ..default() },
+                            flex_shrink: 0.0,
                             ..default()
                         })
                         .with_children(|col| {
