@@ -47,6 +47,63 @@ const HERO_CROWN_FRAMES: [&str; 6] = [
     "ow_hero_crown_5",
 ];
 
+const ROAD_TILES: [&str; 16] = [
+    "ow_road_00",
+    "ow_road_01",
+    "ow_road_02",
+    "ow_road_03",
+    "ow_road_04",
+    "ow_road_05",
+    "ow_road_06",
+    "ow_road_07",
+    "ow_road_08",
+    "ow_road_09",
+    "ow_road_0a",
+    "ow_road_0b",
+    "ow_road_0c",
+    "ow_road_0d",
+    "ow_road_0e",
+    "ow_road_0f",
+];
+
+const BRIDGE_TILES: [&str; 16] = [
+    "ow_bridge_00",
+    "ow_bridge_01",
+    "ow_bridge_02",
+    "ow_bridge_03",
+    "ow_bridge_04",
+    "ow_bridge_05",
+    "ow_bridge_06",
+    "ow_bridge_07",
+    "ow_bridge_08",
+    "ow_bridge_09",
+    "ow_bridge_0a",
+    "ow_bridge_0b",
+    "ow_bridge_0c",
+    "ow_bridge_0d",
+    "ow_bridge_0e",
+    "ow_bridge_0f",
+];
+
+const COAST_TILES: [&str; 16] = [
+    "ow_coast_00",
+    "ow_coast_01",
+    "ow_coast_02",
+    "ow_coast_03",
+    "ow_coast_04",
+    "ow_coast_05",
+    "ow_coast_06",
+    "ow_coast_07",
+    "ow_coast_08",
+    "ow_coast_09",
+    "ow_coast_0a",
+    "ow_coast_0b",
+    "ow_coast_0c",
+    "ow_coast_0d",
+    "ow_coast_0e",
+    "ow_coast_0f",
+];
+
 /// One seamless overworld tile texture per biome, picked by a position hash so
 /// neighbouring tiles of the same biome don't look identical.
 fn biome_tile(biome: Biome, x: u16, y: u16) -> &'static str {
@@ -57,12 +114,28 @@ fn biome_tile(biome: Biome, x: u16, y: u16) -> &'static str {
         Biome::Hills => ["ow_hills_0", "ow_hills_1", "ow_hills_2"][h % 3],
         Biome::Mountain => ["ow_mountain_0", "ow_mountain_1", "ow_mountain_2", "ow_mountain_3"][h % 4],
         Biome::Water => ["ow_water_0", "ow_water_1", "ow_water_2"][h % 3],
-        Biome::Coast => ["ow_coast_0", "ow_coast_1"][h % 2],
+        Biome::Coast => "ow_coast_00",
     }
 }
 
-/// The road (or bridge, over water) sprite for a tile, plus a `rotate_uv` step,
-/// picked from its N/E/S/W road neighbours.
+/// Pick the coast transition whose land edges match adjacent non-water biomes.
+fn coast_tile(map: &WorldMap, pos: MapPos) -> &'static str {
+    let directions = [(0, -1, 1), (1, 0, 2), (0, 1, 4), (-1, 0, 8)];
+    let mut mask = 0;
+    for (dx, dy, bit) in directions {
+        let nx = pos.x as i32 + dx;
+        let ny = pos.y as i32 + dy;
+        if nx >= 0
+            && ny >= 0
+            && map.get(MapPos::new(nx as u16, ny as u16)).is_some_and(|tile| tile.biome != Biome::Water)
+        {
+            mask |= bit;
+        }
+    }
+    COAST_TILES[mask]
+}
+
+/// The road (or bridge, over water) sprite for the tile's N/E/S/W road mask.
 fn road_tile(map: &WorldMap, pos: MapPos, is_water: bool) -> (&'static str, u32) {
     let has_road = |dx: i32, dy: i32| -> bool {
         let nx = pos.x as i32 + dx;
@@ -72,27 +145,11 @@ fn road_tile(map: &WorldMap, pos: MapPos, is_water: bool) -> (&'static str, u32)
         }
         map.get(MapPos::new(nx as u16, ny as u16)).is_some_and(|t: MapTile| t.road)
     };
-    let n = has_road(0, -1);
-    let e = has_road(1, 0);
-    let s = has_road(0, 1);
-    let w = has_road(-1, 0);
-
-    if is_water {
-        return if n || s { ("ow_bridge_ns", 0) } else { ("ow_bridge_ew", 0) };
-    }
-
-    match (n, e, s, w) {
-        (true, true, true, true) => ("ow_road_cross", 0),
-        (false, true, false, true) => ("ow_road_straight", 0),
-        (true, false, true, false) => ("ow_road_straight", 1),
-        (false, true, true, false) => ("ow_road_corner", 0), // drawn connecting south + east
-        (false, false, true, true) => ("ow_road_corner", 1), // south + west
-        (true, false, false, true) => ("ow_road_corner", 2), // north + west
-        (true, true, false, false) => ("ow_road_corner", 3), // north + east
-        // T-junctions and isolated road tiles have no dedicated piece: the
-        // crossroad reads fine as a stand-in at any junction.
-        _ => ("ow_road_cross", 0),
-    }
+    let mask = (has_road(0, -1) as usize)
+        | ((has_road(1, 0) as usize) << 1)
+        | ((has_road(0, 1) as usize) << 2)
+        | ((has_road(-1, 0) as usize) << 3);
+    (if is_water { BRIDGE_TILES[mask] } else { ROAD_TILES[mask] }, 0)
 }
 
 pub struct OverworldPlugin;
@@ -369,6 +426,8 @@ fn update_overworld_map(
 
             let (name, rot) = if tile.road {
                 road_tile(map, pos, tile.biome == Biome::Water)
+            } else if tile.biome == Biome::Coast {
+                (coast_tile(map, pos), 0)
             } else {
                 (biome_tile(tile.biome, x, y), 0)
             };
