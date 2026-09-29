@@ -75,7 +75,8 @@ impl MatchSetup {
     }
     /// Generate terrain for this match and apply relic modifications.
     pub fn terrain(&self) -> (Terrain, u64) {
-        let (mut terrain, actual_seed) = tc_core::worldgen::generate(self.seed, &self.r#gen);
+        let pos = self.position(self.r#gen.size).unwrap_or_else(|_| Position::start(self.r#gen.size));
+        let (mut terrain, actual_seed) = tc_core::worldgen::generate_for(self.seed, &self.r#gen, &pos);
         if self.relics.contains(&RelicEffect::TectonicPact) {
             let home = Position::home_rows(self.r#gen.size);
             let y_range = match self.player {
@@ -314,8 +315,9 @@ impl RunState {
             armies: None,
         };
         let (terrain, actual_seed) = setup_temp.terrain();
+        let pos = setup_temp.position(self.size).unwrap_or_else(|_| Position::start(self.size));
         let cartographer = relics.contains(&RelicEffect::Cartographer);
-        let pickups = place_pickups(actual_seed, self.floor, self.size, &terrain, player, cartographer);
+        let pickups = place_pickups(actual_seed, self.floor, self.size, &terrain, player, cartographer, &pos);
 
         MatchSetup { pickups, ..setup_temp }
     }
@@ -334,50 +336,8 @@ impl RunState {
 
     /// Roll three distinct items the player does not own yet.
     pub fn draft(&mut self) -> [ItemId; 3] {
-        let mut rng = Rng::new(self.rng);
-        let mut selected: Vec<ItemId> = Vec::with_capacity(3);
-
-        for _ in 0..3 {
-            let available: Vec<&'static crate::item::Item> = catalog()
-                .iter()
-                .filter(|item| {
-                    !self.owned.contains(&item.id)
-                        && !selected.contains(&item.id)
-                        && (self.floor >= 2 || item.rarity != Rarity::Rare)
-                })
-                .collect();
-
-            // Invariant: catalog contains sufficient unowned items to draft 3 options.
-            assert!(!available.is_empty(), "not enough unowned items available to draft");
-
-            let common: Vec<&'static crate::item::Item> =
-                available.iter().copied().filter(|i| i.rarity == Rarity::Common).collect();
-            let uncommon: Vec<&'static crate::item::Item> =
-                available.iter().copied().filter(|i| i.rarity == Rarity::Uncommon).collect();
-            let rare: Vec<&'static crate::item::Item> =
-                available.iter().copied().filter(|i| i.rarity == Rarity::Rare).collect();
-
-            let w_common = if common.is_empty() { 0 } else { 60 };
-            let w_uncommon = if uncommon.is_empty() { 0 } else { 30 };
-            let w_rare = if rare.is_empty() { 0 } else { 10 };
-            let total_w = w_common + w_uncommon + w_rare;
-
-            assert!(total_w > 0, "no valid rarity pool available to roll from");
-            let roll = rng.below(total_w);
-
-            let pool = if roll < w_common {
-                &common
-            } else if roll < w_common + w_uncommon {
-                &uncommon
-            } else {
-                &rare
-            };
-
-            let chosen_idx = rng.below(pool.len() as u32) as usize;
-            selected.push(pool[chosen_idx].id.clone());
-        }
-
-        self.rng = rng.state();
+        let selected = roll_draft(&mut self.rng, &self.owned, self.floor, 3);
+        assert_eq!(selected.len(), 3, "not enough unowned items available to draft");
         let draft = [selected[0].clone(), selected[1].clone(), selected[2].clone()];
         self.last_draft = Some(draft.clone());
         draft
@@ -407,15 +367,68 @@ impl RunState {
     }
 }
 
+/// Roll up to `count` distinct unowned items matching rarity tier rules.
+pub(crate) fn roll_draft(rng_state: &mut u64, owned: &[ItemId], floor: u8, count: usize) -> Vec<ItemId> {
+    let mut rng = Rng::new(*rng_state);
+    let mut selected: Vec<ItemId> = Vec::with_capacity(count);
+
+    for _ in 0..count {
+        let available: Vec<&'static crate::item::Item> = catalog()
+            .iter()
+            .filter(|item| {
+                !owned.contains(&item.id)
+                    && !selected.contains(&item.id)
+                    && (floor >= 2 || item.rarity != Rarity::Rare)
+            })
+            .collect();
+
+        if available.is_empty() {
+            break;
+        }
+
+        let common: Vec<&'static crate::item::Item> =
+            available.iter().copied().filter(|i| i.rarity == Rarity::Common).collect();
+        let uncommon: Vec<&'static crate::item::Item> =
+            available.iter().copied().filter(|i| i.rarity == Rarity::Uncommon).collect();
+        let rare: Vec<&'static crate::item::Item> =
+            available.iter().copied().filter(|i| i.rarity == Rarity::Rare).collect();
+
+        let w_common = if common.is_empty() { 0 } else { 60 };
+        let w_uncommon = if uncommon.is_empty() { 0 } else { 30 };
+        let w_rare = if rare.is_empty() { 0 } else { 10 };
+        let total_w = w_common + w_uncommon + w_rare;
+
+        if total_w == 0 {
+            break;
+        }
+
+        let roll = rng.below(total_w);
+        let pool = if roll < w_common {
+            &common
+        } else if roll < w_common + w_uncommon {
+            &uncommon
+        } else {
+            &rare
+        };
+
+        let chosen_idx = rng.below(pool.len() as u32) as usize;
+        selected.push(pool[chosen_idx].id.clone());
+    }
+
+    *rng_state = rng.state();
+    selected
+}
+
 /// Place pickups deterministically on valid board squares favoring high ground,
 /// cave entrances and the enemy half.
-fn place_pickups(
+pub(crate) fn place_pickups(
     actual_seed: u64,
     floor: u8,
     size: u8,
     terrain: &Terrain,
     player: Side,
     cartographer: bool,
+    start_pos: &Position,
 ) -> Vec<(Sq, Pickup)> {
     let base_count = match size {
         8 => 2,
@@ -426,7 +439,6 @@ fn place_pickups(
     let target_count = if cartographer { base_count + 1 } else { base_count };
 
     let home = Position::home_rows(size);
-    let start_pos = Position::start(size);
 
     // Candidates: empty non-home squares that a piece can stand on
     let mut candidates: Vec<(Sq, u32)> = Vec::new();

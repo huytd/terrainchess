@@ -70,11 +70,22 @@ impl Position {
             Rook, Knight, Bishop, Rook, Knight, Bishop, Queen, King, Queen, Bishop, Knight, Rook, Bishop,
             Knight, Rook, Rook,
         ];
+        // 5×5: Gardner minichess layout
+        const MINI_5: [PieceKind; 5] = [Rook, Knight, Bishop, Queen, King];
+        // 6×6: Los Alamos / standard minichess layout
+        const MINI_6: [PieceKind; 6] = [Rook, Knight, Queen, King, Bishop, Rook];
+        // 7×7: Centred 7-piece layout
+        const MINI_7: [PieceKind; 7] = [Rook, Knight, Bishop, Queen, King, Bishop, Knight];
+
         let (back, x0): (&[PieceKind], u8) = match size {
+            5 => (&MINI_5, 0),
+            6 => (&MINI_6, 0),
+            7 => (&MINI_7, 0),
             8 => (&STANDARD, 0),
             16 => (&DOUBLED, 0),
-            // 32×32 "skirmish": a standard army in a central home zone.
-            _ => (&STANDARD, size / 2 - 4),
+            // 12×12 or 32×32 "skirmish": a standard army in a central home zone.
+            _ if size >= 8 => (&STANDARD, size / 2 - 4),
+            _ => (&STANDARD, 0),
         };
         let mut pos = Position::empty(size);
         for side in Side::BOTH {
@@ -130,12 +141,15 @@ impl Position {
                 }
             }
 
-            let x0 = match size {
-                8 | 16 => 0,
-                _ => size / 2 - 4,
+            let (king_x, std_r_queen, std_r_king) = match size {
+                16 => (7, Some(0), Some(15)),
+                8 => (4, Some(0), Some(7)),
+                _ if size >= 8 => {
+                    let x0 = size / 2 - 4;
+                    (size / 2, Some(x0), Some(x0 + 7))
+                }
+                _ => (size / 2, None, None),
             };
-            let std_king = if size == 16 { 7 } else { x0 + 4 };
-            let king_x = std_king;
 
             let (back_y, pawn_y) = match side {
                 Side::White => (0, 1),
@@ -188,13 +202,15 @@ impl Position {
             }
 
             let s = side.index();
-            let std_r_queen = x0;
-            let std_r_king = x0 + if size == 16 { 15 } else { 7 };
-            if pos.get(Sq::new(std_r_king, back_y)) == Some(Piece::new(PieceKind::Rook, side)) {
-                pos.castling[s][KINGSIDE] = Some(Sq::new(std_r_king, back_y));
+            if let Some(r_king) = std_r_king
+                && pos.get(Sq::new(r_king, back_y)) == Some(Piece::new(PieceKind::Rook, side))
+            {
+                pos.castling[s][KINGSIDE] = Some(Sq::new(r_king, back_y));
             }
-            if pos.get(Sq::new(std_r_queen, back_y)) == Some(Piece::new(PieceKind::Rook, side)) {
-                pos.castling[s][QUEENSIDE] = Some(Sq::new(std_r_queen, back_y));
+            if let Some(r_queen) = std_r_queen
+                && pos.get(Sq::new(r_queen, back_y)) == Some(Piece::new(PieceKind::Rook, side))
+            {
+                pos.castling[s][QUEENSIDE] = Some(Sq::new(r_queen, back_y));
             }
         }
         Ok(pos)
@@ -231,13 +247,15 @@ impl Position {
             }
         }
 
-        let x0 = match size {
-            8 | 16 => 0,
-            _ => size / 2 - 4,
+        let (std_king, std_r_queen, std_r_king) = match size {
+            16 => (7, Some(0), Some(15)),
+            8 => (4, Some(0), Some(7)),
+            _ if size >= 8 => {
+                let x0 = size / 2 - 4;
+                (size / 2, Some(x0), Some(x0 + 7))
+            }
+            _ => (size / 2, None, None),
         };
-        let std_king = if size == 16 { 7 } else { x0 + 4 };
-        let std_r_queen = x0;
-        let std_r_king = x0 + if size == 16 { 15 } else { 7 };
         for side in Side::BOTH {
             let s = side.index();
             let back_y = match side {
@@ -245,11 +263,15 @@ impl Position {
                 Side::Black => size - 1,
             };
             if pos.get(Sq::new(std_king, back_y)) == Some(Piece::new(PieceKind::King, side)) {
-                if pos.get(Sq::new(std_r_king, back_y)) == Some(Piece::new(PieceKind::Rook, side)) {
-                    pos.castling[s][KINGSIDE] = Some(Sq::new(std_r_king, back_y));
+                if let Some(r_king) = std_r_king
+                    && pos.get(Sq::new(r_king, back_y)) == Some(Piece::new(PieceKind::Rook, side))
+                {
+                    pos.castling[s][KINGSIDE] = Some(Sq::new(r_king, back_y));
                 }
-                if pos.get(Sq::new(std_r_queen, back_y)) == Some(Piece::new(PieceKind::Rook, side)) {
-                    pos.castling[s][QUEENSIDE] = Some(Sq::new(std_r_queen, back_y));
+                if let Some(r_queen) = std_r_queen
+                    && pos.get(Sq::new(r_queen, back_y)) == Some(Piece::new(PieceKind::Rook, side))
+                {
+                    pos.castling[s][QUEENSIDE] = Some(Sq::new(r_queen, back_y));
                 }
             }
         }

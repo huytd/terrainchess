@@ -8,3 +8,6 @@ description = "Terrain Chess roguelike run layer: run state, items, reward draft
 tc_core.workspace = true
 serde.workspace = true
 ron.workspace = true
+
+[dev-dependencies]
+tc_ai.workspace = true

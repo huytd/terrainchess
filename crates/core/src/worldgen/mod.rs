@@ -34,26 +34,29 @@ impl GenParams {
     pub fn for_floor(size: u8, floor: u8) -> Self {
         let f = floor.min(7) as f64 / 7.0;
         let area = (size as f64 / 8.0).powi(2);
-        GenParams {
-            size,
-            roughness: 0.35 + 0.5 * f,
-            basins: 0.6 + 0.4 * f,
-            cave_pairs: (area.sqrt() as u8).max(1),
-            obstacle_density: 0.04 + 0.04 * f,
-            home_height: 1,
-        }
+        let (roughness, basins, cave_pairs, obstacle_density) = if size <= 6 {
+            (0.20 + 0.35 * f, 0.3 + 0.3 * f, 0, 0.02 + 0.02 * f)
+        } else {
+            (0.35 + 0.5 * f, 0.6 + 0.4 * f, (area.sqrt() as u8).max(1), 0.04 + 0.04 * f)
+        };
+        GenParams { size, roughness, basins, cave_pairs, obstacle_density, home_height: 1 }
     }
 }
 
 /// Generate a board that passes validation, trying `seed`, `seed + 1`, … in turn.
 /// Returns the terrain and the seed that produced it. Falls back to a flat board.
 pub fn generate(seed: u64, params: &GenParams) -> (Terrain, u64) {
-    let rules = Rules::standard(params.size);
     let pos = Position::start(params.size);
+    generate_for(seed, params, &pos)
+}
+
+/// Generate a board that passes validation for a specific starting position.
+pub fn generate_for(seed: u64, params: &GenParams, pos: &Position) -> (Terrain, u64) {
+    let rules = Rules::standard(params.size);
     for attempt in 0..256 {
         let s = seed.wrapping_add(attempt);
         let terrain = generate_unchecked(s, params);
-        if validate(&terrain, &rules, &pos).is_ok() {
+        if validate(&terrain, &rules, pos).is_ok() {
             return (terrain, s);
         }
     }
@@ -63,7 +66,7 @@ pub fn generate(seed: u64, params: &GenParams) -> (Terrain, u64) {
 /// One generation pass without validation.
 pub fn generate_unchecked(seed: u64, params: &GenParams) -> Terrain {
     let size = params.size;
-    let half = size / 2;
+    let gen_half = size.div_ceil(2);
     let home = Position::home_rows(size);
     let mut rng = Rng::new(seed);
     let mut t = Terrain::flat(size);
@@ -75,7 +78,7 @@ pub fn generate_unchecked(seed: u64, params: &GenParams) -> Terrain {
         .set_persistence(0.45 + 0.25 * params.roughness);
     let (ox, oy) = (rng.unit() * 1000.0, rng.unit() * 1000.0);
     let amp = 1.4 + 2.0 * params.roughness;
-    for y in 0..half {
+    for y in 0..gen_half {
         for x in 0..size {
             let n = fbm.get([x as f64 + ox, y as f64 + oy]);
             let h = (1.5 + n * amp * 2.0).round().clamp(0.0, MAX_HEIGHT as f64);
@@ -90,14 +93,15 @@ pub fn generate_unchecked(seed: u64, params: &GenParams) -> Terrain {
         }
     }
 
-    let middle = |sq: Sq| sq.y >= home && sq.y < half;
+    let middle = |sq: Sq| sq.y >= home && sq.y < gen_half;
     let area = (size as f64 / 8.0).powi(2);
 
     // 3. Water basins, centred near the middle line so the mirror joins them into lakes.
     let basins = (params.basins * area + rng.unit()).floor() as u32;
     for _ in 0..basins {
         let cx = rng.below(size as u32) as f64;
-        let cy = (half - 1) as f64 - rng.below((half - home).min(2) as u32) as f64;
+        let y_span = (gen_half - home).max(1);
+        let cy = (gen_half - 1) as f64 - rng.below(y_span.min(2) as u32) as f64;
         let r = 1.0 + rng.unit() * 0.8 * (size as f64 / 8.0).sqrt();
         for sq in crate::board::squares(size).filter(|&s| middle(s)) {
             let d = ((sq.x as f64 - cx).powi(2) + (sq.y as f64 - cy).powi(2)).sqrt();
@@ -153,7 +157,7 @@ pub fn generate_unchecked(seed: u64, params: &GenParams) -> Terrain {
     }
 
     // 7. Mirror across the middle rank.
-    for y in half..size {
+    for y in (size / 2)..size {
         for x in 0..size {
             let src = *t.get(Sq::new(x, size - 1 - y));
             *t.get_mut(Sq::new(x, y)) = src;
