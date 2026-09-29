@@ -98,6 +98,164 @@ impl Position {
         pos
     }
 
+    /// Create a position by placing a manual roster for each side.
+    pub fn from_army(size: u8, white: &[PieceKind], black: &[PieceKind]) -> Result<Self, String> {
+        let mut pos = Position::empty(size);
+        for side in Side::BOTH {
+            let roster = match side {
+                Side::White => white,
+                Side::Black => black,
+            };
+            let king_count = roster.iter().filter(|&&k| k == PieceKind::King).count();
+            if king_count != 1 {
+                return Err(format!("{:?} must have exactly one King", side));
+            }
+            if roster.len() > 2 * size as usize {
+                return Err(format!("{:?} has too many pieces", side));
+            }
+
+            let mut pawns = Vec::new();
+            let mut rooks = Vec::new();
+            let mut knights = Vec::new();
+            let mut bishops = Vec::new();
+            let mut queens = Vec::new();
+            for &k in roster {
+                match k {
+                    PieceKind::Pawn => pawns.push(k),
+                    PieceKind::Rook => rooks.push(k),
+                    PieceKind::Knight => knights.push(k),
+                    PieceKind::Bishop => bishops.push(k),
+                    PieceKind::Queen => queens.push(k),
+                    PieceKind::King => {}
+                }
+            }
+
+            let x0 = match size {
+                8 | 16 => 0,
+                _ => size / 2 - 4,
+            };
+            let std_king = if size == 16 { 7 } else { x0 + 4 };
+            let king_x = std_king;
+
+            let (back_y, pawn_y) = match side {
+                Side::White => (0, 1),
+                Side::Black => (size - 1, size - 2),
+            };
+
+            pos.set(Sq::new(king_x, back_y), Some(Piece::new(PieceKind::King, side)));
+
+            let mut front_center_out: Vec<u8> = (0..size).collect();
+            front_center_out.sort_by_key(|&x| ((2 * x as i32 - size as i32 + 1).abs(), x));
+
+            let mut back_outside_in: Vec<u8> = (0..size).filter(|&x| x != king_x).collect();
+            back_outside_in.sort_by_key(|&x| (std::cmp::min(x, size - 1 - x), x));
+
+            let num_pawns = pawns.len();
+            let num_non_pawns = roster.len() - 1 - num_pawns;
+
+            let pawns_in_front = std::cmp::min(num_pawns, size as usize);
+            let mut used_front = front_center_out[0..pawns_in_front].to_vec();
+            used_front.sort();
+
+            let non_pawns_in_back = std::cmp::min(num_non_pawns, (size - 1) as usize);
+            let used_back = back_outside_in[0..non_pawns_in_back].to_vec();
+
+            let mut unused_front = front_center_out[pawns_in_front..].to_vec();
+            unused_front.sort_by_key(|&x| (std::cmp::min(x, size - 1 - x), x));
+
+            let mut unused_back = back_outside_in[non_pawns_in_back..].to_vec();
+            unused_back.sort_by_key(|&x| ((2 * x as i32 - size as i32 + 1).abs(), x));
+
+            let mut place_pawns = pawns.into_iter();
+            for &x in &used_front {
+                pos.set(Sq::new(x, pawn_y), Some(Piece::new(place_pawns.next().unwrap(), side)));
+            }
+            for &x in &unused_back {
+                if let Some(p) = place_pawns.next() {
+                    pos.set(Sq::new(x, back_y), Some(Piece::new(p, side)));
+                }
+            }
+
+            let non_pawns_iter = rooks.into_iter().chain(knights).chain(bishops).chain(queens);
+            let mut place_non_pawns = non_pawns_iter;
+            for &x in &used_back {
+                pos.set(Sq::new(x, back_y), Some(Piece::new(place_non_pawns.next().unwrap(), side)));
+            }
+            for &x in &unused_front {
+                if let Some(p) = place_non_pawns.next() {
+                    pos.set(Sq::new(x, pawn_y), Some(Piece::new(p, side)));
+                }
+            }
+
+            let s = side.index();
+            let std_r_queen = x0;
+            let std_r_king = x0 + if size == 16 { 15 } else { 7 };
+            if pos.get(Sq::new(std_r_king, back_y)) == Some(Piece::new(PieceKind::Rook, side)) {
+                pos.castling[s][KINGSIDE] = Some(Sq::new(std_r_king, back_y));
+            }
+            if pos.get(Sq::new(std_r_queen, back_y)) == Some(Piece::new(PieceKind::Rook, side)) {
+                pos.castling[s][QUEENSIDE] = Some(Sq::new(std_r_queen, back_y));
+            }
+        }
+        Ok(pos)
+    }
+
+    /// Create a position from a fully manual placement of pieces.
+    pub fn from_placement(size: u8, pieces: &[(Sq, Piece)]) -> Result<Self, String> {
+        let mut pos = Position::empty(size);
+        let mut kings = [0, 0];
+        for &(sq, p) in pieces {
+            if sq.y >= size || sq.x >= size {
+                return Err("Square out of bounds".into());
+            }
+            let s = p.side.index();
+            if p.kind == PieceKind::King {
+                kings[s] += 1;
+            }
+            let (back_y, pawn_y) = match p.side {
+                Side::White => (0, 1),
+                Side::Black => (size - 1, size - 2),
+            };
+            if sq.y != back_y && sq.y != pawn_y {
+                return Err(format!("{:?} piece placed outside back two ranks", p.side));
+            }
+            if pos.get(sq).is_some() {
+                return Err("Multiple pieces on same square".into());
+            }
+            pos.set(sq, Some(p));
+        }
+        for (i, &count) in kings.iter().enumerate() {
+            if count != 1 {
+                let side = if i == 0 { Side::White } else { Side::Black };
+                return Err(format!("{:?} must have exactly one King", side));
+            }
+        }
+
+        let x0 = match size {
+            8 | 16 => 0,
+            _ => size / 2 - 4,
+        };
+        let std_king = if size == 16 { 7 } else { x0 + 4 };
+        let std_r_queen = x0;
+        let std_r_king = x0 + if size == 16 { 15 } else { 7 };
+        for side in Side::BOTH {
+            let s = side.index();
+            let back_y = match side {
+                Side::White => 0,
+                Side::Black => size - 1,
+            };
+            if pos.get(Sq::new(std_king, back_y)) == Some(Piece::new(PieceKind::King, side)) {
+                if pos.get(Sq::new(std_r_king, back_y)) == Some(Piece::new(PieceKind::Rook, side)) {
+                    pos.castling[s][KINGSIDE] = Some(Sq::new(std_r_king, back_y));
+                }
+                if pos.get(Sq::new(std_r_queen, back_y)) == Some(Piece::new(PieceKind::Rook, side)) {
+                    pos.castling[s][QUEENSIDE] = Some(Sq::new(std_r_queen, back_y));
+                }
+            }
+        }
+        Ok(pos)
+    }
+
     /// Parse an 8×8 FEN (castling letters refer to the corner rooks).
     pub fn from_fen(fen: &str) -> Result<Self, String> {
         let parts: Vec<&str> = fen.split_whitespace().collect();

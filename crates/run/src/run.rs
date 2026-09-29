@@ -48,7 +48,7 @@ impl std::fmt::Display for RunError {
 impl std::error::Error for RunError {}
 
 /// Configuration and rules for an individual match in the run.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct MatchSetup {
     pub seed: u64,
     pub r#gen: GenParams,
@@ -61,9 +61,18 @@ pub struct MatchSetup {
     pub enemy_deck: Vec<SpellId>,
     pub enemy_items: Vec<ItemId>,
     pub veteran: [bool; 2],
+    #[serde(default)]
+    pub armies: Option<[Vec<tc_core::piece::PieceKind>; 2]>,
 }
 
 impl MatchSetup {
+    pub fn position(&self, size: u8) -> Result<Position, String> {
+        if let Some(ref armies) = self.armies {
+            Position::from_army(size, &armies[0], &armies[1])
+        } else {
+            Ok(Position::start(size))
+        }
+    }
     /// Generate terrain for this match and apply relic modifications.
     pub fn terrain(&self) -> (Terrain, u64) {
         let (mut terrain, actual_seed) = tc_core::worldgen::generate(self.seed, &self.r#gen);
@@ -302,6 +311,7 @@ impl RunState {
             enemy_deck,
             enemy_items,
             veteran,
+            armies: None,
         };
         let (terrain, actual_seed) = setup_temp.terrain();
         let cartographer = relics.contains(&RelicEffect::Cartographer);

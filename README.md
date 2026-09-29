@@ -13,6 +13,8 @@ Specs live in [`specs/`](specs/README.md): [game design](specs/game-design.md), 
 | `specs/` | Specifications: game design, project plan, sprite specs |
 | `crates/core` (`tc_core`) | Rules, terrain, move generation, board generator. No Bevy. |
 | `crates/ai` (`tc_ai`) | Alpha-beta AI over `tc_core`, resumable in time slices. No Bevy. |
+| `crates/run` (`tc_run`) | Roguelike logic: run state, items, rewards, saves. No Bevy. |
+| `crates/world` (`tc_world`) | Overworld logic: map, day loop, encounters, auto-resolve. No Bevy. |
 | `crates/game` | Bevy 0.19 app: rendering, input, HUD (native + web) |
 | `tools/process_sprites.py` | Turns `assets/spritesheet.jpg` into `assets/atlas.png` + `atlas.ron` |
 | `web/` | Trunk page for the browser build |
