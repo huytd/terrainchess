@@ -493,6 +493,20 @@ fn fog_noise(x: f32, y: f32) -> f32 {
     lerp(top, bottom, smooth(fy))
 }
 
+fn fog_alpha(world: &tc_world::World, p: Vec2) -> f32 {
+    let broad = fog_noise(p.x * 0.32, p.y * 0.32);
+    let detail = fog_noise(p.x * 0.9, p.y * 0.9);
+    let distance = fog_distance(world, p);
+    let edge_wobble = broad * 0.28 + detail * 0.08;
+    if distance == 0.0 {
+        0.0
+    } else {
+        let t = ((distance + edge_wobble) / FOG_FADE_DISTANCE).clamp(0.0, 1.0);
+        let fade = t * t * (3.0 - 2.0 * t);
+        (fade * (0.94 + broad * 0.025 + detail * 0.01)).clamp(0.0, 0.97)
+    }
+}
+
 fn fog_overlay_mesh(world: &tc_world::World) -> Mesh {
     let width = world.map.size.0 as usize;
     let height = world.map.size.1 as usize;
@@ -514,17 +528,7 @@ fn fog_overlay_mesh(world: &tc_world::World) -> Mesh {
                 for col in 0..=FOG_SUBDIVISIONS {
                     let x = tile_x as f32 - 0.5 + col as f32 / FOG_SUBDIVISIONS as f32;
                     let y = tile_y as f32 - 0.5 + row as f32 / FOG_SUBDIVISIONS as f32;
-                    let broad = fog_noise(x * 0.32, y * 0.32);
-                    let detail = fog_noise(x * 0.9, y * 0.9);
-                    let distance = fog_distance(world, Vec2::new(x, y));
-                    let edge_wobble = broad * 0.28 + detail * 0.08;
-                    let alpha = if distance == 0.0 {
-                        0.0
-                    } else {
-                        let t = ((distance + edge_wobble) / FOG_FADE_DISTANCE).clamp(0.0, 1.0);
-                        let fade = t * t * (3.0 - 2.0 * t);
-                        (fade * (0.94 + broad * 0.025 + detail * 0.01)).clamp(0.0, 0.97)
-                    };
+                    let alpha = fog_alpha(world, Vec2::new(x, y));
 
                     positions.push([x, top, y]);
                     normals.push([0.0, 1.0, 0.0]);
@@ -628,11 +632,13 @@ fn update_overworld_map(
                     -1.0
                 };
                 if height > lo {
-                    let wall_tint = if revealed {
-                        Color::srgb(shade, shade, shade)
-                    } else {
-                        Color::srgb(0.012 * shade, 0.015 * shade, 0.022 * shade)
-                    };
+                    let mid = Vec2::new((a.x + b.x) * 0.5, (a.z + b.z) * 0.5);
+                    let alpha = fog_alpha(&c.world, mid);
+                    let wall_tint = Color::srgb(
+                        shade + (0.012 - shade) * alpha,
+                        shade + (0.015 - shade) * alpha,
+                        shade + (0.022 - shade) * alpha,
+                    );
                     wall_tinted(&mut solid, &atlas, a, b, lo, height, wall_tint);
                 }
             }
