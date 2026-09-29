@@ -1332,13 +1332,19 @@ fn sync_title_menu(
 fn handle_title_buttons(
     menu_q: Query<&Interaction, (Changed<Interaction>, With<MenuButton>)>,
     mut title_menu: ResMut<TitleMenu>,
-    campaign_q: Query<(&Interaction, &TitleCampaignButton), (Changed<Interaction>, With<Button>)>,
+    campaign_q: Query<(&Interaction, &TitleCampaignButton, &Children), (Changed<Interaction>, With<Button>)>,
+    mut text_q: Query<&mut Text>,
     mut campaign_writer: MessageWriter<StartCampaign>,
 ) {
-    for (interaction, btn) in &campaign_q {
-        if *interaction == Interaction::Pressed {
+    for (interaction, btn, children) in &campaign_q {
+        if *interaction == Interaction::Pressed && !title_menu.pending {
+            title_menu.pending = true;
             campaign_writer.write(StartCampaign(btn.0));
-            title_menu.open = false;
+            for child in children.iter() {
+                if let Ok(mut text) = text_q.get_mut(child) {
+                    text.0 = "Loading…".to_string();
+                }
+            }
         }
     }
 

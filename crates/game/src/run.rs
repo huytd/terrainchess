@@ -28,11 +28,12 @@ pub enum RunPhase {
 #[derive(Resource, Debug, Clone)]
 pub struct TitleMenu {
     pub open: bool,
+    pub pending: bool,
 }
 
 impl Default for TitleMenu {
     fn default() -> Self {
-        Self { open: true }
+        Self { open: true, pending: false }
     }
 }
 
@@ -125,6 +126,9 @@ fn handle_run_messages(
     mut run: ResMut<Run>,
     mut game_state: ResMut<GameState>,
     time: Res<Time>,
+    mut title_menu: ResMut<TitleMenu>,
+    button_q: Query<(&crate::hud::TitleCampaignButton, &Children)>,
+    mut text_q: Query<&mut Text>,
 ) {
     for pick in pick_events.read() {
         if *mode.get() == crate::game::Mode::Classic {
@@ -137,6 +141,17 @@ fn handle_run_messages(
             if let Some(world) = crate::save::load_campaign() {
                 commands.insert_resource(Campaign { world });
                 next_mode.set(crate::game::Mode::Overworld);
+            } else {
+                title_menu.pending = false;
+                for (btn, children) in &button_q {
+                    if btn.0 {
+                        for child in children.iter() {
+                            if let Ok(mut text) = text_q.get_mut(child) {
+                                text.0 = "Continue campaign".to_string();
+                            }
+                        }
+                    }
+                }
             }
         } else {
             let seed = time.elapsed().as_nanos() as u64 ^ time_seed();

@@ -150,7 +150,7 @@ impl Plugin for OverworldPlugin {
         app.init_resource::<OverworldState>()
             .init_resource::<OverworldMouseGesture>()
             .init_resource::<OverworldTouchGesture>()
-            .add_systems(OnEnter(Mode::Overworld), (hide_classic, setup_overworld))
+            .add_systems(OnEnter(Mode::Overworld), (hide_classic, setup_overworld).chain())
             .add_systems(
                 Update,
                 (
@@ -351,11 +351,13 @@ struct OverworldTouchGesture {
 }
 
 fn setup_overworld(
-    commands: Commands,
     campaign: Option<Res<Campaign>>,
     mut orbit: Query<&mut Orbit>,
     mut state: ResMut<OverworldState>,
+    mut title_menu: ResMut<TitleMenu>,
 ) {
+    title_menu.open = false;
+    title_menu.pending = false;
     state.dirty = true;
     state.path = None;
     state.moving = false;
