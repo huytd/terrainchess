@@ -42,6 +42,7 @@ terrainchess/
 │  │  └─ gen/              terrain generator + validator
 │  ├─ ai/                  alpha-beta search over `core`
 │  ├─ run/                 roguelike: run state, items, rewards, saves
+│  ├─ world/               overworld map, logic, day loop, encounters
 │  └─ game/                bevy app: rendering, input, UI, audio, VFX
 │     └─ src/main.rs       (native + wasm entry)
 └─ web/                    index.html, trunk config, loading screen

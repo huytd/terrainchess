@@ -22,7 +22,7 @@ To conquer Oakhaven, the lords must scour the countryside, rally scattered garri
 - **Fog of War:** Yes. The map is initially obscured. Heroes have a sight radius that reveals tiles and camps permanently as they move.
 
 ## 4. Camps
-Camps are scattered nodes guarded by neutral or local forces. Defeating a camp adds its boss to your permanent army. Camps do not respawn once cleared.
+Camps are scattered nodes guarded by neutral or local forces. A camp fields its captain (King), its boss and pawn guards; the battle is won by checkmate as usual. Defeating a camp adds its boss to your permanent army. Camps do not respawn once cleared.
 
 | Camp Type | Boss Reward | Guards | Rarity |
 |---|---|---|---|
@@ -97,3 +97,4 @@ The overworld state is saved at the start of each day and after every battle. Th
 - Should camps regenerate guards if left alone for too long?
 - How to ensure the battle board generation strictly reflects the map tile's intended difficulty/biome?
 - Camp guard neutral tint: How should camp guard sprites be tinted (e.g., desaturated stone or weathered grey) to visually distinguish neutral defenders from true rival faction armies on the battle board?
+- Fairness at 6+ heroes: the map is rotationally symmetric, but a square grid can't rotate it exactly by 60° or 36°, so regional path costs drift up to ~27 % apart (2–4 heroes stay within 20 %). Fix before enabling more than 4 heroes, e.g. with a hex grid or per-region cost balancing.

@@ -57,7 +57,8 @@ impl GameState {
     pub fn from_setup(setup: &MatchSetup) -> Self {
         let (terrain, seed) = setup.terrain();
         let size = setup.r#gen.size;
-        let mut game = Match::new(terrain, setup.rules.clone(), Position::start(size));
+        let pos = setup.position(size).expect("Failed to create position from MatchSetup");
+        let mut game = Match::new(terrain, setup.rules.clone(), pos);
         game.set_pickups(setup.pickups.clone());
         game.set_deck(setup.player, setup.player_deck.clone());
         game.set_deck(setup.player.opposite(), setup.enemy_deck.clone());
