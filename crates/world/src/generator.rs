@@ -275,16 +275,15 @@ pub fn generate_world(mut seed: u64, params: WorldParams) -> (WorldMap, Vec<Hero
 
                 if let Some(pos) = best_pos {
                     let guards = match kind {
-                        ObjectKind::Camp(k) => {
-                            let boss = match k {
-                                CampKind::Village => PieceKind::Pawn,
-                                CampKind::KnightCamp => PieceKind::Knight,
-                                CampKind::BishopCamp => PieceKind::Bishop,
-                                CampKind::Fortress => PieceKind::Rook,
-                                _ => PieceKind::Queen,
-                            };
-                            vec![PieceKind::King, boss, PieceKind::Pawn, PieceKind::Pawn]
-                        }
+                        ObjectKind::Camp(k) => match k {
+                            CampKind::Village => vec![PieceKind::King, PieceKind::Pawn, PieceKind::Pawn],
+                            CampKind::KnightCamp => vec![PieceKind::King, PieceKind::Knight],
+                            CampKind::BishopCamp => vec![PieceKind::King, PieceKind::Bishop],
+                            CampKind::Fortress => vec![PieceKind::King, PieceKind::Rook, PieceKind::Pawn],
+                            CampKind::Citadel => {
+                                vec![PieceKind::King, PieceKind::Queen, PieceKind::Pawn, PieceKind::Pawn]
+                            }
+                        },
                         _ => vec![],
                     };
 

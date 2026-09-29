@@ -139,12 +139,8 @@ impl World {
         }
     }
 
-    pub fn guards_for(&self, guards: &[PieceKind], tier: u8) -> Vec<PieceKind> {
+    pub fn guards_for(&self, guards: &[PieceKind], _tier: u8) -> Vec<PieceKind> {
         let mut scaled = guards.to_vec();
-        // Base additions from tier
-        for _ in 1..tier {
-            scaled.push(PieceKind::Pawn);
-        }
 
         let extra = (self.day as f32 * self.params.guard_scaling_rate) as usize;
         for i in 0..extra {

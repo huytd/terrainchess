@@ -22,17 +22,17 @@ To conquer Oakhaven, the lords must scour the countryside, rally scattered garri
 - **Fog of War:** Yes. The map is initially obscured. Heroes have a sight radius that reveals tiles and camps permanently as they move.
 
 ## 4. Camps
-Camps are scattered nodes guarded by neutral or local forces. A camp fields its captain (King), its boss and pawn guards; the battle is won by checkmate as usual. Defeating a camp adds its boss to your permanent army. Camps do not respawn once cleared.
+Camps are scattered nodes guarded by neutral or local forces. A camp fields its captain (King), its boss and optional pawn guards; the battle is won by checkmate as usual. Defeating a camp adds its boss to your permanent army. Camps do not respawn once cleared.
 
 | Camp Type | Boss Reward | Guards | Rarity |
 |---|---|---|---|
-| **Village** | Pawn | 2-4 Pawns | Common |
-| **Knight Camp** | Knight | 1 Knight, Pawns | Uncommon |
-| **Bishop Camp** | Bishop | 1 Bishop, Pawns | Uncommon |
-| **Fortress** | Rook | 1 Rook, 1 Knight/Bishop, Pawns | Rare |
-| **Citadel** | Queen | 1 Queen, 1 Rook, Pawns | Epic (1 per map) |
+| **Village** | Pawn | Captain, 2 Pawns | Common |
+| **Knight Camp** | Knight | Captain, 1 Knight | Uncommon |
+| **Bishop Camp** | Bishop | Captain, 1 Bishop | Uncommon |
+| **Fortress** | Rook | Captain, 1 Rook, 1 Pawn | Rare |
+| **Citadel** | Queen | Captain, 1 Queen, 2 Pawns | Epic (1 per map) |
 
-*Note: Guards scale with map progress (day count / camp tier). A complete team is 16 pieces (K, Q, 2R, 2B, 2N, 8P).*
+*Note: Guards scale with day count. A complete team is 16 pieces (K, Q, 2R, 2B, 2N, 8P).*
 
 ### Map objects
 Scattered nodes and pickups that do not trigger battles:

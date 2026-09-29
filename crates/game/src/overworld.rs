@@ -143,6 +143,55 @@ fn path_marker_rotation(from: MapPos, current: MapPos, to: MapPos) -> Quat {
     Quat::from_rotation_y(yaw)
 }
 
+fn format_defenders(guards: &[PieceKind]) -> String {
+    let count_of = |kind: PieceKind| guards.iter().filter(|&&p| p == kind).count();
+    let mut parts = Vec::new();
+
+    let kings = count_of(PieceKind::King);
+    if kings == 1 {
+        parts.push("Captain".to_string());
+    } else if kings > 1 {
+        parts.push(format!("{kings} Captains"));
+    }
+
+    let queens = count_of(PieceKind::Queen);
+    if queens == 1 {
+        parts.push("Queen".to_string());
+    } else if queens > 1 {
+        parts.push(format!("{queens} Queens"));
+    }
+
+    let rooks = count_of(PieceKind::Rook);
+    if rooks == 1 {
+        parts.push("Rook".to_string());
+    } else if rooks > 1 {
+        parts.push(format!("{rooks} Rooks"));
+    }
+
+    let bishops = count_of(PieceKind::Bishop);
+    if bishops == 1 {
+        parts.push("Bishop".to_string());
+    } else if bishops > 1 {
+        parts.push(format!("{bishops} Bishops"));
+    }
+
+    let knights = count_of(PieceKind::Knight);
+    if knights == 1 {
+        parts.push("Knight".to_string());
+    } else if knights > 1 {
+        parts.push(format!("{knights} Knights"));
+    }
+
+    let pawns = count_of(PieceKind::Pawn);
+    if pawns == 1 {
+        parts.push("1 Pawn".to_string());
+    } else if pawns > 1 {
+        parts.push(format!("{pawns} Pawns"));
+    }
+
+    if parts.is_empty() { "None".to_string() } else { parts.join(", ") }
+}
+
 pub struct OverworldPlugin;
 
 impl Plugin for OverworldPlugin {
@@ -1314,18 +1363,16 @@ fn update_overworld_hud(
             {
                 let (title, details, can_back) = match encounter {
                     Encounter::Camp(obj) => {
-                        let (camp_name, defenders) = match &obj.kind {
-                            ObjectKind::Camp(CampKind::Village) => ("Village", "Captain, 3 Pawns"),
-                            ObjectKind::Camp(CampKind::KnightCamp) => {
-                                ("Knight Camp", "Captain, Knight, 3 Pawns")
-                            }
-                            ObjectKind::Camp(CampKind::BishopCamp) => {
-                                ("Bishop Camp", "Captain, Bishop, 3 Pawns")
-                            }
-                            ObjectKind::Camp(CampKind::Fortress) => ("Fortress", "Captain, Rook, 3 Pawns"),
-                            ObjectKind::Camp(CampKind::Citadel) => ("Citadel", "Captain, Queen, 3 Pawns"),
-                            _ => ("Camp", "Unknown"),
+                        let camp_name = match &obj.kind {
+                            ObjectKind::Camp(CampKind::Village) => "Village",
+                            ObjectKind::Camp(CampKind::KnightCamp) => "Knight Camp",
+                            ObjectKind::Camp(CampKind::BishopCamp) => "Bishop Camp",
+                            ObjectKind::Camp(CampKind::Fortress) => "Fortress",
+                            ObjectKind::Camp(CampKind::Citadel) => "Citadel",
+                            _ => "Camp",
                         };
+                        let guards = c.world.guards_for(&obj.guards, obj.tier);
+                        let defenders = format_defenders(&guards);
                         (format!("Attack {camp_name}?"), format!("Defenders: {defenders}"), true)
                     }
                     Encounter::Hero(rival_id) => {
