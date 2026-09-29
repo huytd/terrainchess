@@ -248,7 +248,7 @@ fn castling_needs_flat_clear_squares() {
 }
 
 #[test]
-fn pawn_clears_rock_ahead_and_diagonally_ahead() {
+fn pawn_clears_rock_diagonally_ahead_only() {
     let f = Fixture::new("7k/8/8/8/8/8/4P3/7K w - - 0 1")
         .obstacle(&["e3"], Obstacle::Rock)
         .obstacle(&["d3"], Obstacle::Rock)
@@ -259,10 +259,10 @@ fn pawn_clears_rock_ahead_and_diagonally_ahead() {
         .filter(|m| m.from == sq("e2") && m.kind == MoveKind::Clear)
         .map(|m| m.uci())
         .collect();
-    assert!(clears.contains(&"e2e3x".to_string()));
-    assert!(clears.contains(&"e2d3x".to_string()));
-    assert!(clears.contains(&"e2f3x".to_string()));
-    assert_eq!(clears.len(), 3);
+    assert!(!clears.contains(&"e2e3x".to_string()), "straight-ahead obstacle gives no Clear move");
+    assert!(clears.contains(&"e2d3x".to_string()), "left diagonal obstacle gives Clear move");
+    assert!(clears.contains(&"e2f3x".to_string()), "right diagonal obstacle gives Clear move");
+    assert_eq!(clears.len(), 2);
 }
 
 #[test]
@@ -288,34 +288,34 @@ fn non_pawns_cannot_clear() {
 }
 
 #[test]
-fn clearing_makes_square_walkable_for_following_move() {
+fn pawn_clear_sacrifices_pawn_and_removes_obstacle() {
     let mut terrain = Terrain::flat(8);
-    terrain.get_mut(sq("e3")).feature = Feature::Obstacle(Obstacle::Rock);
+    terrain.get_mut(sq("d3")).feature = Feature::Obstacle(Obstacle::Rock);
     let rules = Rules::standard(8);
-    let pos = Position::from_fen("7k/8/8/8/8/8/4P3/7K w - - 0 1").unwrap();
+    let pos = Position::from_fen("7k/8/8/8/8/8/4P3/4R2K w - - 0 1").unwrap();
     let mut m = Match::new(terrain, rules, pos);
 
-    // Obstacle is present, pawn cannot move to e3
-    assert!(
-        !m.legal_moves()
-            .iter()
-            .any(|mv| mv.from == sq("e2") && mv.to == sq("e3") && mv.kind == MoveKind::Normal)
-    );
+    // Obstacle is present on d3
+    assert!(!m.legal_moves().iter().any(|mv| mv.to == sq("d3") && mv.kind == MoveKind::Normal));
 
-    // Clear the rock
-    let clear_move = Move::new(sq("e2"), sq("e3"), MoveKind::Clear);
-    assert_eq!(clear_move.uci(), "e2e3x");
+    // Clear the rock by sacrificing pawn at e2
+    let clear_move = Move::new(sq("e2"), sq("d3"), MoveKind::Clear);
+    assert_eq!(clear_move.uci(), "e2d3x");
     m.play(clear_move).unwrap();
-    assert_eq!(m.terrain.get(sq("e3")).feature, Feature::None);
+
+    // After playing a Clear, the pawn square is empty and the obstacle is gone
+    assert_eq!(m.pos.get(sq("e2")), None);
+    assert_eq!(m.terrain.get(sq("d3")).feature, Feature::None);
+    assert_eq!(m.pos.halfmove_clock, 0);
 
     // Black makes a king move
     m.play(Move::new(sq("h8"), sq("g8"), MoveKind::Normal)).unwrap();
 
-    // Now e3 is walkable for the pawn
-    let walk_move = Move::new(sq("e2"), sq("e3"), MoveKind::Normal);
-    assert!(m.legal_moves().contains(&walk_move));
-    m.play(walk_move).unwrap();
-    assert_eq!(m.pos.get(sq("e3")).map(|p| p.kind), Some(PieceKind::Pawn));
+    // Now e1 rook can walk to e2 (pawn square is empty)
+    let rook_move = Move::new(sq("e1"), sq("e2"), MoveKind::Normal);
+    assert!(m.legal_moves().contains(&rook_move));
+    m.play(rook_move).unwrap();
+    assert_eq!(m.pos.get(sq("e2")).map(|p| p.kind), Some(PieceKind::Rook));
 }
 
 #[test]
@@ -328,6 +328,24 @@ fn clearing_is_illegal_when_it_leaves_king_in_check() {
     let f = Fixture::new("7k/8/8/r7/8/8/3P4/4K3 w - - 0 1").obstacle(&["e3"], Obstacle::Rock);
     let moves = f.ctx().legal_moves(&f.pos);
     assert!(moves.contains(&clear_e3), "clearing e3 is legal when not exposing king to check");
+}
+
+#[test]
+fn pinned_pawn_cannot_clear_if_that_exposes_king() {
+    // White king at e1, white pawn at e2, black rook at e8.
+    // Obstacle at d3. Pawn is pinned on the e-file.
+    let f = Fixture::new("4r2k/8/8/8/8/8/4P3/4K3 w - - 0 1").obstacle(&["d3"], Obstacle::Rock);
+    let moves = f.ctx().legal_moves(&f.pos);
+    let clear_d3 = Move::new(sq("e2"), sq("d3"), MoveKind::Clear);
+    assert!(
+        !moves.contains(&clear_d3),
+        "pinned pawn cannot sacrifice itself to clear if exposing king to check"
+    );
+
+    // If rook is on a different file, clearing d3 is legal
+    let f = Fixture::new("r6k/8/8/8/8/8/4P3/4K3 w - - 0 1").obstacle(&["d3"], Obstacle::Rock);
+    let moves = f.ctx().legal_moves(&f.pos);
+    assert!(moves.contains(&clear_d3), "unpinned pawn can sacrifice itself to clear");
 }
 
 #[test]

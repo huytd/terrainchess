@@ -36,7 +36,7 @@ impl Move {
         Move { from, to, kind, promotion: None }
     }
 
-    /// Long algebraic form, e.g. `e2e4`, `e7e8q`, or `e2e3x` for clear blocker.
+    /// Long algebraic form, e.g. `e2e4`, `e7e8q`, or `e2d3x` for clear blocker.
     pub fn uci(&self) -> String {
         if self.kind == MoveKind::Clear {
             return format!("{}{}x", self.from.name(), self.to.name());
@@ -269,8 +269,8 @@ impl Ctx<'_> {
             }
         };
 
-        // Clear blocker: destroy an obstacle on any of the three forward squares.
-        for dx in [-1, 0, 1] {
+        // Clear blocker: destroy an obstacle on either forward diagonal square.
+        for dx in [-1, 1] {
             if let Some(to) = from.offset(dx, fwd, size)
                 && matches!(self.terrain.get(to).feature, Feature::Obstacle(_))
             {

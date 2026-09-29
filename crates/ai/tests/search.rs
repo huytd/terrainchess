@@ -87,20 +87,21 @@ fn no_moves_means_no_result() {
 #[test]
 fn ai_clears_blocker_to_avoid_stalemate() {
     let mut terrain = Terrain::flat(8);
-    let rock_sq = Sq::parse("e3").unwrap();
+    let rock_sq = Sq::parse("d3").unwrap();
     terrain.get_mut(rock_sq).feature = tc_core::Feature::Obstacle(tc_core::Obstacle::Rock);
+    terrain.get_mut(Sq::parse("e3").unwrap()).height = 2;
     // White king at h1, black king at f2, black rook at g2.
-    // White pawn at e2 with rock at e3.
-    // White king has no legal moves. Pawn cannot push because e3 is blocked.
-    // Clearing the rock at e3 is the ONLY legal move that avoids stalemate.
+    // White pawn at e2 with cliff at e3 and rock at d3.
+    // White king has no legal moves. Pawn cannot push because e3 is a cliff.
+    // Clearing the rock at d3 is the ONLY legal move that avoids stalemate.
     let pos = Position::from_fen("8/8/8/8/8/8/4Pkr1/7K w - - 0 1").unwrap();
     let game = Match::new(terrain, Rules::standard(8), pos);
 
     let legal = game.legal_moves();
     assert_eq!(legal.len(), 1);
-    assert_eq!(legal[0].uci(), "e2e3x");
+    assert_eq!(legal[0].uci(), "e2d3x");
 
     let (mv, _) = search_blocking(&game, Limits::depth(3, 5000.0), &clock());
-    assert_eq!(mv.map(|m| m.uci()), Some("e2e3x".to_string()));
+    assert_eq!(mv.map(|m| m.uci()), Some("e2d3x".to_string()));
     assert!(game.legal_moves().contains(&mv.unwrap()));
 }

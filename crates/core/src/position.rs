@@ -154,11 +154,12 @@ impl Position {
 
         if mv.kind == MoveKind::Clear {
             self.en_passant = None;
+            self.set(mv.from, None);
             if !self.cleared.contains(&mv.to) {
                 self.cleared.push(mv.to);
                 self.cleared.sort();
             }
-            self.halfmove_clock += 1;
+            self.halfmove_clock = 0;
             if side == Side::Black {
                 self.fullmove += 1;
             }

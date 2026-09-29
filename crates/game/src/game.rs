@@ -14,7 +14,7 @@ pub enum GameEvent {
     Check { king: Sq },
     Pickup { at: Sq },
     Selected { sq: Sq },
-    Cleared { at: Sq },
+    Cleared { at: Sq, pawn_at: Sq, side: Side },
     Discarded { side: Side },
     HandDrawn { side: Side },
 }
@@ -364,7 +364,7 @@ impl GameState {
             }
 
             if mv.kind == tc_core::MoveKind::Clear {
-                self.events.push(GameEvent::Cleared { at: mv.to });
+                self.events.push(GameEvent::Cleared { at: mv.to, pawn_at: mv.from, side: moving_side });
             } else {
                 if let Some((at, by_side)) = capture_info {
                     self.events.push(GameEvent::Captured { at, by_side });

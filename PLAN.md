@@ -85,7 +85,7 @@ Tile {
 | **Deep water** | Impassable unless an item or spell allows it (bridge, freeze, boat). |
 | **Cave entrance** | A piece standing on an entrance may use its move to go to the linked entrance, if that tile is empty or holds an enemy it can capture. It is one tunnel hop regardless of piece type. |
 | **High ground** | Captures only go level or downhill: a piece can't capture an enemy standing on a higher tile (this includes en passant, cave hops and check). It may still climb onto a higher tile that is empty. |
-| **Clear blocker** | A pawn may use its move to destroy an obstacle on any of its three forward squares. The pawn does not move; the obstacle is permanently removed. |
+| **Clear blocker** | A pawn may sacrifice itself to destroy an obstacle on one of its two forward diagonal squares (its attack squares). The pawn is removed and the obstacle is permanently destroyed. |
 
 Castling needs flat, clear squares between king and rook. En passant stays as normal.
 
