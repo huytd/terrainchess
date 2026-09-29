@@ -24,7 +24,7 @@ use crate::save;
 
 /// Camera distance from the point it looks at, the zoom.
 const MIN_DISTANCE: f32 = 3.0;
-const MAX_DISTANCE: f32 = 150.0;
+const MAX_DISTANCE: f32 = 450.0;
 /// Vertical field of view: enough for depth without distorting the board edges.
 const FOV: f32 = PI / 6.0;
 /// Screen px kept clear of the board for the status panel (top) and toolbar (bottom).
@@ -101,12 +101,12 @@ pub struct MainCamera;
 /// Where the camera looks and from which side. The camera circles `focus`; `yaw` eases
 /// toward `target_yaw` so turns animate.
 #[derive(Resource)]
-struct Orbit {
-    focus: Vec3,
-    yaw: f32,
-    target_yaw: f32,
-    pitch: f32,
-    distance: f32,
+pub struct Orbit {
+    pub focus: Vec3,
+    pub yaw: f32,
+    pub target_yaw: f32,
+    pub pitch: f32,
+    pub distance: f32,
     /// Window height in logical px, for converting drags to world distances.
     view_h: f32,
 }
@@ -138,7 +138,7 @@ impl Orbit {
     }
 
     /// Move the view so the board follows a drag of `delta` screen px.
-    fn pan(&mut self, delta: Vec2) {
+    pub fn pan(&mut self, delta: Vec2) {
         let (right, forward) = self.ground_axes();
         let k = self.px_per_unit();
         self.focus -= right * delta.x / k;
@@ -628,8 +628,11 @@ impl Plugin for InputPlugin {
             .add_systems(
                 Update,
                 (
-                    (hotkeys, apply_actions, click_board, touch_gestures, mouse_camera)
-                        .run_if(in_state(AppState::Ready)),
+                    (hotkeys, apply_actions, click_board, touch_gestures, mouse_camera).run_if(
+                        in_state(AppState::Ready)
+                            .and_then(not(in_state(crate::game::Mode::Overworld)))
+                            .and_then(not(in_state(crate::game::Mode::Deploy))),
+                    ),
                     fit_camera,
                     apply_orbit,
                 )
