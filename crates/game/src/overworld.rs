@@ -16,7 +16,7 @@ use bevy::prelude::*;
 use crate::atlas::Atlas;
 use crate::board_view::{
     Look, Overlay, PX, PickupSprite, PieceShadow, PieceSilhouette, PieceSprite, Quads, TerrainPart,
-    ThreatBadge, card_mesh, flat, full_uv, hash, rotate_uv, square_top,
+    ThreatBadge, card_mesh, flat, full_uv, hash, rotate_uv, square_top, wall_tinted,
 };
 use crate::game::{GameState, Mode};
 use crate::hud::{ButtonDisabled, ButtonVisuals, INK_WOOD, button_slicer, panel_slicer};
@@ -557,6 +557,35 @@ fn update_overworld_map(
                 water.add_tinted(corners, uv, tint);
             } else {
                 solid.add_tinted(corners, uv, tint);
+            }
+
+            // Side walls where neighbouring tiles are lower or on the map border.
+            let (tx, tz) = (top.x, top.z);
+            for ((dx, dy), a, b, shade) in [
+                ((0i32, 1i32), Vec3::new(tx - 0.5, 0.0, tz + 0.5), Vec3::new(tx + 0.5, 0.0, tz + 0.5), 0.588),
+                ((1, 0), Vec3::new(tx + 0.5, 0.0, tz + 0.5), Vec3::new(tx + 0.5, 0.0, tz - 0.5), 0.504),
+                ((0, -1), Vec3::new(tx + 0.5, 0.0, tz - 0.5), Vec3::new(tx - 0.5, 0.0, tz - 0.5), 0.476),
+                ((-1, 0), Vec3::new(tx - 0.5, 0.0, tz - 0.5), Vec3::new(tx - 0.5, 0.0, tz + 0.5), 0.527),
+            ] {
+                let nx = x as i32 + dx;
+                let ny = y as i32 + dy;
+                let lo = if nx >= 0
+                    && ny >= 0
+                    && (nx as usize) < size.0 as usize
+                    && (ny as usize) < size.1 as usize
+                {
+                    tile_height(map.get(MapPos::new(nx as u16, ny as u16)).unwrap().biome)
+                } else {
+                    -1.0
+                };
+                if height > lo {
+                    let wall_tint = if revealed {
+                        Color::srgb(shade, shade, shade)
+                    } else {
+                        Color::srgb(0.012 * shade, 0.015 * shade, 0.022 * shade)
+                    };
+                    wall_tinted(&mut solid, &atlas, a, b, lo, height, wall_tint);
+                }
             }
 
             // Props
