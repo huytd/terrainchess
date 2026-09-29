@@ -1,6 +1,5 @@
 //! Island surroundings for the 3D board: island ring, calm sea, props, sky dome, and fog.
 
-use crate::game::Mode;
 use bevy::pbr::{DistanceFog, FogFalloff};
 use bevy::prelude::*;
 use bevy::render::mesh::VertexAttributeValues;
@@ -18,7 +17,7 @@ pub(crate) const SEA_Y: f32 = -0.55;
 
 /// Tag for entities rebuilt when the board seed or size changes.
 #[derive(Component)]
-pub struct SceneryPart;
+pub(crate) struct SceneryPart;
 
 /// Marker for the sky dome sphere and horizon cylinders centred on the board.
 #[derive(Component)]
@@ -38,7 +37,7 @@ struct CloudCard {
 
 /// Circling bird with flap animation.
 #[derive(Component)]
-pub struct Bird {
+struct Bird {
     radius: f32,
     height: f32,
     angular_speed: f32,
@@ -176,7 +175,6 @@ fn setup_sky(
     let center = board_center(state.size);
     commands.spawn((
         SkyDome,
-        SceneryPart,
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(material),
         Transform::from_translation(center),
@@ -197,7 +195,6 @@ fn setup_sky(
         });
         commands.spawn((
             SkyDome,
-            SceneryPart,
             Mesh3d(meshes.add(cylinder)),
             MeshMaterial3d(band_material),
             Transform::from_translation(center),
@@ -244,7 +241,6 @@ fn setup_sky(
         );
 
         commands.spawn((
-            SceneryPart,
             CloudCard { initial_angle, radius, height },
             Mesh3d(meshes.add(q.mesh())),
             MeshMaterial3d(cloud_material.clone()),
@@ -692,7 +688,7 @@ impl Plugin for SceneryPlugin {
         app.add_systems(Startup, setup_sky).add_systems(
             Update,
             (
-                rebuild_scenery.run_if(not(in_state(Mode::Overworld))),
+                rebuild_scenery,
                 animate_sea,
                 setup_birds,
                 update_birds,

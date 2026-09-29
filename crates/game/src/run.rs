@@ -1,11 +1,6 @@
 //! Roguelike run flow, match progression, and drafting (specs/game-design.md §4).
 
 use bevy::prelude::*;
-
-#[derive(Resource)]
-pub struct Campaign {
-    pub world: tc_world::World,
-}
 use tc_core::{Outcome, Side};
 use tc_run::RunState;
 
@@ -28,12 +23,11 @@ pub enum RunPhase {
 #[derive(Resource, Debug, Clone)]
 pub struct TitleMenu {
     pub open: bool,
-    pub pending: bool,
 }
 
 impl Default for TitleMenu {
     fn default() -> Self {
-        Self { open: true, pending: false }
+        Self { open: true }
     }
 }
 
@@ -48,8 +42,9 @@ pub struct Run {
 #[derive(Message, Clone, Debug)]
 pub struct PickCard(pub String);
 
+/// Message to start a new run with the given board size.
 #[derive(Message, Clone, Copy, Debug)]
-pub struct StartCampaign(pub bool); // true for continue, false for new
+pub struct StartRun(pub u8);
 
 /// Derive a seed from system time / clock without panicking on WASM.
 pub fn time_seed() -> u64 {
@@ -66,6 +61,15 @@ pub fn time_seed() -> u64 {
         let t = bevy::platform::time::Instant::now();
         (t.elapsed().as_nanos() as u64) ^ 0x9E37_79B9_7F4A_7C15
     }
+}
+
+/// Starts a new run of the specified board size, building the match and saving.
+pub fn start_new_run(size: u8, run: &mut Run, game_state: &mut GameState, seed: u64) {
+    run.state = RunState::new(seed, size);
+    run.phase = RunPhase::Playing;
+    let setup = run.state.match_setup();
+    *game_state = GameState::from_setup(&setup);
+    save::store(&run.state);
 }
 
 /// Picks a drafted item, progressing through bonus drafts or starting the next floor.
@@ -88,14 +92,7 @@ pub fn apply_pick(item_id: &str, run: &mut Run, game_state: &mut GameState) {
     }
 }
 
-fn check_run_match_outcome(
-    mut run: ResMut<Run>,
-    game_state: Res<GameState>,
-    mode: Res<State<crate::game::Mode>>,
-) {
-    if *mode.get() != crate::game::Mode::Classic {
-        return;
-    }
+fn check_run_match_outcome(mut run: ResMut<Run>, game_state: Res<GameState>) {
     if run.phase != RunPhase::Playing {
         return;
     }
@@ -116,59 +113,38 @@ fn check_run_match_outcome(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
 fn handle_run_messages(
-    mut commands: Commands,
     mut pick_events: MessageReader<PickCard>,
-    mut campaign_events: MessageReader<StartCampaign>,
-    mut next_mode: ResMut<NextState<crate::game::Mode>>,
-    mode: Res<State<crate::game::Mode>>,
+    mut start_events: MessageReader<StartRun>,
     mut run: ResMut<Run>,
     mut game_state: ResMut<GameState>,
     time: Res<Time>,
-    mut title_menu: ResMut<TitleMenu>,
-    button_q: Query<(&crate::hud::TitleCampaignButton, &Children)>,
-    mut text_q: Query<&mut Text>,
 ) {
     for pick in pick_events.read() {
-        if *mode.get() == crate::game::Mode::Classic {
-            apply_pick(&pick.0, &mut run, &mut game_state);
-        }
+        apply_pick(&pick.0, &mut run, &mut game_state);
     }
 
-    for campaign in campaign_events.read() {
-        if campaign.0 {
-            if let Some(world) = crate::save::load_campaign() {
-                commands.insert_resource(Campaign { world });
-                next_mode.set(crate::game::Mode::Overworld);
-            } else {
-                title_menu.pending = false;
-                for (btn, children) in &button_q {
-                    if btn.0 {
-                        for child in children.iter() {
-                            if let Ok(mut text) = text_q.get_mut(child) {
-                                text.0 = "Continue campaign".to_string();
-                            }
-                        }
-                    }
-                }
-            }
-        } else {
-            let seed = time.elapsed().as_nanos() as u64 ^ time_seed();
-            let mut world = tc_world::World::new(seed, tc_world::WorldParams::default());
-            world.heroes[0].name = "Ashen Sun".to_string();
-            world.heroes[1].name = "Hollow Crown".to_string();
-            crate::save::store_campaign(&world);
-            commands.insert_resource(Campaign { world });
-            next_mode.set(crate::game::Mode::Overworld);
-        }
+    for start in start_events.read() {
+        let seed = time.elapsed().as_nanos() as u64 ^ time_seed();
+        start_new_run(start.0, &mut run, &mut game_state, seed);
     }
 }
 
 fn initial_run_and_game() -> (Run, GameState) {
-    let run_state = RunState::new(time_seed(), 8);
+    let saved = save::load();
+    let has_save = saved.is_some();
+    let run_state = match saved {
+        Some(state) => state,
+        None => {
+            let seed = time_seed();
+            RunState::new(seed, 8)
+        }
+    };
     let setup = run_state.match_setup();
     let game_state = GameState::from_setup(&setup);
+    if has_save {
+        save::store(&run_state);
+    }
     let run = Run { state: run_state, phase: RunPhase::Playing };
     (run, game_state)
 }
@@ -182,12 +158,10 @@ impl Plugin for RunPlugin {
             .insert_resource(game_state)
             .init_resource::<TitleMenu>()
             .add_message::<PickCard>()
-            .add_message::<StartCampaign>()
+            .add_message::<StartRun>()
             .add_systems(
                 Update,
-                (check_run_match_outcome, handle_run_messages).chain().run_if(
-                    in_state(AppState::Ready).and_then(not(in_state(crate::game::Mode::OverworldBattle))),
-                ),
+                (check_run_match_outcome, handle_run_messages).chain().run_if(in_state(AppState::Ready)),
             );
     }
 }

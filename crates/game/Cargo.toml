@@ -7,7 +7,6 @@ edition.workspace = true
 tc_core.workspace = true
 tc_ai.workspace = true
 tc_run.workspace = true
-tc_world.workspace = true
 bevy.workspace = true
 serde.workspace = true
 ron.workspace = true

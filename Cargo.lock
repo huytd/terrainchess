@@ -4784,18 +4784,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "tc_world"
-version = "0.1.0"
-dependencies = [
- "noise",
- "ron",
- "serde",
- "tc_ai",
- "tc_core",
- "tc_run",
-]
-
-[[package]]
 name = "termcolor"
 version = "1.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4815,7 +4803,6 @@ dependencies = [
  "tc_ai",
  "tc_core",
  "tc_run",
- "tc_world",
  "wasm-bindgen",
  "web-sys",
 ]
