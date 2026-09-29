@@ -5,6 +5,15 @@ use tc_core::worldgen::{GenParams, generate};
 use tc_core::{Match, Move, Outcome, Position, Rules, Side, SpellCast, SpellId, Sq};
 use tc_run::MatchSetup;
 
+#[derive(States, Default, Clone, Copy, Eq, PartialEq, Hash, Debug)]
+pub enum Mode {
+    #[default]
+    Classic,
+    Overworld,
+    OverworldBattle,
+    Deploy,
+}
+
 #[derive(Clone, Debug, PartialEq)]
 pub enum GameEvent {
     Moved { to: Sq, landed_height_change: bool },

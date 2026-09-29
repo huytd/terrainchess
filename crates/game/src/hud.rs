@@ -7,7 +7,7 @@ use tc_run::ItemKind;
 use crate::atlas::Atlas;
 use crate::game::GameState;
 use crate::loading::AppState;
-use crate::run::{PickCard, Run, RunPhase, StartRun, TitleMenu};
+use crate::run::{PickCard, Run, RunPhase, StartCampaign, StartRun, TitleMenu};
 use crate::save;
 
 /// Ink colour on light wood.
@@ -15,7 +15,7 @@ pub const INK_WOOD: Color = Color::srgb_u8(0xF7, 0xED, 0xD0);
 /// Ink colour on aged parchment.
 pub const INK_PARCHMENT: Color = Color::srgb_u8(0x3B, 0x2F, 0x2A);
 
-fn button_slicer() -> NodeImageMode {
+pub fn button_slicer() -> NodeImageMode {
     NodeImageMode::Sliced(TextureSlicer {
         border: BorderRect::all(6.0),
         center_scale_mode: SliceScaleMode::Stretch,
@@ -24,7 +24,7 @@ fn button_slicer() -> NodeImageMode {
     })
 }
 
-fn panel_slicer() -> NodeImageMode {
+pub fn panel_slicer() -> NodeImageMode {
     NodeImageMode::Sliced(TextureSlicer {
         border: BorderRect::all(8.0),
         center_scale_mode: SliceScaleMode::Stretch,
@@ -102,6 +102,9 @@ struct TitleContinueButton;
 struct TitleNewRunButton(u8);
 
 #[derive(Component)]
+pub struct TitleCampaignButton(pub bool);
+
+#[derive(Component)]
 struct DraftOverlay;
 
 #[derive(Component)]
@@ -138,7 +141,7 @@ struct HandCardHighlight(usize);
 struct DiscardButton;
 
 #[derive(Component, Clone, Copy)]
-struct ButtonVisuals {
+pub struct ButtonVisuals {
     normal: &'static str,
     hover: &'static str,
     pressed: &'static str,
@@ -299,6 +302,8 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
 #[allow(clippy::too_many_arguments)]
 fn update_floor_badge(
     run: Res<Run>,
+    mode: Res<State<crate::game::Mode>>,
+    title_menu: Res<TitleMenu>,
     state: Res<GameState>,
     atlas: Res<Atlas>,
     mut q_badge: Query<(&mut ImageNode, &mut Node), With<FloorBadge>>,
@@ -317,6 +322,8 @@ fn update_floor_badge(
     let badge_name = if is_boss { "badge_boss" } else { "badge_floor" };
 
     for (mut img, mut node) in &mut q_badge {
+        let show = !title_menu.open && *mode.get() == crate::game::Mode::Classic;
+        node.display = if show { Display::Flex } else { Display::None };
         let r = Some(atlas.rect(badge_name));
         if img.rect != r {
             img.rect = r;
@@ -756,6 +763,7 @@ fn sync_hand_bar(
     mut commands: Commands,
     state: Res<GameState>,
     run: Res<Run>,
+    mode: Res<State<crate::game::Mode>>,
     title_menu: Res<TitleMenu>,
     atlas: Res<Atlas>,
     window: Query<&Window, With<PrimaryWindow>>,
@@ -769,7 +777,8 @@ fn sync_hand_bar(
         && run.phase == RunPhase::Playing
         && !state.ai_to_move()
         && state.outcome.is_none()
-        && side == Side::White;
+        && side == Side::White
+        && (*mode.get() == crate::game::Mode::Classic || *mode.get() == crate::game::Mode::OverworldBattle);
 
     let hand = state.game.hand(side);
     let hand_cards = hand.hand;
@@ -1235,6 +1244,7 @@ fn sync_title_menu(
     }
 
     let has_save = save::has_save();
+    let has_campaign_save = save::has_campaign_save();
 
     commands
         .spawn((
@@ -1308,6 +1318,63 @@ fn sync_title_menu(
                             ..default()
                         })
                         .with_children(|col| {
+                            if has_campaign_save {
+                                col.spawn((
+                                    Button,
+                                    Interaction::default(),
+                                    TitleCampaignButton(true),
+                                    ButtonVisuals::GOLD,
+                                    Node {
+                                        min_width: Val::Px(280.0),
+                                        width: Val::Px(280.0),
+                                        height: Val::Px(56.0),
+                                        justify_content: JustifyContent::Center,
+                                        align_items: AlignItems::Center,
+                                        padding: UiRect::horizontal(Val::Px(12.0)),
+                                        ..default()
+                                    },
+                                    ImageNode {
+                                        image: atlas.image.clone(),
+                                        rect: Some(atlas.rect("btn_gold")),
+                                        image_mode: button_slicer(),
+                                        ..default()
+                                    },
+                                ))
+                                .with_child((
+                                    Text::new("Continue campaign"),
+                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                    TextColor(INK_WOOD),
+                                    TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
+                                ));
+                            }
+
+                            col.spawn((
+                                Button,
+                                Interaction::default(),
+                                TitleCampaignButton(false),
+                                ButtonVisuals::WOOD,
+                                Node {
+                                    min_width: Val::Px(280.0),
+                                    width: Val::Px(280.0),
+                                    height: Val::Px(56.0),
+                                    justify_content: JustifyContent::Center,
+                                    align_items: AlignItems::Center,
+                                    ..default()
+                                },
+                                ImageNode {
+                                    image: atlas.image.clone(),
+                                    rect: Some(atlas.rect("btn_wood")),
+                                    image_mode: button_slicer(),
+                                    ..default()
+                                },
+                            ))
+                            .with_child((
+                                Text::new("New campaign"),
+                                TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                TextColor(INK_WOOD),
+                                TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
+                            ));
+
                             if has_save {
                                 col.spawn((
                                     Button,
@@ -1339,7 +1406,7 @@ fn sync_title_menu(
                             }
 
                             for (size, label) in
-                                [(8, "New run 8x8"), (16, "New run 16x16"), (32, "New run 32x32")]
+                                [(8, "Classic run 8x8"), (16, "Classic run 16x16"), (32, "Classic run 32x32")]
                             {
                                 col.spawn((
                                     Button,
@@ -1379,6 +1446,8 @@ fn handle_title_buttons(
     menu_q: Query<&Interaction, (Changed<Interaction>, With<MenuButton>)>,
     mut title_menu: ResMut<TitleMenu>,
     mut start_writer: MessageWriter<StartRun>,
+    campaign_q: Query<(&Interaction, &TitleCampaignButton), (Changed<Interaction>, With<Button>)>,
+    mut campaign_writer: MessageWriter<StartCampaign>,
 ) {
     for interaction in &continue_q {
         if *interaction == Interaction::Pressed {
@@ -1389,6 +1458,13 @@ fn handle_title_buttons(
     for (interaction, btn) in &new_run_q {
         if *interaction == Interaction::Pressed {
             start_writer.write(StartRun(btn.0));
+            title_menu.open = false;
+        }
+    }
+
+    for (interaction, btn) in &campaign_q {
+        if *interaction == Interaction::Pressed {
+            campaign_writer.write(StartCampaign(btn.0));
             title_menu.open = false;
         }
     }

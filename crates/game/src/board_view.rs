@@ -6,6 +6,7 @@
 //!
 //! World axes: +X is east (files), -Z is north (ranks), +Y is up. One square is one unit.
 
+use crate::game::Mode;
 use bevy::asset::{RenderAssetUsages, load_internal_asset, uuid_handle};
 use bevy::mesh::{Indices, MeshVertexBufferLayoutRef, PrimitiveTopology};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline};
@@ -223,23 +224,23 @@ pub fn pick_obstacle(
 }
 
 #[derive(Component)]
-struct TerrainPart;
+pub struct TerrainPart;
 
 #[derive(Component)]
-struct PieceSprite;
+pub struct PieceSprite;
 
 #[derive(Component)]
-struct PieceSilhouette;
+pub struct PieceSilhouette;
 
 /// Small intent badge floating above threatened pieces.
 #[derive(Component)]
-struct ThreatBadge {
+pub struct ThreatBadge {
     base_y: f32,
     sprite_h: f32,
 }
 
 #[derive(Component)]
-struct PickupSprite;
+pub struct PickupSprite;
 
 /// Up-and-down oscillation for board pickups (specs/game-design.md §6).
 #[derive(Component)]
@@ -249,7 +250,7 @@ struct PickupBob {
 }
 
 #[derive(Component)]
-struct Overlay;
+pub struct Overlay;
 
 /// One of the two shallow-water frames; the other is hidden.
 #[derive(Component)]
@@ -272,27 +273,27 @@ pub(crate) const HOP_SECS: f32 = 0.22;
 
 /// Shared materials and card meshes.
 #[derive(Resource)]
-pub(crate) struct Look {
-    pub(crate) terrain: Handle<StandardMaterial>,
-    pub(crate) cards: Handle<StandardMaterial>,
-    pub(crate) piece_cards: Handle<PieceMaterial>,
-    pub(crate) grid: Handle<StandardMaterial>,
-    pub(crate) shadows: Handle<StandardMaterial>,
-    pub(crate) shadow_mesh_small: Handle<Mesh>,
-    pub(crate) shadow_mesh_large: Handle<Mesh>,
+pub struct Look {
+    pub terrain: Handle<StandardMaterial>,
+    pub cards: Handle<StandardMaterial>,
+    pub piece_cards: Handle<PieceMaterial>,
+    pub grid: Handle<StandardMaterial>,
+    pub shadows: Handle<StandardMaterial>,
+    pub shadow_mesh_small: Handle<Mesh>,
+    pub shadow_mesh_large: Handle<Mesh>,
     /// Card meshes by sprite name and horizontal flip.
-    pub(crate) card_meshes: HashMap<(String, bool), Handle<Mesh>>,
+    pub card_meshes: HashMap<(String, bool), Handle<Mesh>>,
     /// Shared ground material for threat victim frame.
-    pub(crate) threat_victim: Handle<StandardMaterial>,
+    pub threat_victim: Handle<StandardMaterial>,
     /// Shared ground material for threat attacker frame.
-    pub(crate) threat_attacker: Handle<StandardMaterial>,
+    pub threat_attacker: Handle<StandardMaterial>,
     /// Shared on-top material for threat intent badge.
-    pub(crate) threat_badge: Handle<MarkerMaterial>,
-    pub(crate) victim_frame_mesh: Handle<Mesh>,
-    pub(crate) attacker_frame_mesh: Handle<Mesh>,
-    pub(crate) badge_mesh: Handle<Mesh>,
-    pub(crate) occluded_white: Handle<OccludedMaterial>,
-    pub(crate) occluded_black: Handle<OccludedMaterial>,
+    pub threat_badge: Handle<MarkerMaterial>,
+    pub victim_frame_mesh: Handle<Mesh>,
+    pub attacker_frame_mesh: Handle<Mesh>,
+    pub badge_mesh: Handle<Mesh>,
+    pub occluded_white: Handle<OccludedMaterial>,
+    pub occluded_black: Handle<OccludedMaterial>,
 }
 
 /// Creates a 1.0 x 1.0 top-face frame decal consisting of four thin strips.
@@ -509,18 +510,18 @@ fn cave_color(link: u8) -> Color {
 
 /// Collects textured, vertex-shaded quads into one mesh.
 #[derive(Default)]
-pub(crate) struct Quads {
-    pub(crate) pos: Vec<[f32; 3]>,
-    pub(crate) normal: Vec<[f32; 3]>,
-    pub(crate) uv: Vec<[f32; 2]>,
-    pub(crate) color: Vec<[f32; 4]>,
-    pub(crate) idx: Vec<u32>,
+pub struct Quads {
+    pub pos: Vec<[f32; 3]>,
+    pub normal: Vec<[f32; 3]>,
+    pub uv: Vec<[f32; 2]>,
+    pub color: Vec<[f32; 4]>,
+    pub idx: Vec<u32>,
 }
 
 impl Quads {
     /// Corners in order bottom-left, bottom-right, top-right, top-left as seen from
     /// outside, with texture coordinates to match. `shade` darkens the texture.
-    pub(crate) fn add(&mut self, corners: [Vec3; 4], uv: [[f32; 2]; 4], shade: f32) {
+    pub fn add(&mut self, corners: [Vec3; 4], uv: [[f32; 2]; 4], shade: f32) {
         let n = (corners[1] - corners[0]).cross(corners[3] - corners[0]).normalize_or_zero();
         let c = Color::srgb(shade, shade, shade).to_linear().to_f32_array();
         let base = self.pos.len() as u32;
@@ -533,7 +534,7 @@ impl Quads {
         self.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
-    pub(crate) fn add_tinted(&mut self, corners: [Vec3; 4], uv: [[f32; 2]; 4], tint: Color) {
+    pub fn add_tinted(&mut self, corners: [Vec3; 4], uv: [[f32; 2]; 4], tint: Color) {
         let n = (corners[1] - corners[0]).cross(corners[3] - corners[0]).normalize_or_zero();
         let c = tint.to_linear().to_f32_array();
         let base = self.pos.len() as u32;
@@ -546,7 +547,7 @@ impl Quads {
         self.idx.extend([base, base + 1, base + 2, base, base + 2, base + 3]);
     }
 
-    pub(crate) fn mesh(self) -> Mesh {
+    pub fn mesh(self) -> Mesh {
         Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
             .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.pos)
             .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normal)
@@ -880,7 +881,7 @@ fn piece_spot(state: &GameState, sq: Sq) -> Vec3 {
 }
 
 #[derive(Component)]
-struct PieceShadow;
+pub struct PieceShadow;
 
 #[derive(Component)]
 struct ShadowHop {
@@ -1025,7 +1026,7 @@ fn spawn_pieces(
 }
 
 /// Flat highlights and markers lying on top faces.
-struct OverlayPainter<'a, 'w, 's> {
+pub struct OverlayPainter<'a, 'w, 's> {
     commands: &'a mut Commands<'w, 's>,
     state: &'a GameState,
     atlas: &'a Atlas,
@@ -1351,7 +1352,7 @@ impl Plugin for BoardViewPlugin {
             .add_systems(
                 Update,
                 (
-                    (spawn_terrain, spawn_pieces).chain(),
+                    (spawn_terrain, spawn_pieces).chain().run_if(not(in_state(Mode::Overworld))),
                     animate_water,
                     animate_hops,
                     animate_shadow_hops,

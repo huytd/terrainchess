@@ -11,6 +11,7 @@ mod game;
 mod hud;
 mod input;
 mod loading;
+mod overworld;
 mod run;
 mod save;
 mod scenery;
@@ -40,6 +41,7 @@ fn main() {
                 ..default()
             }),
     )
+    .init_state::<game::Mode>()
     .insert_resource(ClearColor(Color::srgb_u8(0xA9, 0xB8, 0xC4)))
     .add_plugins((
         loading::LoadingPlugin,
@@ -53,6 +55,7 @@ fn main() {
         hud::HudPlugin,
         fx::FxPlugin,
         sfx::SfxPlugin,
+        overworld::OverworldPlugin,
     ));
 
     let font = Font::from_bytes(JACQUARD_FONT.to_vec());

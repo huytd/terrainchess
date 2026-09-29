@@ -17,15 +17,18 @@ pub fn tile_cost(map: &WorldMap, pos: MapPos) -> Option<f32> {
 
 #[derive(Clone, Copy, PartialEq)]
 struct State {
-    cost: f32,
-    pos: MapPos,
+    /// Path cost so far plus the heuristic; orders the heap.
+    f: f32,
+    /// Path cost so far.
+    g: f32,
+    node: (MapPos, u8),
 }
 
 impl Eq for State {}
 
 impl Ord for State {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        other.cost.partial_cmp(&self.cost).unwrap_or(std::cmp::Ordering::Equal)
+        other.f.partial_cmp(&self.f).unwrap_or(std::cmp::Ordering::Equal)
     }
 }
 
@@ -35,46 +38,62 @@ impl PartialOrd for State {
     }
 }
 
-pub fn find_path(map: &WorldMap, start: MapPos, end: MapPos) -> Option<Vec<MapPos>> {
+/// Direction index of the step into a node; `NO_DIR` for the start.
+const NO_DIR: u8 = 4;
+
+/// A* over the 4-neighbour grid. `step(prev_dir, dir, to)` returns the cost of stepping onto `to`
+/// in direction `dir` (0..4) after arriving by `prev_dir`, or `None` if blocked. `h_scale` must
+/// not exceed the cheapest possible step so the manhattan heuristic stays admissible.
+pub fn astar(
+    map: &WorldMap,
+    start: MapPos,
+    end: MapPos,
+    h_scale: f32,
+    step: impl Fn(u8, u8, MapPos) -> Option<f32>,
+) -> Option<Vec<MapPos>> {
     let mut heap = BinaryHeap::new();
-    let mut dist = HashMap::new();
-    let mut came_from = HashMap::new();
+    let mut best: HashMap<(MapPos, u8), f32> = HashMap::new();
+    let mut came_from: HashMap<(MapPos, u8), (MapPos, u8)> = HashMap::new();
+    let start_node = (start, NO_DIR);
+    heap.push(State { f: 0.0, g: 0.0, node: start_node });
+    best.insert(start_node, 0.0);
 
-    heap.push(State { cost: 0.0, pos: start });
-    dist.insert(start, 0.0f32);
-
-    while let Some(State { cost, pos }) = heap.pop() {
+    while let Some(State { g, node, .. }) = heap.pop() {
+        let (pos, dir) = node;
         if pos == end {
             let mut path = Vec::new();
-            let mut current = pos;
-            while current != start {
-                path.push(current);
+            let mut current = node;
+            while current != start_node {
+                path.push(current.0);
                 current = came_from[&current];
             }
             path.reverse();
             return Some(path);
         }
-
-        let neighbors = [
-            MapPos::new(pos.x.saturating_sub(1), pos.y),
-            MapPos::new(pos.x + 1, pos.y),
-            MapPos::new(pos.x, pos.y.saturating_sub(1)),
-            MapPos::new(pos.x, pos.y + 1),
-        ];
-
-        for &n in &neighbors {
-            if n.x >= map.size.0 || n.y >= map.size.1 || n == pos {
+        if g > *best.get(&node).unwrap_or(&f32::INFINITY) {
+            continue;
+        }
+        let x = pos.x as i32;
+        let y = pos.y as i32;
+        for (d, (nx, ny)) in [(x, y - 1), (x + 1, y), (x, y + 1), (x - 1, y)].into_iter().enumerate() {
+            if nx < 0 || ny < 0 || nx >= map.size.0 as i32 || ny >= map.size.1 as i32 {
                 continue;
             }
-            if let Some(c) = tile_cost(map, n) {
-                let next_cost = cost + c;
-                if next_cost < *dist.get(&n).unwrap_or(&f32::INFINITY) {
-                    dist.insert(n, next_cost);
-                    came_from.insert(n, pos);
-                    heap.push(State { cost: next_cost + n.manhattan(end) as f32, pos: n });
-                }
+            let n = MapPos::new(nx as u16, ny as u16);
+            let Some(c) = step(dir, d as u8, n) else { continue };
+            let next = (n, d as u8);
+            let next_g = g + c;
+            if next_g < *best.get(&next).unwrap_or(&f32::INFINITY) {
+                best.insert(next, next_g);
+                came_from.insert(next, node);
+                heap.push(State { f: next_g + h_scale * n.manhattan(end) as f32, g: next_g, node: next });
             }
         }
     }
     None
+}
+
+/// Cheapest path for a hero from `start` to `end` (excluding `start`), by `tile_cost`.
+pub fn find_path(map: &WorldMap, start: MapPos, end: MapPos) -> Option<Vec<MapPos>> {
+    astar(map, start, end, 0.5, |_, _, n| tile_cost(map, n))
 }

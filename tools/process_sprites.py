@@ -6,6 +6,7 @@
 Reads  assets/spritesheet.jpg         (2048², magenta background)
        assets/environment_sky.jpg     (2000², magenta background)
        assets/environment_ground.jpg  (2000², 8×8 grid of 250 px cells)
+       assets/overworld.png           (1024², magenta background)
 Writes assets/atlas.png               (packed, transparent, 1 logical px = 1 px)
        assets/atlas.ron               (sprite name -> rect + anchor, read by the game)
 
@@ -14,6 +15,11 @@ The generated sheet came out as a 16×16 grid of 128 px cells instead of the
 regions are listed by hand below. Tile regions are sliced strictly by cell.
 Sprite regions give a search box; the sprite is the non-background pixels found
 inside it, so small misalignments don't matter.
+
+assets/overworld.png (see specs/assets-overworld.md) also came out off-grid: a
+~10×10 grid of ~102.4 px cells instead of the spec's 16×16 grid of 128 px cells,
+and some buildings/heroes bleed a little past their cell into the next. Regions
+below were measured by hand from the actual sheet (see OWCELL / owcell()).
 
 Pipeline per sprite:
   1. Chroma-key the magenta (tolerant of JPEG noise) and erode the key by 1 px
@@ -37,6 +43,7 @@ SRC = os.path.join(ROOT, "assets", "spritesheet.jpg")
 SRC_SKY = os.path.join(ROOT, "assets", "environment_sky.jpg")
 SRC_GROUND = os.path.join(ROOT, "assets", "environment_ground.jpg")
 SRC_GUI = os.path.join(ROOT, "assets", "gui.jpg")
+SRC_OW = os.path.join(ROOT, "assets", "overworld.png")
 OUT_PNG = os.path.join(ROOT, "assets", "atlas.png")
 OUT_RON = os.path.join(ROOT, "assets", "atlas.ron")
 
@@ -44,10 +51,20 @@ CELL = 128  # source px per grid cell
 TILE = 32  # logical px per board tile
 SCALE = TILE / CELL
 
+OWCELL = 102.4  # overworld.png: ~10x10 grid of 102.4 px cells (1024 / 10)
+SCALE_OW = TILE / OWCELL
+
 
 def cell(r, c, w=1, h=1):
     """Source box of grid cells (0-based row/col)."""
     return (c * CELL, r * CELL, (c + w) * CELL, (r + h) * CELL)
+
+
+def owcell(r, c, w=1, h=1):
+    """Source box of overworld.png grid cells (0-based row/col, 102.4 px pitch)."""
+    x0, y0 = round(c * OWCELL), round(r * OWCELL)
+    x1, y1 = round((c + w) * OWCELL), round((r + h) * OWCELL)
+    return (x0, y0, x1, y1)
 
 
 def gcell(r, c):
@@ -301,6 +318,90 @@ GUI_BOXES = [
     ("badge_defeat", (766, 1760, 989, 1977)),
 ]
 
+# --- Overworld sheet (assets/overworld.png, see specs/assets-overworld.md) ------
+# Rows 1-3: seamless terrain tiles, sliced strictly by (row, col) like TILES.
+OW_TILES = [
+    ("ow_grass_0", 0, 0),
+    ("ow_grass_1", 0, 1),
+    ("ow_grass_2", 1, 0),
+    ("ow_forest_0", 0, 2),
+    ("ow_forest_1", 1, 1),
+    ("ow_forest_2", 1, 2),
+    ("ow_forest_3", 2, 1),
+    ("ow_forest_4", 2, 2),
+    ("ow_hills_0", 0, 3),
+    ("ow_hills_1", 1, 3),
+    ("ow_hills_2", 2, 3),
+    ("ow_mountain_0", 0, 4),
+    ("ow_mountain_1", 0, 5),
+    ("ow_mountain_2", 1, 4),
+    ("ow_mountain_3", 2, 4),
+    ("ow_water_0", 0, 6),
+    ("ow_water_1", 1, 5),
+    ("ow_water_2", 2, 5),
+    ("ow_coast_0", 1, 6),
+    ("ow_coast_1", 2, 6),
+    # One canonical piece per road/bridge shape; the other rotations (N/E/S/W
+    # connections) are made in code with board_view::rotate_uv.
+    ("ow_road_corner", 0, 7),  # as drawn: connects south + east
+    ("ow_road_cross", 1, 7),  # connects all 4 sides
+    ("ow_road_straight", 2, 7),  # as drawn: connects east + west
+    ("ow_bridge_ns", 0, 8),
+    ("ow_bridge_ew", 2, 8),
+    ("ow_river_0", 1, 9),
+    ("ow_river_1", 2, 9),
+]
+
+# Rows 4-5: camp buildings (2 rows tall for fortress/citadel), each with a small
+# brown "flag slot" square near the top-right that's erased and replaced in code
+# by the controlling faction's banner. Search boxes are generous; the actual
+# sprite is the connected non-magenta blob(s) found inside.
+OW_CAMPS = [
+    ("ow_fortress", (0, 296, 148, 520), (0.5, 1.0)),
+    ("ow_citadel", (98, 296, 312, 520), (0.5, 1.0)),
+    ("ow_village", (300, 296, 415, 414), (0.5, 1.0)),
+    ("ow_knight_camp", (405, 296, 515, 414), (0.5, 1.0)),
+    ("ow_bishop_camp", (505, 296, 615, 414), (0.5, 1.0)),
+]
+
+# Same row, no flag overlay needed but the sheet still drew (and this still
+# erases) the flag-slot marker for visual consistency with the camps.
+OW_PROPS = [
+    ("ow_chest_open", (605, 296, 715, 414), (0.5, 1.0)),
+    ("ow_chest", (705, 296, 820, 414), (0.5, 1.0)),
+    ("ow_shrine", (810, 296, 920, 414), (0.5, 1.0)),
+    ("ow_signpost", (910, 296, 1024, 414), (0.5, 1.0)),
+]
+
+# Row 5 (cols 2-9): dark fog-of-war tiles. Not used for map rendering (the game
+# keeps the existing tint-based fog darkening) but sliced for completeness.
+OW_FOG = [(f"ow_fog_{i}", owcell(4, 2 + i)) for i in range(8)]
+
+# Rows 6-7: mounted heroes, 2 rows each faction (idle + walk frames, facing
+# right; mirrored in code via card_mesh(..., flip) for left movement) plus 3
+# planted banners.
+OW_HEROES_SUN = [owcell(5, c) for c in range(3)] + [owcell(6, c) for c in range(4)]
+OW_HEROES_CROWN = [owcell(5, c) for c in range(4, 7)] + [owcell(6, c) for c in range(4, 7)]
+OW_BANNERS = [
+    ("ow_banner_sun", owcell(5, 7)),
+    ("ow_banner_crown", owcell(5, 8)),
+    ("ow_banner_neutral", owcell(5, 9)),
+]
+
+# Row 8: overworld UI and move markers.
+OW_UI = [
+    ("ow_path", owcell(7, 0)),
+    ("ow_target", owcell(7, 1)),
+    ("ow_blocked", owcell(7, 2)),
+    ("ow_day_frame", owcell(7, 3)),
+    ("ow_army_slot", owcell(7, 4)),
+    ("ow_portrait_frame", owcell(7, 5)),
+    ("ow_portrait_sun", owcell(7, 6)),
+    ("ow_deploy_blue", owcell(7, 7)),
+    ("ow_deploy_red", owcell(7, 8)),
+    ("ow_end_turn", owcell(7, 9)),
+]
+
 # The sheet has no full-body Ashen King, so one is assembled in source pixels: the
 # portrait bust (crown, head, ermine cape) over the bishop's robe and sun staff.
 WHITE_KING = {
@@ -422,11 +523,12 @@ def wall_sprites(out):
     return walls
 
 
-def process(src, src_sky, src_ground, src_gui, palette):
+def process(src, src_sky, src_ground, src_gui, src_ow, palette):
     rgb_all = np.asarray(src.convert("RGB")).astype(np.float32)
     rgb_sky = np.asarray(src_sky.convert("RGB")).astype(np.float32)
     rgb_ground = np.asarray(src_ground.convert("RGB")).astype(np.float32)
     rgb_gui = np.asarray(src_gui.convert("RGB")).astype(np.float32)
+    rgb_ow = np.asarray(src_ow.convert("RGB")).astype(np.float32)
     out = {}  # name -> (RGBA float array, anchor)
 
     def crop(box):
@@ -560,6 +662,99 @@ def process(src, src_sky, src_ground, src_gui, palette):
             CENTER,
         )
 
+    # --- Overworld sheet -----------------------------------------------------
+
+    def ow_trimmed(box, target_h=None, min_area=40):
+        """Like `trimmed`, but for overworld.png (scaled by SCALE_OW, not SCALE)."""
+        x0, y0, x1, y1 = box
+        rgb = rgb_ow[y0:y1, x0:x1]
+        mask = key_mask(rgb)
+        boxes = components(mask, min_area)
+        if not boxes:
+            raise SystemExit(f"empty overworld sprite region {box}")
+        area = lambda b: (b[2] - b[0]) * (b[3] - b[1])
+        biggest = max(area(b) for b in boxes)
+        boxes = [b for b in boxes if area(b) >= 0.08 * biggest]
+        bx0 = min(b[0] for b in boxes)
+        by0 = min(b[1] for b in boxes)
+        bx1 = max(b[2] for b in boxes)
+        by1 = max(b[3] for b in boxes)
+        rgb, mask = rgb[by0:by1, bx0:bx1], mask[by0:by1, bx0:bx1]
+        return rgb, mask
+
+    def ow_erase_flag(rgb, mask):
+        """Camp/prop cells have a small brown flag-slot square near the top-right,
+        left empty for the code to overlay the controlling faction's banner.
+        Erases it (drops it from the alpha mask) in place."""
+        h, w = mask.shape
+        r, g, b = rgb[..., 0], rgb[..., 1], rgb[..., 2]
+        from scipy import ndimage
+
+        brownish = (r > 120) & (r < 210) & (g > 80) & (g < 170) & (b > 40) & (b < 140) & (r > g) & (g > b + 5)
+        region = np.zeros((h, w), dtype=bool)
+        region[: round(h * 0.45), round(w * 0.35) :] = True
+        candidate = brownish & mask & region
+        labels, n = ndimage.label(candidate, structure=np.ones((3, 3)))
+        best = None
+        for i, sl in enumerate(ndimage.find_objects(labels), start=1):
+            if sl is None:
+                continue
+            blob_area = int((labels[sl] == i).sum())
+            bw, bh = sl[1].stop - sl[1].start, sl[0].stop - sl[0].start
+            if 120 <= blob_area <= 2500 and bh > 0 and 0.4 <= bw / bh <= 2.5:
+                if best is None or blob_area > best[0]:
+                    best = (blob_area, sl)
+        if best:
+            mask[best[1]] = False
+
+    def ow_downscale(rgb, mask, target_h=None):
+        h, w = mask.shape
+        s = target_h / h if target_h else SCALE_OW
+        return downscale(rgb, mask.astype(np.float32), max(1, round(w * s)), max(1, round(h * s)))
+
+    # Rows 1-3: seamless terrain tiles, sliced strictly by cell (no trimming).
+    for name, r, c in OW_TILES:
+        x0, y0, x1, y1 = owcell(r, c)
+        rgb = rgb_ow[y0 + 3 : y1 - 3, x0 + 3 : x1 - 3]  # skip the thin grid line
+        out[name] = (downscale(rgb, np.ones(rgb.shape[:2], np.float32), TILE, TILE), CENTER)
+
+    # Rows 4-5: camp buildings, flag slot erased and left transparent; the
+    # controlling faction's banner is overlaid in code near the top-right.
+    for name, box, anchor in OW_CAMPS:
+        rgb, mask = ow_trimmed(box)
+        ow_erase_flag(rgb, mask)
+        out[name] = (ow_downscale(rgb, mask), anchor)
+
+    # Same row: props with the same flag-slot artifact erased, but unused.
+    for name, box, anchor in OW_PROPS:
+        rgb, mask = ow_trimmed(box)
+        ow_erase_flag(rgb, mask)
+        out[name] = (ow_downscale(rgb, mask), anchor)
+
+    # Row 5 (cols 2-9): fog-of-war tiles (unused by map rendering today, which
+    # keeps the existing tint-based fog darkening; sliced for completeness).
+    for name, box in OW_FOG:
+        x0, y0, x1, y1 = box
+        rgb = rgb_ow[y0 + 2 : y1 - 2, x0 + 2 : x1 - 2]
+        out[name] = (downscale(rgb, np.ones(rgb.shape[:2], np.float32), TILE, TILE), CENTER)
+
+    # Rows 6-7: mounted heroes, facing right (mirrored in code for left).
+    hero_h = PIECE_H["king"]
+    for i, box in enumerate(OW_HEROES_SUN):
+        rgb, mask = ow_trimmed(box)
+        out[f"ow_hero_sun_{i}"] = (ow_downscale(rgb, mask, hero_h), BOTTOM)
+    for i, box in enumerate(OW_HEROES_CROWN):
+        rgb, mask = ow_trimmed(box)
+        out[f"ow_hero_crown_{i}"] = (ow_downscale(rgb, mask, hero_h), BOTTOM)
+    for name, box in OW_BANNERS:
+        rgb, mask = ow_trimmed(box)
+        out[name] = (ow_downscale(rgb, mask), BOTTOM)
+
+    # Row 8: overworld UI and move markers.
+    for name, box in OW_UI:
+        rgb, mask = ow_trimmed(box)
+        out[name] = (ow_downscale(rgb, mask), CENTER)
+
     out.update(wall_sprites(out))
 
     if palette:
@@ -613,6 +808,7 @@ def main():
         Image.open(SRC_SKY),
         Image.open(SRC_GROUND),
         Image.open(SRC_GUI),
+        Image.open(SRC_OW),
         args.palette,
     )
     atlas, rects = pack(sprites, width=512)

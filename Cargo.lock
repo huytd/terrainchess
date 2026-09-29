@@ -4815,6 +4815,7 @@ dependencies = [
  "tc_ai",
  "tc_core",
  "tc_run",
+ "tc_world",
  "wasm-bindgen",
  "web-sys",
 ]

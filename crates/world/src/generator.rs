@@ -5,67 +5,30 @@ use noise::{NoiseFn, OpenSimplex};
 use tc_core::piece::PieceKind;
 use tc_core::rng::Rng;
 
-fn find_path_for_generation(map: &WorldMap, start: MapPos, end: MapPos) -> Option<Vec<MapPos>> {
-    use std::collections::{BinaryHeap, HashMap};
-    #[derive(Clone, Copy, PartialEq)]
-    struct State {
-        cost: f32,
-        pos: MapPos,
-    }
-    impl Eq for State {}
-    impl Ord for State {
-        fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-            other.cost.partial_cmp(&self.cost).unwrap_or(std::cmp::Ordering::Equal)
-        }
-    }
-    impl PartialOrd for State {
-        fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-            Some(self.cmp(other))
-        }
-    }
-
-    let mut heap = BinaryHeap::new();
-    let mut dist = HashMap::new();
-    let mut came_from = HashMap::new();
-    heap.push(State { cost: 0.0, pos: start });
-    dist.insert(start, 0.0f32);
-    while let Some(State { cost, pos }) = heap.pop() {
-        if pos == end {
-            let mut path = Vec::new();
-            let mut current = pos;
-            while current != start {
-                path.push(current);
-                current = came_from[&current];
-            }
-            path.reverse();
-            return Some(path);
-        }
-        let neighbors = [
-            MapPos::new(pos.x.saturating_sub(1), pos.y),
-            MapPos::new(pos.x + 1, pos.y),
-            MapPos::new(pos.x, pos.y.saturating_sub(1)),
-            MapPos::new(pos.x, pos.y + 1),
-        ];
-        for &n in &neighbors {
-            if n.x >= map.size.0 || n.y >= map.size.1 || n == pos {
-                continue;
-            }
-            let tile = map.get(n).unwrap();
-            let c = match tile.biome {
+fn find_path_for_generation(
+    map: &WorldMap,
+    own_roads: &std::collections::HashSet<MapPos>,
+    start: MapPos,
+    end: MapPos,
+) -> Option<Vec<MapPos>> {
+    // The region's own earlier roads are cheap so its routes merge into a network instead of
+    // running side by side (other regions' roads are ignored so every region is built the same
+    // way), and turns cost a little so roads run straight instead of zigzagging.
+    crate::path::astar(map, start, end, 0.3, |prev, dir, n| {
+        let tile = map.get(n)?;
+        let base = if own_roads.contains(&n) {
+            0.3
+        } else {
+            match tile.biome {
                 Biome::Mountain => 100.0,
                 Biome::Water => 10.0, // bridge
                 Biome::Forest | Biome::Hills => 2.0,
                 _ => 1.0,
-            };
-            let next_cost = cost + c;
-            if next_cost < *dist.get(&n).unwrap_or(&f32::INFINITY) {
-                dist.insert(n, next_cost);
-                came_from.insert(n, pos);
-                heap.push(State { cost: next_cost + n.manhattan(end) as f32, pos: n });
             }
-        }
-    }
-    None
+        };
+        let turn = if prev != 4 && prev != dir { 0.6 } else { 0.0 };
+        Some(base + turn)
+    })
 }
 
 pub fn generate_world(mut seed: u64, params: WorldParams) -> (WorldMap, Vec<Hero>) {
@@ -350,34 +313,36 @@ pub fn generate_world(mut seed: u64, params: WorldParams) -> (WorldMap, Vec<Hero
 
         // 4. Roads (A*)
         let center_pos = MapPos::new(center_x as u16, center_y as u16);
-        let mut roads_to_build = Vec::new();
-        for start in &starts {
-            roads_to_build.push((*start, center_pos));
-        }
+        // One road set per hero region: its start to the centre, then each of its objects to it.
+        let mut roads_to_build: Vec<Vec<(MapPos, MapPos)>> =
+            starts.iter().map(|start| vec![(*start, center_pos)]).collect();
         for obj in &map.objects {
-            let mut best_start = starts[0];
+            let mut best = 0;
             let mut best_dist = i32::MAX;
-            for start in &starts {
+            for (i, start) in starts.iter().enumerate() {
                 let dx = start.x as i32 - obj.pos.x as i32;
                 let dy = start.y as i32 - obj.pos.y as i32;
                 let dist = dx * dx + dy * dy;
                 if dist < best_dist {
                     best_dist = dist;
-                    best_start = *start;
+                    best = i;
                 }
             }
-            roads_to_build.push((obj.pos, best_start));
+            roads_to_build[best].push((obj.pos, starts[best]));
         }
 
         let mut path_failed = false;
-        for (from, to) in roads_to_build {
-            if let Some(path) = find_path_for_generation(&map, from, to) {
+        'regions: for region in roads_to_build {
+            let mut own_roads = std::collections::HashSet::new();
+            for (from, to) in region {
+                let Some(path) = find_path_for_generation(&map, &own_roads, from, to) else {
+                    path_failed = true;
+                    break 'regions;
+                };
                 for p in path {
                     map.get_mut(p).unwrap().road = true;
+                    own_roads.insert(p);
                 }
-            } else {
-                path_failed = true;
-                break;
             }
         }
 

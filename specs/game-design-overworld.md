@@ -97,4 +97,4 @@ The overworld state is saved at the start of each day and after every battle. Th
 - Should camps regenerate guards if left alone for too long?
 - How to ensure the battle board generation strictly reflects the map tile's intended difficulty/biome?
 - Camp guard neutral tint: How should camp guard sprites be tinted (e.g., desaturated stone or weathered grey) to visually distinguish neutral defenders from true rival faction armies on the battle board?
-- Fairness at 6+ heroes: the map is rotationally symmetric, but a square grid can't rotate it exactly by 60° or 36°, so regional path costs drift up to ~27 % apart (2–4 heroes stay within 20 %). Fix before enabling more than 4 heroes, e.g. with a hex grid or per-region cost balancing.
+- Fairness with 3+ heroes: regions are rotated copies on a square grid, which is exact only for 2 heroes (180°). With optimal pathfinding, regional path costs drift up to ~25 % apart at 3–4 heroes and more at 6+. Fix before enabling more than 2 heroes, e.g. rotate by rounding instead of truncating, use a hex grid, or balance per-region costs.

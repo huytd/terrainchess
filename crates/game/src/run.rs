@@ -1,6 +1,11 @@
 //! Roguelike run flow, match progression, and drafting (specs/game-design.md §4).
 
 use bevy::prelude::*;
+
+#[derive(Resource)]
+pub struct Campaign {
+    pub world: tc_world::World,
+}
 use tc_core::{Outcome, Side};
 use tc_run::RunState;
 
@@ -45,6 +50,9 @@ pub struct PickCard(pub String);
 /// Message to start a new run with the given board size.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct StartRun(pub u8);
+
+#[derive(Message, Clone, Copy, Debug)]
+pub struct StartCampaign(pub bool); // true for continue, false for new
 
 /// Derive a seed from system time / clock without panicking on WASM.
 pub fn time_seed() -> u64 {
@@ -92,7 +100,14 @@ pub fn apply_pick(item_id: &str, run: &mut Run, game_state: &mut GameState) {
     }
 }
 
-fn check_run_match_outcome(mut run: ResMut<Run>, game_state: Res<GameState>) {
+fn check_run_match_outcome(
+    mut run: ResMut<Run>,
+    game_state: Res<GameState>,
+    mode: Res<State<crate::game::Mode>>,
+) {
+    if *mode.get() != crate::game::Mode::Classic {
+        return;
+    }
     if run.phase != RunPhase::Playing {
         return;
     }
@@ -113,20 +128,44 @@ fn check_run_match_outcome(mut run: ResMut<Run>, game_state: Res<GameState>) {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_run_messages(
+    mut commands: Commands,
     mut pick_events: MessageReader<PickCard>,
     mut start_events: MessageReader<StartRun>,
+    mut campaign_events: MessageReader<StartCampaign>,
+    mut next_mode: ResMut<NextState<crate::game::Mode>>,
+    mode: Res<State<crate::game::Mode>>,
     mut run: ResMut<Run>,
     mut game_state: ResMut<GameState>,
     time: Res<Time>,
 ) {
     for pick in pick_events.read() {
-        apply_pick(&pick.0, &mut run, &mut game_state);
+        if *mode.get() == crate::game::Mode::Classic {
+            apply_pick(&pick.0, &mut run, &mut game_state);
+        }
     }
 
     for start in start_events.read() {
         let seed = time.elapsed().as_nanos() as u64 ^ time_seed();
         start_new_run(start.0, &mut run, &mut game_state, seed);
+    }
+
+    for campaign in campaign_events.read() {
+        if campaign.0 {
+            if let Some(world) = crate::save::load_campaign() {
+                commands.insert_resource(Campaign { world });
+                next_mode.set(crate::game::Mode::Overworld);
+            }
+        } else {
+            let seed = time.elapsed().as_nanos() as u64 ^ time_seed();
+            let mut world = tc_world::World::new(seed, tc_world::WorldParams::default());
+            world.heroes[0].name = "Ashen Sun".to_string();
+            world.heroes[1].name = "Hollow Crown".to_string();
+            crate::save::store_campaign(&world);
+            commands.insert_resource(Campaign { world });
+            next_mode.set(crate::game::Mode::Overworld);
+        }
     }
 }
 
@@ -159,9 +198,12 @@ impl Plugin for RunPlugin {
             .init_resource::<TitleMenu>()
             .add_message::<PickCard>()
             .add_message::<StartRun>()
+            .add_message::<StartCampaign>()
             .add_systems(
                 Update,
-                (check_run_match_outcome, handle_run_messages).chain().run_if(in_state(AppState::Ready)),
+                (check_run_match_outcome, handle_run_messages).chain().run_if(
+                    in_state(AppState::Ready).and_then(not(in_state(crate::game::Mode::OverworldBattle))),
+                ),
             );
     }
 }
