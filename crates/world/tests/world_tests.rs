@@ -600,3 +600,42 @@ fn test_battle_setup_uses_selected_hero_decks() {
     assert_eq!(setup.player_deck, player_deck);
     assert_eq!(setup.enemy_deck, rival_deck);
 }
+
+#[test]
+fn test_camp_guards_day_one() {
+    let world = World::new(42, WorldParams::default());
+    let mut checked_kinds = Vec::new();
+
+    for obj in &world.map.objects {
+        let ObjectKind::Camp(camp_kind) = &obj.kind else { continue };
+        let guards = world.guards_for(&obj.guards, obj.tier);
+        match camp_kind {
+            CampKind::Village => {
+                assert_eq!(guards, vec![PieceKind::King, PieceKind::Pawn, PieceKind::Pawn]);
+                checked_kinds.push(*camp_kind);
+            }
+            CampKind::KnightCamp => {
+                assert_eq!(guards, vec![PieceKind::King, PieceKind::Knight]);
+                checked_kinds.push(*camp_kind);
+            }
+            CampKind::BishopCamp => {
+                assert_eq!(guards, vec![PieceKind::King, PieceKind::Bishop]);
+                checked_kinds.push(*camp_kind);
+            }
+            CampKind::Fortress => {
+                assert_eq!(guards, vec![PieceKind::King, PieceKind::Rook, PieceKind::Pawn]);
+                checked_kinds.push(*camp_kind);
+            }
+            CampKind::Citadel => {
+                assert_eq!(guards, vec![PieceKind::King, PieceKind::Queen, PieceKind::Pawn, PieceKind::Pawn]);
+                checked_kinds.push(*camp_kind);
+            }
+        }
+    }
+
+    assert!(checked_kinds.contains(&CampKind::Village));
+    assert!(checked_kinds.contains(&CampKind::KnightCamp));
+    assert!(checked_kinds.contains(&CampKind::BishopCamp));
+    assert!(checked_kinds.contains(&CampKind::Fortress));
+    assert!(checked_kinds.contains(&CampKind::Citadel));
+}
