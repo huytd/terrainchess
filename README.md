@@ -1,6 +1,9 @@
 # Terrain Chess
 
 A pixel-art chess roguelike where hills, cliffs, water and caves change how pieces move.
+
+<img width="1000" height="516" alt="image" src="https://github.com/user-attachments/assets/7c179462-47d6-4707-88d5-5e11a56cf6d6" />
+
 Design: [PLAN.md](PLAN.md) · Art spec: [SPRITES.md](SPRITES.md).
 
 ## Layout
