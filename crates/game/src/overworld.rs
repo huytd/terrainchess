@@ -6,8 +6,10 @@
     clippy::needless_return,
     clippy::type_complexity
 )]
+use bevy::asset::RenderAssetUsages;
 use bevy::input::keyboard::KeyCode;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 
 use crate::atlas::Atlas;
@@ -330,6 +332,106 @@ fn tile_height(biome: Biome) -> f32 {
     }
 }
 
+const FOG_SUBDIVISIONS: usize = 4;
+const FOG_FADE_DISTANCE: f32 = 1.9;
+
+fn fog_distance(world: &tc_world::World, point: Vec2) -> f32 {
+    let radius = FOG_FADE_DISTANCE + 0.5;
+    let min_x = ((point.x - radius).floor() as i32).max(0);
+    let max_x = ((point.x + radius).ceil() as i32).min(world.map.size.0 as i32 - 1);
+    let min_y = ((point.y - radius).floor() as i32).max(0);
+    let max_y = ((point.y + radius).ceil() as i32).min(world.map.size.1 as i32 - 1);
+    let mut nearest = FOG_FADE_DISTANCE + 1.0;
+
+    for y in min_y..=max_y {
+        for x in min_x..=max_x {
+            if !world.is_revealed(MapPos::new(x as u16, y as u16)) {
+                continue;
+            }
+
+            // Distance to the edge of the revealed tile, rather than its center,
+            // keeps known ground clear while letting the fog roll outward from it.
+            let dx = ((point.x - x as f32).abs() - 0.5).max(0.0);
+            let dy = ((point.y - y as f32).abs() - 0.5).max(0.0);
+            nearest = nearest.min(dx.hypot(dy));
+        }
+    }
+
+    nearest
+}
+
+fn fog_noise(x: f32, y: f32) -> f32 {
+    let ix = x.floor() as i32;
+    let iy = y.floor() as i32;
+    let fx = x - ix as f32;
+    let fy = y - iy as f32;
+    let smooth = |t: f32| t * t * (3.0 - 2.0 * t);
+    let sample = |sx, sy| hash(sx, sy, 0xF09C_31A7) as f32 / u32::MAX as f32 * 2.0 - 1.0;
+    let lerp = |a: f32, b: f32, t: f32| a + (b - a) * t;
+    let top = lerp(sample(ix, iy), sample(ix + 1, iy), smooth(fx));
+    let bottom = lerp(sample(ix, iy + 1), sample(ix + 1, iy + 1), smooth(fx));
+    lerp(top, bottom, smooth(fy))
+}
+
+fn fog_overlay_mesh(world: &tc_world::World) -> Mesh {
+    let width = world.map.size.0 as usize;
+    let height = world.map.size.1 as usize;
+    let side = FOG_SUBDIVISIONS + 1;
+    let vertices_per_tile = side * side;
+    let mut positions = Vec::with_capacity(width * height * vertices_per_tile);
+    let mut normals = Vec::with_capacity(width * height * vertices_per_tile);
+    let mut colors = Vec::with_capacity(width * height * vertices_per_tile);
+    let mut indices = Vec::with_capacity(width * height * FOG_SUBDIVISIONS * FOG_SUBDIVISIONS * 6);
+    let fog_color = Color::srgb(0.012, 0.015, 0.022).to_linear().to_f32_array();
+
+    for tile_y in 0..height {
+        for tile_x in 0..width {
+            let pos = MapPos::new(tile_x as u16, tile_y as u16);
+            let top = tile_height(world.map.get(pos).unwrap().biome) + 0.025;
+            let base = positions.len() as u32;
+
+            for row in 0..=FOG_SUBDIVISIONS {
+                for col in 0..=FOG_SUBDIVISIONS {
+                    let x = tile_x as f32 - 0.5 + col as f32 / FOG_SUBDIVISIONS as f32;
+                    let y = tile_y as f32 - 0.5 + row as f32 / FOG_SUBDIVISIONS as f32;
+                    let broad = fog_noise(x * 0.32, y * 0.32);
+                    let detail = fog_noise(x * 0.9, y * 0.9);
+                    let distance = fog_distance(world, Vec2::new(x, y));
+                    let edge_wobble = broad * 0.28 + detail * 0.08;
+                    let alpha = if distance == 0.0 {
+                        0.0
+                    } else {
+                        let t = ((distance + edge_wobble) / FOG_FADE_DISTANCE).clamp(0.0, 1.0);
+                        let fade = t * t * (3.0 - 2.0 * t);
+                        (fade * (0.94 + broad * 0.025 + detail * 0.01)).clamp(0.0, 0.97)
+                    };
+
+                    positions.push([x, top, y]);
+                    normals.push([0.0, 1.0, 0.0]);
+                    colors.push([fog_color[0], fog_color[1], fog_color[2], alpha]);
+                }
+            }
+
+            for row in 0..FOG_SUBDIVISIONS {
+                for col in 0..FOG_SUBDIVISIONS {
+                    let a = base + (row * side + col) as u32;
+                    let b = a + 1;
+                    let d = a + side as u32;
+                    let c = d + 1;
+                    // Reverse the X/Z grid winding so the top faces point upward.
+                    indices.extend([a, c, b, a, d, c]);
+                }
+            }
+        }
+    }
+
+    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, colors)
+        .with_inserted_indices(Indices::U32(indices))
+}
+
 fn update_overworld_map(
     mut commands: Commands,
     campaign: Option<Res<Campaign>>,
@@ -376,7 +478,7 @@ fn update_overworld_map(
             let top = Vec3::new(x as f32, height, y as f32);
             let corners = flat(top, Vec2::ONE);
             let uv = rotate_uv(full_uv(atlas.uv(name)), rot);
-            let tint = if revealed { Color::WHITE } else { Color::srgb(0.15, 0.15, 0.15) };
+            let tint = Color::WHITE;
 
             if tile.biome == Biome::Water {
                 water.add_tinted(corners, uv, tint);
@@ -414,9 +516,20 @@ fn update_overworld_map(
         }
     }
 
+    let solid_mesh = meshes.add(solid.mesh());
+    let water_mesh = meshes.add(water.mesh());
+    let fog_mesh = meshes.add(fog_overlay_mesh(&c.world));
+    let fog_material = materials.add(StandardMaterial {
+        base_color: Color::WHITE,
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        cull_mode: None,
+        ..default()
+    });
     commands.entity(root_ent).with_children(|parent| {
-        parent.spawn((Mesh3d(meshes.add(solid.mesh())), MeshMaterial3d(look.terrain.clone())));
-        parent.spawn((Mesh3d(meshes.add(water.mesh())), MeshMaterial3d(look.terrain.clone())));
+        parent.spawn((Mesh3d(solid_mesh), MeshMaterial3d(look.terrain.clone())));
+        parent.spawn((Mesh3d(water_mesh), MeshMaterial3d(look.terrain.clone())));
+        parent.spawn((Mesh3d(fog_mesh), MeshMaterial3d(fog_material)));
     });
 
     // Objects
