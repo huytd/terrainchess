@@ -128,6 +128,10 @@ struct HandBar;
 #[derive(Component)]
 struct HandCard {
     slot_idx: usize,
+    base_angle_deg: f32,
+    resting_pivot_offset: Vec2,
+    lift_px: f32,
+    is_used: bool,
 }
 
 #[derive(Component)]
@@ -184,12 +188,12 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
             ..default()
         })
         .with_children(|col| {
-            // Floor badge plaque (72 x 84 px)
+            // Floor badge plaque (100 x 112 px)
             col.spawn((
                 FloorBadge,
                 Node {
-                    width: Val::Px(72.0),
-                    height: Val::Px(84.0),
+                    width: Val::Px(100.0),
+                    height: Val::Px(112.0),
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
@@ -206,14 +210,14 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
             .with_children(|badge| {
                 badge.spawn((
                     Text::new("Floor"),
-                    TextFont { font_size: FontSize::Px(11.0), ..default() },
+                    TextFont { font_size: FontSize::Px(24.0), ..default() },
                     TextColor(INK_WOOD),
                     TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                     FloorBadgeTitle,
                 ));
                 badge.spawn((
                     Text::new("1/8"),
-                    TextFont { font_size: FontSize::Px(18.0), ..default() },
+                    TextFont { font_size: FontSize::Px(24.0), ..default() },
                     TextColor(INK_WOOD),
                     TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                     FloorBadgeText,
@@ -227,8 +231,8 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
                     display: Display::None,
                     flex_direction: FlexDirection::Row,
                     align_items: AlignItems::Center,
-                    column_gap: Val::Px(6.0),
-                    padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                    column_gap: Val::Px(8.0),
+                    padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
                     ..default()
                 },
                 ImageNode {
@@ -250,7 +254,7 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
                 ));
                 row.spawn((
                     Text::new(""),
-                    TextFont { font_size: FontSize::Px(13.0), ..default() },
+                    TextFont { font_size: FontSize::Px(24.0), ..default() },
                     TextColor(INK_WOOD),
                     TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                     FloorBadgeEnemyText,
@@ -320,8 +324,8 @@ fn update_floor_badge(
         if img.rect != r {
             img.rect = r;
         }
-        node.width = Val::Px(72.0);
-        node.height = Val::Px(84.0);
+        node.width = Val::Px(100.0);
+        node.height = Val::Px(112.0);
     }
 
     let (title, label) = if run.sandbox {
@@ -424,8 +428,8 @@ fn sync_overlays(
                     parent
                         .spawn((
                             Node {
-                                min_width: Val::Px(320.0),
-                                padding: UiRect::axes(Val::Px(32.0), Val::Px(12.0)),
+                                min_width: Val::Px(380.0),
+                                padding: UiRect::axes(Val::Px(36.0), Val::Px(12.0)),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
                                 overflow: Overflow::visible(),
@@ -440,7 +444,7 @@ fn sync_overlays(
                         ))
                         .with_child((
                             Text::new("Choose a reward"),
-                            TextFont { font_size: FontSize::Px(22.0), ..default() },
+                            TextFont { font_size: FontSize::Px(48.0), ..default() },
                             TextColor(INK_WOOD),
                             TextLayout { justify: Justify::Center, ..default() },
                         ));
@@ -452,6 +456,7 @@ fn sync_overlays(
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
                             column_gap: Val::Px(16.0),
+                            margin: UiRect::top(Val::Px(28.0)),
                             padding: UiRect::horizontal(Val::Px(12.0)),
                             max_width: Val::Percent(100.0),
                             ..default()
@@ -481,36 +486,6 @@ fn sync_overlays(
                                 let art_name = format!("art_{}", item.id);
                                 let art_win_h = card_size.y * 0.46;
                                 let (art_size, _) = integer_scaled_size(&atlas, &art_name, art_win_h);
-
-                                let box_w = card_size.x * 0.70 - 8.0;
-                                let box_h = card_size.y * 0.31 - 8.0;
-
-                                let wrap_count = |text: &str, font_sz: f32| -> usize {
-                                    let max_chars = ((box_w / (font_sz * 0.6)).floor() as usize).max(1);
-                                    let mut lines = 0;
-                                    let mut cur = 0;
-                                    for w in text.split_whitespace() {
-                                        let len = w.chars().count();
-                                        if cur == 0 {
-                                            cur = len;
-                                            lines += 1;
-                                        } else if cur + 1 + len <= max_chars {
-                                            cur += 1 + len;
-                                        } else {
-                                            cur = len;
-                                            lines += 1;
-                                        }
-                                    }
-                                    lines.max(1)
-                                };
-
-                                let name_h = wrap_count(&item.name, 15.0) as f32 * (15.0 * 1.2);
-                                let kind_h = wrap_count(&kind_str, 11.0) as f32 * (11.0 * 1.2);
-                                let gaps = 4.0;
-                                let desc_h_12 = wrap_count(&item.description, 12.0) as f32 * (12.0 * 1.1);
-
-                                let desc_font =
-                                    if name_h + kind_h + gaps + desc_h_12 <= box_h { 12.0 } else { 11.0 };
 
                                 row.spawn((
                                     Button,
@@ -545,6 +520,25 @@ fn sync_overlays(
                                         },
                                     ));
 
+                                    // Name plate above the card
+                                    card_root.spawn((
+                                        Node {
+                                            position_type: PositionType::Absolute,
+                                            left: Val::Percent(-10.0),
+                                            width: Val::Percent(120.0),
+                                            bottom: Val::Percent(103.0),
+                                            justify_content: JustifyContent::Center,
+                                            ..default()
+                                        },
+                                        children![(
+                                            Text::new(&item.name),
+                                            TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                            TextColor(INK_WOOD),
+                                            TextShadow::default(),
+                                            TextLayout { justify: Justify::Center, ..default() },
+                                        )],
+                                    ));
+
                                     // Card body on top of highlight
                                     card_root
                                         .spawn((
@@ -565,13 +559,13 @@ fn sync_overlays(
                                             },
                                         ))
                                         .with_children(|card| {
-                                            // 1. Art window: spans x 12% - 88%, y 8% - 54%
+                                            // 1. Art window: spans x 12% - 88%, y 8% - 50%
                                             card.spawn(Node {
                                                 position_type: PositionType::Absolute,
                                                 left: Val::Percent(12.0),
                                                 width: Val::Percent(76.0),
                                                 top: Val::Percent(8.0),
-                                                height: Val::Percent(46.0),
+                                                height: Val::Percent(42.0),
                                                 justify_content: JustifyContent::Center,
                                                 align_items: AlignItems::Center,
                                                 overflow: Overflow::clip(),
@@ -591,41 +585,27 @@ fn sync_overlays(
                                                 },
                                             ));
 
-                                            // 2. Parchment text box: spans x 15% - 85%, y 60% - 91%
+                                            // 2. Parchment text box: spans x 12% - 88%, y 52% - 94%
                                             card.spawn(Node {
                                                 position_type: PositionType::Absolute,
-                                                left: Val::Percent(15.0),
-                                                width: Val::Percent(70.0),
-                                                top: Val::Percent(60.0),
-                                                height: Val::Percent(31.0),
+                                                left: Val::Percent(12.0),
+                                                width: Val::Percent(76.0),
+                                                top: Val::Percent(52.0),
+                                                height: Val::Percent(42.0),
                                                 flex_direction: FlexDirection::Column,
                                                 align_items: AlignItems::Center,
-                                                justify_content: JustifyContent::FlexStart,
+                                                justify_content: JustifyContent::Center,
                                                 overflow: Overflow::clip(),
                                                 row_gap: Val::Px(2.0),
-                                                padding: UiRect::all(Val::Px(4.0)),
+                                                padding: UiRect::all(Val::Px(2.0)),
                                                 ..default()
                                             })
                                             .with_children(
                                                 |tb| {
-                                                    // Name: 15 px, dark ink #3B2F2A
-                                                    tb.spawn((
-                                                        Text::new(&item.name),
-                                                        TextFont {
-                                                            font_size: FontSize::Px(15.0),
-                                                            ..default()
-                                                        },
-                                                        TextColor(INK_PARCHMENT),
-                                                        TextLayout {
-                                                            justify: Justify::Center,
-                                                            linebreak: LineBreak::WordBoundary,
-                                                        },
-                                                    ));
-                                                    // Kind: 11 px, dark ink #3B2F2A
                                                     tb.spawn((
                                                         Text::new(kind_str),
                                                         TextFont {
-                                                            font_size: FontSize::Px(11.0),
+                                                            font_size: FontSize::Px(24.0),
                                                             ..default()
                                                         },
                                                         TextColor(INK_PARCHMENT),
@@ -634,11 +614,10 @@ fn sync_overlays(
                                                             linebreak: LineBreak::WordBoundary,
                                                         },
                                                     ));
-                                                    // Description: 12 px (or 11 if doesn't fit) with line height 1.1, dark ink #3B2F2A
                                                     tb.spawn((
                                                         Text::new(&item.description),
                                                         TextFont {
-                                                            font_size: FontSize::Px(desc_font),
+                                                            font_size: FontSize::Px(24.0),
                                                             ..default()
                                                         },
                                                         TextColor(INK_PARCHMENT),
@@ -680,13 +659,13 @@ fn sync_overlays(
                     parent
                         .spawn((
                             Node {
-                                padding: UiRect::all(Val::Px(24.0)),
+                                padding: UiRect::all(Val::Px(28.0)),
                                 flex_direction: FlexDirection::Column,
                                 align_items: AlignItems::Center,
                                 justify_content: JustifyContent::Center,
-                                row_gap: Val::Px(14.0),
-                                min_width: Val::Px(360.0),
-                                min_height: Val::Px(280.0),
+                                row_gap: Val::Px(16.0),
+                                min_width: Val::Px(420.0),
+                                min_height: Val::Px(300.0),
                                 ..default()
                             },
                             ImageNode {
@@ -715,7 +694,7 @@ fn sync_overlays(
                             // Title
                             panel.spawn((
                                 Text::new(if *won { "Victory!" } else { "Run lost" }),
-                                TextFont { font_size: FontSize::Px(28.0), ..default() },
+                                TextFont { font_size: FontSize::Px(48.0), ..default() },
                                 TextColor(INK_PARCHMENT),
                                 TextLayout { justify: Justify::Center, ..default() },
                             ));
@@ -723,7 +702,7 @@ fn sync_overlays(
                             let floor_num = if *won { 8 } else { run.state.floor + 1 };
                             panel.spawn((
                                 Text::new(format!("Reached floor {floor_num}")),
-                                TextFont { font_size: FontSize::Px(16.0), ..default() },
+                                TextFont { font_size: FontSize::Px(24.0), ..default() },
                                 TextColor(INK_PARCHMENT),
                                 TextLayout { justify: Justify::Center, ..default() },
                             ));
@@ -736,8 +715,8 @@ fn sync_overlays(
                                     NewRunButton,
                                     ButtonVisuals::GOLD,
                                     Node {
-                                        width: Val::Px(160.0),
-                                        height: Val::Px(48.0),
+                                        width: Val::Px(200.0),
+                                        height: Val::Px(56.0),
                                         justify_content: JustifyContent::Center,
                                         align_items: AlignItems::Center,
                                         ..default()
@@ -751,7 +730,7 @@ fn sync_overlays(
                                 ))
                                 .with_child((
                                     Text::new("New run"),
-                                    TextFont { font_size: FontSize::Px(18.0), ..default() },
+                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
                                     TextColor(INK_WOOD),
                                 ));
                         });
@@ -780,13 +759,17 @@ fn update_draft_card_sizes(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_hand_bar(
     mut commands: Commands,
     state: Res<GameState>,
     run: Res<Run>,
     title_menu: Res<TitleMenu>,
     atlas: Res<Atlas>,
-    mut last_key: Local<Option<(bool, [Option<tc_core::SpellId>; 3], [bool; 3], usize, bool, Option<usize>)>>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    mut last_key: Local<
+        Option<(bool, [Option<tc_core::SpellId>; 3], [bool; 3], usize, bool, Option<usize>, (u32, u32))>,
+    >,
     hand_bar_query: Query<Entity, With<HandBar>>,
 ) {
     let side = state.game.pos.side_to_move;
@@ -803,7 +786,11 @@ fn sync_hand_bar(
     let can_discard = state.game.can_discard_hand(side);
     let armed_slot = state.armed_slot;
 
-    let current_key = (show, hand_cards, hand_used, deck_len, can_discard, armed_slot);
+    let win = window.iter().next();
+    let (win_w, win_h) = win.map(|w| (w.width(), w.height())).unwrap_or((1280.0, 800.0));
+    let win_dim = (win_w as u32, win_h as u32);
+
+    let current_key = (show, hand_cards, hand_used, deck_len, can_discard, armed_slot, win_dim);
 
     if *last_key == Some(current_key) {
         return;
@@ -818,9 +805,39 @@ fn sync_hand_bar(
         return;
     }
 
-    let (card_size, _) = integer_scaled_size(&atlas, "gui_card_spell", 160.0);
-    let art_win_h = card_size.y * 0.46;
-    let (slot_empty_size, _) = integer_scaled_size(&atlas, "card_slot_empty", card_size.y);
+    // Integer scaling for cards:
+    // Fits 3 cards within phone width; desktop card height ~30% of window height.
+    let max_scale_w = ((win_w * 0.90) / (2.7 * 59.0)).floor() as u32;
+    let target_scale_h = ((win_h * 0.30) / 81.0).round() as u32;
+    let scale = target_scale_h.min(max_scale_w).max(1);
+
+    let card_w = 59.0 * scale as f32;
+    let card_h = 81.0 * scale as f32;
+    let art_win_h = card_h * 0.46;
+
+    // Resting card position: about 20% of card bottom is off screen.
+    // Clamped so fan never covers more than bottom ~26% of screen.
+    let max_visible_h = win_h * 0.26;
+    let base_offscreen = 0.20 * card_h;
+    let mut resting_bottom = -base_offscreen;
+    let resting_visible_h = card_h + resting_bottom;
+    if resting_visible_h > max_visible_h {
+        resting_bottom -= resting_visible_h - max_visible_h;
+    }
+    let lift_px = 0.18 * card_h;
+
+    let present_slots: Vec<usize> = (0..3).filter(|&i| hand_cards[i].is_some()).collect();
+    let n = present_slots.len();
+
+    let overlap = if win_w < 500.0 { 0.37 } else { 0.15 };
+    let dx = (1.0 - overlap) * card_w;
+
+    let center_x = if win_w < 600.0 {
+        let sidebar_zone = 92.0 + 6.0 + 8.0;
+        (win_w - sidebar_zone) * 0.5
+    } else {
+        win_w * 0.5
+    };
 
     commands
         .spawn((
@@ -830,413 +847,296 @@ fn sync_hand_bar(
                 position_type: PositionType::Absolute,
                 left: Val::Px(0.0),
                 right: Val::Px(0.0),
-                bottom: Val::Px(16.0),
-                justify_content: JustifyContent::Center,
-                align_items: AlignItems::FlexEnd,
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(12.0),
-                padding: UiRect::horizontal(Val::Px(12.0)),
+                bottom: Val::Px(0.0),
+                height: Val::Px(card_h + lift_px),
+                overflow: Overflow::visible(),
                 ..default()
             },
         ))
-        .with_children(|hand_bar| {
-            // Sliced hand_tray panel behind the 3 cards
-            hand_bar
-                .spawn((
-                    Node {
-                        flex_direction: FlexDirection::Row,
-                        align_items: AlignItems::FlexEnd,
-                        justify_content: JustifyContent::Center,
-                        column_gap: Val::Px(8.0),
-                        padding: UiRect {
-                            left: Val::Px(12.0),
-                            right: Val::Px(12.0),
-                            top: Val::Px(10.0),
-                            bottom: Val::Px(10.0),
-                        },
-                        ..default()
+        .with_children(|root| {
+            // Spawn fanned cards
+            for (k, &slot_idx) in present_slots.iter().enumerate() {
+                let Some(spell) = hand_cards[slot_idx] else { continue };
+                let is_used = hand_used[slot_idx];
+                let is_armed = armed_slot == Some(slot_idx);
+
+                let (base_angle_deg, drop_y) = match n {
+                    3 => match k {
+                        0 => (-6.0, 0.04 * card_h),
+                        1 => (0.0, 0.0),
+                        _ => (6.0, 0.04 * card_h),
                     },
-                    ImageNode {
-                        image: atlas.image.clone(),
-                        rect: Some(atlas.rect("hand_tray")),
-                        image_mode: panel_slicer(),
+                    2 => match k {
+                        0 => (-4.0, 0.03 * card_h),
+                        _ => (4.0, 0.03 * card_h),
+                    },
+                    _ => (0.0, 0.0),
+                };
+
+                let pivot = Vec2::new(0.0, 0.5 * card_h);
+                let rot = Rot2::degrees(base_angle_deg);
+                let resting_pivot_offset = pivot - rot * pivot;
+
+                let card_center_x = center_x + (k as f32 - (n as f32 - 1.0) * 0.5) * dx;
+                let card_left = card_center_x - 0.5 * card_w;
+                let card_bottom = resting_bottom - drop_y;
+
+                let (rotation, translation, z_idx) = if is_armed {
+                    (Rot2::IDENTITY, Val2::px(0.0, -lift_px), ZIndex(10))
+                } else {
+                    (rot, Val2::px(resting_pivot_offset.x, resting_pivot_offset.y), ZIndex(k as i32 + 1))
+                };
+
+                let art_name = format!("art_{}", spell_item_id(spell));
+                let (art_size, _) = integer_scaled_size(&atlas, &art_name, art_win_h);
+
+                root.spawn((
+                    Button,
+                    Interaction::default(),
+                    HandCard { slot_idx, base_angle_deg, resting_pivot_offset, lift_px, is_used },
+                    UiTransform { translation, rotation, ..default() },
+                    z_idx,
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(card_left),
+                        bottom: Val::Px(card_bottom),
+                        width: Val::Px(card_w),
+                        height: Val::Px(card_h),
+                        overflow: Overflow::visible(),
                         ..default()
                     },
                 ))
-                .with_children(|tray| {
-                    for slot_idx in 0..3 {
-                        let card_opt = hand_cards[slot_idx];
-                        let is_used = hand_used[slot_idx];
-                        let is_armed = armed_slot == Some(slot_idx);
+                .with_children(|card_root| {
+                    // Highlight behind card
+                    card_root.spawn((
+                        HandCardHighlight(slot_idx),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Percent(-5.0),
+                            top: Val::Percent(-5.0),
+                            width: Val::Percent(110.0),
+                            height: Val::Percent(110.0),
+                            display: if is_armed { Display::Flex } else { Display::None },
+                            ..default()
+                        },
+                        ImageNode {
+                            image: atlas.image.clone(),
+                            rect: Some(atlas.rect("gui_card_highlight")),
+                            image_mode: NodeImageMode::Stretch,
+                            ..default()
+                        },
+                    ));
 
-                        if let Some(spell) = card_opt {
-                            let art_name = format!("art_{}", spell_item_id(spell));
-                            let (art_size, _) = integer_scaled_size(&atlas, &art_name, art_win_h);
-
-                            if !is_used {
-                                let top = if is_armed { Val::Px(-8.0) } else { Val::Px(0.0) };
-
-                                tray.spawn((
-                                    Button,
-                                    Interaction::default(),
-                                    HandCard { slot_idx },
-                                    Node {
-                                        width: Val::Px(card_size.x),
-                                        height: Val::Px(card_size.y),
-                                        position_type: PositionType::Relative,
-                                        top,
-                                        overflow: Overflow::visible(),
-                                        ..default()
-                                    },
-                                ))
-                                .with_children(|card_root| {
-                                    // Armed / hovered highlight overlay BEHIND the card, ~10% larger and centred on it
-                                    card_root.spawn((
-                                        HandCardHighlight(slot_idx),
-                                        Node {
-                                            position_type: PositionType::Absolute,
-                                            left: Val::Percent(-5.0),
-                                            top: Val::Percent(-5.0),
-                                            width: Val::Percent(110.0),
-                                            height: Val::Percent(110.0),
-                                            display: if is_armed { Display::Flex } else { Display::None },
-                                            ..default()
-                                        },
-                                        ImageNode {
-                                            image: atlas.image.clone(),
-                                            rect: Some(atlas.rect("gui_card_highlight")),
-                                            image_mode: NodeImageMode::Stretch,
-                                            ..default()
-                                        },
-                                    ));
-
-                                    // Card body on top of highlight
-                                    card_root
-                                        .spawn((
-                                            Node {
-                                                position_type: PositionType::Absolute,
-                                                left: Val::Px(0.0),
-                                                top: Val::Px(0.0),
-                                                width: Val::Percent(100.0),
-                                                height: Val::Percent(100.0),
-                                                overflow: Overflow::clip(),
-                                                ..default()
-                                            },
-                                            ImageNode {
-                                                image: atlas.image.clone(),
-                                                rect: Some(atlas.rect("gui_card_spell")),
-                                                image_mode: NodeImageMode::Auto,
-                                                ..default()
-                                            },
-                                        ))
-                                        .with_children(|card| {
-                                            // Art window: spans x 12%-88%, y 8%-54%
-                                            card.spawn(Node {
-                                                position_type: PositionType::Absolute,
-                                                left: Val::Percent(12.0),
-                                                width: Val::Percent(76.0),
-                                                top: Val::Percent(8.0),
-                                                height: Val::Percent(46.0),
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                overflow: Overflow::clip(),
-                                                ..default()
-                                            })
-                                            .with_child((
-                                                Node {
-                                                    width: Val::Px(art_size.x),
-                                                    height: Val::Px(art_size.y),
-                                                    ..default()
-                                                },
-                                                ImageNode {
-                                                    image: atlas.image.clone(),
-                                                    rect: Some(atlas.rect(&art_name)),
-                                                    image_mode: NodeImageMode::Auto,
-                                                    ..default()
-                                                },
-                                            ));
-
-                                            // Parchment text box: spans x 15%-85%, y 60%-91%
-                                            card.spawn(Node {
-                                                position_type: PositionType::Absolute,
-                                                left: Val::Percent(15.0),
-                                                width: Val::Percent(70.0),
-                                                top: Val::Percent(60.0),
-                                                height: Val::Percent(31.0),
-                                                flex_direction: FlexDirection::Column,
-                                                align_items: AlignItems::Center,
-                                                justify_content: JustifyContent::FlexStart,
-                                                overflow: Overflow::clip(),
-                                                row_gap: Val::Px(1.0),
-                                                padding: UiRect::all(Val::Px(1.0)),
-                                                ..default()
-                                            })
-                                            .with_children(
-                                                |tb| {
-                                                    tb.spawn((
-                                                        Text::new(spell_name(spell)),
-                                                        TextFont {
-                                                            font_size: FontSize::Px(11.0),
-                                                            ..default()
-                                                        },
-                                                        TextColor(INK_PARCHMENT),
-                                                        TextLayout {
-                                                            justify: Justify::Center,
-                                                            linebreak: LineBreak::WordBoundary,
-                                                        },
-                                                    ));
-                                                    if spell.is_quick() {
-                                                        tb.spawn((
-                                                            Text::new("Quick"),
-                                                            TextFont {
-                                                                font_size: FontSize::Px(10.0),
-                                                                ..default()
-                                                            },
-                                                            TextColor(INK_PARCHMENT),
-                                                            TextLayout {
-                                                                justify: Justify::Center,
-                                                                linebreak: LineBreak::NoWrap,
-                                                            },
-                                                        ));
-                                                    }
-                                                    tb.spawn((
-                                                        Text::new(format!("[{}]", slot_idx + 5)),
-                                                        TextFont {
-                                                            font_size: FontSize::Px(10.0),
-                                                            ..default()
-                                                        },
-                                                        TextColor(Color::srgba(0.23, 0.18, 0.16, 0.60)),
-                                                        TextLayout {
-                                                            justify: Justify::Center,
-                                                            linebreak: LineBreak::NoWrap,
-                                                        },
-                                                    ));
-                                                },
-                                            );
-                                        });
-                                });
-                            } else {
-                                // Used hand slot: overlay gui_card_used at 70% alpha
-                                tray.spawn((
-                                    Node {
-                                        width: Val::Px(card_size.x),
-                                        height: Val::Px(card_size.y),
-                                        position_type: PositionType::Relative,
-                                        overflow: Overflow::clip(),
-                                        ..default()
-                                    },
-                                    ImageNode {
-                                        image: atlas.image.clone(),
-                                        rect: Some(atlas.rect("gui_card_spell")),
-                                        image_mode: NodeImageMode::Auto,
-                                        ..default()
-                                    },
-                                ))
-                                .with_children(|card| {
-                                    card.spawn(Node {
-                                        position_type: PositionType::Absolute,
-                                        left: Val::Percent(12.0),
-                                        width: Val::Percent(76.0),
-                                        top: Val::Percent(8.0),
-                                        height: Val::Percent(46.0),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        overflow: Overflow::clip(),
-                                        ..default()
-                                    })
-                                    .with_child((
-                                        Node {
-                                            width: Val::Px(art_size.x),
-                                            height: Val::Px(art_size.y),
-                                            ..default()
-                                        },
-                                        ImageNode {
-                                            image: atlas.image.clone(),
-                                            rect: Some(atlas.rect(&art_name)),
-                                            image_mode: NodeImageMode::Auto,
-                                            ..default()
-                                        },
-                                    ));
-
-                                    card.spawn(Node {
-                                        position_type: PositionType::Absolute,
-                                        left: Val::Percent(15.0),
-                                        width: Val::Percent(70.0),
-                                        top: Val::Percent(60.0),
-                                        height: Val::Percent(31.0),
-                                        flex_direction: FlexDirection::Column,
-                                        align_items: AlignItems::Center,
-                                        justify_content: JustifyContent::FlexStart,
-                                        overflow: Overflow::clip(),
-                                        row_gap: Val::Px(1.0),
-                                        padding: UiRect::all(Val::Px(1.0)),
-                                        ..default()
-                                    })
-                                    .with_children(|tb| {
-                                        tb.spawn((
-                                            Text::new(spell_name(spell)),
-                                            TextFont { font_size: FontSize::Px(11.0), ..default() },
-                                            TextColor(INK_PARCHMENT),
-                                            TextLayout {
-                                                justify: Justify::Center,
-                                                linebreak: LineBreak::WordBoundary,
-                                            },
-                                        ));
-                                        tb.spawn((
-                                            Text::new("Used"),
-                                            TextFont { font_size: FontSize::Px(10.0), ..default() },
-                                            TextColor(INK_PARCHMENT),
-                                            TextLayout {
-                                                justify: Justify::Center,
-                                                linebreak: LineBreak::NoWrap,
-                                            },
-                                        ));
-                                    });
-
-                                    // gui_card_used at 70% alpha
-                                    card.spawn((
-                                        Node {
-                                            position_type: PositionType::Absolute,
-                                            left: Val::Px(0.0),
-                                            top: Val::Px(0.0),
-                                            right: Val::Px(0.0),
-                                            bottom: Val::Px(0.0),
-                                            ..default()
-                                        },
-                                        ImageNode {
-                                            image: atlas.image.clone(),
-                                            rect: Some(atlas.rect("gui_card_used")),
-                                            color: Color::srgba(1.0, 1.0, 1.0, 0.70),
-                                            image_mode: NodeImageMode::Stretch,
-                                            ..default()
-                                        },
-                                    ));
-                                });
-                            }
-                        } else {
-                            // Empty slot: card_slot_empty
-                            tray.spawn(Node {
-                                width: Val::Px(card_size.x),
-                                height: Val::Px(card_size.y),
+                    // Card body
+                    card_root
+                        .spawn((
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(0.0),
+                                top: Val::Px(0.0),
+                                width: Val::Percent(100.0),
+                                height: Val::Percent(100.0),
+                                overflow: Overflow::clip(),
+                                ..default()
+                            },
+                            ImageNode {
+                                image: atlas.image.clone(),
+                                rect: Some(atlas.rect("gui_card_spell")),
+                                image_mode: NodeImageMode::Auto,
+                                ..default()
+                            },
+                        ))
+                        .with_children(|card| {
+                            // Art window: spans x 12%-88%, y 8%-50%
+                            card.spawn(Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(12.0),
+                                width: Val::Percent(76.0),
+                                top: Val::Percent(8.0),
+                                height: Val::Percent(42.0),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
                                 overflow: Overflow::clip(),
                                 ..default()
                             })
                             .with_child((
-                                Node {
-                                    width: Val::Px(slot_empty_size.x),
-                                    height: Val::Px(slot_empty_size.y),
-                                    ..default()
-                                },
+                                Node { width: Val::Px(art_size.x), height: Val::Px(art_size.y), ..default() },
                                 ImageNode {
                                     image: atlas.image.clone(),
-                                    rect: Some(atlas.rect("card_slot_empty")),
+                                    rect: Some(atlas.rect(&art_name)),
                                     image_mode: NodeImageMode::Auto,
                                     ..default()
                                 },
                             ));
-                        }
-                    }
-                });
 
-            // To the right: deck_pile and Discard button
-            hand_bar
-                .spawn(Node {
+                            // Parchment text box: spans x 12%-88%, y 52%-94%
+                            card.spawn(Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Percent(12.0),
+                                width: Val::Percent(76.0),
+                                top: Val::Percent(52.0),
+                                height: Val::Percent(42.0),
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                justify_content: JustifyContent::Center,
+                                overflow: Overflow::clip(),
+                                row_gap: Val::Px(2.0),
+                                padding: UiRect::all(Val::Px(2.0)),
+                                ..default()
+                            })
+                            .with_children(|tb| {
+                                tb.spawn((
+                                    Text::new(spell_name(spell)),
+                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                    TextColor(INK_PARCHMENT),
+                                    TextLayout {
+                                        justify: Justify::Center,
+                                        linebreak: LineBreak::WordBoundary,
+                                    },
+                                ));
+                                let subtext = if is_used {
+                                    "Used".to_string()
+                                } else if spell.is_quick() {
+                                    format!("[{}] Quick", slot_idx + 5)
+                                } else {
+                                    format!("[{}]", slot_idx + 5)
+                                };
+                                tb.spawn((
+                                    Text::new(subtext),
+                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                    TextColor(INK_PARCHMENT),
+                                    TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
+                                ));
+                            });
+
+                            if is_used {
+                                card.spawn((
+                                    Node {
+                                        position_type: PositionType::Absolute,
+                                        left: Val::Px(0.0),
+                                        top: Val::Px(0.0),
+                                        right: Val::Px(0.0),
+                                        bottom: Val::Px(0.0),
+                                        ..default()
+                                    },
+                                    ImageNode {
+                                        image: atlas.image.clone(),
+                                        rect: Some(atlas.rect("gui_card_used")),
+                                        color: Color::srgba(1.0, 1.0, 1.0, 0.70),
+                                        image_mode: NodeImageMode::Stretch,
+                                        ..default()
+                                    },
+                                ));
+                            }
+                        });
+                });
+            }
+
+            // To the right: Discard button above, deck pile below (bottom-right)
+            root.spawn((
+                Node {
+                    position_type: PositionType::Absolute,
+                    right: Val::Px(if win_w < 600.0 { 6.0 } else { 24.0 }),
+                    bottom: Val::Px(16.0),
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::FlexEnd,
                     align_items: AlignItems::Center,
                     row_gap: Val::Px(8.0),
                     ..default()
-                })
-                .with_children(|sidebar| {
-                    // Deck pile with count drawn on it in light ink
-                    let (deck_size, _) = integer_scaled_size(&atlas, "deck_pile", 46.0);
-                    sidebar
-                        .spawn((
+                },
+                GlobalZIndex(15),
+            ))
+            .with_children(|sidebar| {
+                // 1. Discard button
+                let (icon_discard_size, _) = integer_scaled_size(&atlas, "icon_discard", 44.0);
+                let (btn_initial, text_color) = if can_discard {
+                    ("btn_wood", INK_WOOD)
+                } else {
+                    ("btn_wood_disabled", Color::srgba(0.97, 0.93, 0.82, 0.40))
+                };
+
+                sidebar
+                    .spawn((
+                        Button,
+                        Interaction::default(),
+                        DiscardButton,
+                        ButtonVisuals::WOOD,
+                        ButtonDisabled(!can_discard),
+                        Node {
+                            width: Val::Px(if win_w < 600.0 { 92.0 } else { 112.0 }),
+                            height: Val::Px(if win_w < 600.0 { 70.0 } else { 78.0 }),
+                            flex_direction: FlexDirection::Column,
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            row_gap: Val::Px(2.0),
+                            ..default()
+                        },
+                        ImageNode {
+                            image: atlas.image.clone(),
+                            rect: Some(atlas.rect(btn_initial)),
+                            image_mode: button_slicer(),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|btn| {
+                        btn.spawn((
                             Node {
-                                width: Val::Px(deck_size.x),
-                                height: Val::Px(deck_size.y),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
+                                width: Val::Px(icon_discard_size.x),
+                                height: Val::Px(icon_discard_size.y),
                                 ..default()
                             },
                             ImageNode {
                                 image: atlas.image.clone(),
-                                rect: Some(atlas.rect("deck_pile")),
+                                rect: Some(atlas.rect("icon_discard")),
                                 image_mode: NodeImageMode::Auto,
                                 ..default()
                             },
-                        ))
-                        .with_child((
-                            Text::new(deck_len.to_string()),
-                            TextFont { font_size: FontSize::Px(16.0), ..default() },
-                            TextColor(INK_WOOD),
+                        ));
+                        btn.spawn((
+                            Text::new("Discard"),
+                            TextFont { font_size: FontSize::Px(24.0), ..default() },
+                            TextColor(text_color),
                             TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                         ));
+                    });
 
-                    // Discard button showing icon_discard (and text "Discard" below, 12 px) using btn_wood states
-                    let (icon_discard_size, _) = integer_scaled_size(&atlas, "icon_discard", 44.0);
-                    let (btn_initial, text_color) = if can_discard {
-                        ("btn_wood", INK_WOOD)
-                    } else {
-                        ("btn_wood_disabled", Color::srgba(0.97, 0.93, 0.82, 0.40))
-                    };
-
-                    sidebar
-                        .spawn((
-                            Button,
-                            Interaction::default(),
-                            DiscardButton,
-                            ButtonVisuals::WOOD,
-                            ButtonDisabled(!can_discard),
-                            Node {
-                                width: Val::Px(104.0),
-                                height: Val::Px(68.0),
-                                flex_direction: FlexDirection::Column,
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                row_gap: Val::Px(2.0),
-                                ..default()
-                            },
-                            ImageNode {
-                                image: atlas.image.clone(),
-                                rect: Some(atlas.rect(btn_initial)),
-                                image_mode: button_slicer(),
-                                ..default()
-                            },
-                        ))
-                        .with_children(|btn| {
-                            btn.spawn((
-                                Node {
-                                    width: Val::Px(icon_discard_size.x),
-                                    height: Val::Px(icon_discard_size.y),
-                                    ..default()
-                                },
-                                ImageNode {
-                                    image: atlas.image.clone(),
-                                    rect: Some(atlas.rect("icon_discard")),
-                                    image_mode: NodeImageMode::Auto,
-                                    ..default()
-                                },
-                            ));
-                            btn.spawn((
-                                Text::new("Discard"),
-                                TextFont { font_size: FontSize::Px(12.0), ..default() },
-                                TextColor(text_color),
-                                TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
-                            ));
-                        });
-                });
+                // 2. Deck pile with count drawn on it in light ink
+                let (deck_size, _) = integer_scaled_size(&atlas, "deck_pile", 46.0);
+                sidebar
+                    .spawn((
+                        Node {
+                            width: Val::Px(deck_size.x),
+                            height: Val::Px(deck_size.y),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            ..default()
+                        },
+                        ImageNode {
+                            image: atlas.image.clone(),
+                            rect: Some(atlas.rect("deck_pile")),
+                            image_mode: NodeImageMode::Auto,
+                            ..default()
+                        },
+                    ))
+                    .with_child((
+                        Text::new(deck_len.to_string()),
+                        TextFont { font_size: FontSize::Px(24.0), ..default() },
+                        TextColor(INK_WOOD),
+                        TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
+                    ));
+            });
         });
 }
 
 fn handle_hand_card_interaction(
-    mut card_query: Query<(&Interaction, &mut Node, &HandCard), (Changed<Interaction>, With<Button>)>,
+    mut card_query: Query<
+        (&Interaction, &mut UiTransform, &mut ZIndex, &HandCard),
+        (With<Button>, Or<(Changed<Interaction>, Added<HandCard>)>),
+    >,
     mut highlight_query: Query<(&mut Node, &HandCardHighlight), Without<HandCard>>,
     mut state: ResMut<GameState>,
 ) {
-    for (interaction, mut node, card) in &mut card_query {
+    for (interaction, mut transform, mut z_index, card) in &mut card_query {
         let is_armed = state.armed_slot == Some(card.slot_idx);
         let is_hovered = *interaction == Interaction::Hovered;
         let is_pressed = *interaction == Interaction::Pressed;
@@ -1245,16 +1145,21 @@ fn handle_hand_card_interaction(
             state.arm_slot(card.slot_idx);
         }
 
-        if is_armed || is_hovered || is_pressed {
-            node.top = Val::Px(-8.0);
+        let active = !card.is_used && (is_armed || is_hovered || is_pressed);
+
+        if active {
+            transform.rotation = Rot2::IDENTITY;
+            transform.translation = Val2::px(0.0, -card.lift_px);
+            *z_index = ZIndex(10);
         } else {
-            node.top = Val::Px(0.0);
+            transform.rotation = Rot2::degrees(card.base_angle_deg);
+            transform.translation = Val2::px(card.resting_pivot_offset.x, card.resting_pivot_offset.y);
+            *z_index = ZIndex(card.slot_idx as i32 + 1);
         }
 
         for (mut hl_node, hl) in &mut highlight_query {
             if hl.0 == card.slot_idx {
-                let show = is_armed || is_hovered || is_pressed;
-                hl_node.display = if show { Display::Flex } else { Display::None };
+                hl_node.display = if active { Display::Flex } else { Display::None };
             }
         }
     }
@@ -1376,8 +1281,8 @@ fn sync_title_menu(
                     parent
                         .spawn((
                             Node {
-                                width: Val::Px(360.0),
-                                height: Val::Px(48.0),
+                                width: Val::Px(380.0),
+                                height: Val::Px(52.0),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
                                 ..default()
@@ -1391,18 +1296,18 @@ fn sync_title_menu(
                         ))
                         .with_child((
                             Text::new("Terrain Chess"),
-                            TextFont { font_size: FontSize::Px(32.0), ..default() },
+                            TextFont { font_size: FontSize::Px(48.0), ..default() },
                             TextColor(INK_WOOD),
                             TextLayout { justify: Justify::Center, ..default() },
                         ));
 
-                    // Column of buttons (min 260 x 52 px, 18 px text)
+                    // Column of buttons (min 280 x 56 px, 24 px text)
                     parent
                         .spawn(Node {
                             flex_direction: FlexDirection::Column,
                             row_gap: Val::Px(10.0),
                             align_items: AlignItems::Center,
-                            margin: UiRect::top(Val::Px(36.0)),
+                            margin: UiRect::top(Val::Px(16.0)),
                             ..default()
                         })
                         .with_children(|col| {
@@ -1413,9 +1318,9 @@ fn sync_title_menu(
                                     TitleContinueButton,
                                     ButtonVisuals::GOLD,
                                     Node {
-                                        min_width: Val::Px(260.0),
-                                        width: Val::Px(260.0),
-                                        height: Val::Px(52.0),
+                                        min_width: Val::Px(280.0),
+                                        width: Val::Px(280.0),
+                                        height: Val::Px(56.0),
                                         justify_content: JustifyContent::Center,
                                         align_items: AlignItems::Center,
                                         padding: UiRect::horizontal(Val::Px(12.0)),
@@ -1430,22 +1335,24 @@ fn sync_title_menu(
                                 ))
                                 .with_child((
                                     Text::new(format!("Continue - Floor {}/8", run.state.floor + 1)),
-                                    TextFont { font_size: FontSize::Px(18.0), ..default() },
+                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
                                     TextColor(INK_WOOD),
                                     TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                                 ));
                             }
 
-                            for (size, label) in [(8, "New run 8x8"), (16, "New run 16x16"), (32, "New run 32x32")] {
+                            for (size, label) in
+                                [(8, "New run 8x8"), (16, "New run 16x16"), (32, "New run 32x32")]
+                            {
                                 col.spawn((
                                     Button,
                                     Interaction::default(),
                                     TitleNewRunButton(size),
                                     ButtonVisuals::WOOD,
                                     Node {
-                                        min_width: Val::Px(260.0),
-                                        width: Val::Px(260.0),
-                                        height: Val::Px(52.0),
+                                        min_width: Val::Px(280.0),
+                                        width: Val::Px(280.0),
+                                        height: Val::Px(56.0),
                                         justify_content: JustifyContent::Center,
                                         align_items: AlignItems::Center,
                                         ..default()
@@ -1459,7 +1366,7 @@ fn sync_title_menu(
                                 ))
                                 .with_child((
                                     Text::new(label),
-                                    TextFont { font_size: FontSize::Px(18.0), ..default() },
+                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
                                     TextColor(INK_WOOD),
                                     TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                                 ));
@@ -1471,9 +1378,9 @@ fn sync_title_menu(
                                 TitleSandboxButton,
                                 ButtonVisuals::WOOD,
                                 Node {
-                                    min_width: Val::Px(260.0),
-                                    width: Val::Px(260.0),
-                                    height: Val::Px(52.0),
+                                    min_width: Val::Px(280.0),
+                                    width: Val::Px(280.0),
+                                    height: Val::Px(56.0),
                                     justify_content: JustifyContent::Center,
                                     align_items: AlignItems::Center,
                                     ..default()
@@ -1487,36 +1394,11 @@ fn sync_title_menu(
                             ))
                             .with_child((
                                 Text::new("Sandbox"),
-                                TextFont { font_size: FontSize::Px(18.0), ..default() },
+                                TextFont { font_size: FontSize::Px(24.0), ..default() },
                                 TextColor(INK_WOOD),
                                 TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                             ));
                         });
-
-                    // Control hints box in panel_gui_glass
-                    parent
-                        .spawn((
-                            Node {
-                                padding: UiRect::axes(Val::Px(14.0), Val::Px(6.0)),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                max_width: Val::Px(560.0),
-                                margin: UiRect::top(Val::Px(4.0)),
-                                ..default()
-                            },
-                            ImageNode {
-                                image: atlas.image.clone(),
-                                rect: Some(atlas.rect("panel_gui_glass")),
-                                image_mode: panel_slicer(),
-                                ..default()
-                            },
-                        ))
-                        .with_child((
-                            Text::new("Mouse: Left-click select/move  |  Right-drag orbit  |  Wheel zoom  |  WASD pan\nTouch: Tap select  |  Drag pan  |  Pinch zoom  |  Keys: 5-7 Spells  |  D Discard  |  M Mute  |  Esc Menu"),
-                            TextFont { font_size: FontSize::Px(13.0), ..default() },
-                            TextColor(INK_WOOD),
-                            TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
-                        ));
                 });
         });
 }

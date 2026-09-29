@@ -16,40 +16,50 @@ mod save;
 mod scenery;
 mod sfx;
 
-use bevy::asset::AssetMetaCheck;
+use bevy::asset::{AssetId, AssetMetaCheck};
 use bevy::prelude::*;
+use bevy::text::Font;
+
+const JACQUARD_FONT: &[u8] = include_bytes!("../../../assets/fonts/Jacquard24-Regular.ttf");
 
 fn main() {
-    App::new()
-        .add_plugins(
-            DefaultPlugins
-                .set(ImagePlugin::default_nearest())
-                // Assets have no .meta files; don't request them (they 404 on the web).
-                .set(AssetPlugin { meta_check: AssetMetaCheck::Never, ..default() })
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Terrain Chess".into(),
-                        canvas: Some("#bevy".into()),
-                        fit_canvas_to_parent: true,
-                        prevent_default_event_handling: true,
-                        ..default()
-                    }),
+    let mut app = App::new();
+    app.add_plugins(
+        DefaultPlugins
+            .set(ImagePlugin::default_nearest())
+            // Assets have no .meta files; don't request them (they 404 on the web).
+            .set(AssetPlugin { meta_check: AssetMetaCheck::Never, ..default() })
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Terrain Chess".into(),
+                    canvas: Some("#bevy".into()),
+                    fit_canvas_to_parent: true,
+                    prevent_default_event_handling: true,
                     ..default()
                 }),
-        )
-        .insert_resource(ClearColor(Color::srgb_u8(0xA9, 0xB8, 0xC4)))
-        .add_plugins((
-            loading::LoadingPlugin,
-            atlas::AtlasPlugin,
-            ai::AiPlugin,
-            run::RunPlugin,
-            game::GamePlugin,
-            board_view::BoardViewPlugin,
-            scenery::SceneryPlugin,
-            input::InputPlugin,
-            hud::HudPlugin,
-            fx::FxPlugin,
-            sfx::SfxPlugin,
-        ))
-        .run();
+                ..default()
+            }),
+    )
+    .insert_resource(ClearColor(Color::srgb_u8(0xA9, 0xB8, 0xC4)))
+    .add_plugins((
+        loading::LoadingPlugin,
+        atlas::AtlasPlugin,
+        ai::AiPlugin,
+        run::RunPlugin,
+        game::GamePlugin,
+        board_view::BoardViewPlugin,
+        scenery::SceneryPlugin,
+        input::InputPlugin,
+        hud::HudPlugin,
+        fx::FxPlugin,
+        sfx::SfxPlugin,
+    ));
+
+    let font = Font::from_bytes(JACQUARD_FONT.to_vec());
+    app.world_mut()
+        .resource_mut::<Assets<Font>>()
+        .insert(AssetId::default(), font)
+        .expect("insert default font");
+
+    app.run();
 }

@@ -45,3 +45,8 @@ python3 tools/process_sprites.py --preview /tmp/atlas_preview.png
 ```
 
 The region table at the top of the script maps sheet cells to sprite names.
+
+## Credits
+
+- UI font: **Jacquard 24** by The Soft Type Project (Sarah Cadigan-Fried), licensed under the SIL Open Font License, Version 1.1 (`assets/fonts/OFL.txt`).
+
