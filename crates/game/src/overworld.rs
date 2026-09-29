@@ -8,6 +8,7 @@
 )]
 use bevy::input::keyboard::KeyCode;
 use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
+use bevy::input::touch::Touches;
 use bevy::prelude::*;
 
 use crate::atlas::Atlas;
@@ -17,7 +18,7 @@ use crate::board_view::{
 };
 use crate::game::{GameState, Mode};
 use crate::hud::{ButtonDisabled, ButtonVisuals, INK_WOOD, button_slicer, panel_slicer};
-use crate::input::{MainCamera, Orbit};
+use crate::input::{MainCamera, OVERWORLD_START_DISTANCE, Orbit, TAP_SLOP};
 use crate::loading::AppState;
 use crate::run::{Campaign, TitleMenu};
 use crate::scenery::{Bird, SceneryPart};
@@ -100,10 +101,18 @@ pub struct OverworldPlugin;
 impl Plugin for OverworldPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<OverworldState>()
+            .init_resource::<OverworldMouseGesture>()
+            .init_resource::<OverworldTouchGesture>()
             .add_systems(OnEnter(Mode::Overworld), (hide_classic, setup_overworld))
             .add_systems(
                 Update,
-                (update_overworld_map, update_overworld_hud, handle_overworld_input, animate_hero)
+                (
+                    update_overworld_map,
+                    update_overworld_hud,
+                    overworld_pointer,
+                    handle_overworld_input,
+                    animate_hero,
+                )
                     .chain()
                     .run_if(in_state(Mode::Overworld)),
             )
@@ -283,6 +292,20 @@ struct OverworldHero;
 #[derive(Component)]
 struct OverworldHudRoot;
 
+#[derive(Resource, Default)]
+struct OverworldMouseGesture {
+    active: bool,
+    dragged: bool,
+    start: Vec2,
+    last: Vec2,
+}
+
+#[derive(Resource, Default)]
+struct OverworldTouchGesture {
+    active: bool,
+    dragged: bool,
+}
+
 fn setup_overworld(
     commands: Commands,
     campaign: Option<Res<Campaign>>,
@@ -297,11 +320,15 @@ fn setup_overworld(
 
     if let Some(c) = campaign {
         if let Some(mut o) = orbit.iter_mut().next() {
+            o.distance = OVERWORLD_START_DISTANCE;
             if let Some(hero) = c.world.heroes.get(0) {
-                o.pan(Vec2::ZERO); // reset panning somewhat
-                // Orbit doesn't have a public setter for focus. But wait, focus IS public!
                 o.focus = Vec3::new(hero.pos.x as f32, 0.0, hero.pos.y as f32);
+            } else {
+                let (width, height) = c.world.map.size;
+                o.focus = Vec3::new((width as f32 - 1.0) / 2.0, 0.0, (height as f32 - 1.0) / 2.0);
             }
+            let (width, height) = c.world.map.size;
+            o.clamp_overworld_focus(width, height);
         }
     }
 }
@@ -596,13 +623,128 @@ fn pick_overworld_tile(c: &Campaign, ray: Ray3d) -> Option<MapPos> {
     best.map(|b| b.1)
 }
 
+fn overworld_pointer(
+    touches: Res<Touches>,
+    mouse: Res<ButtonInput<MouseButton>>,
+    window: Single<&Window, With<bevy::window::PrimaryWindow>>,
+    camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
+    campaign: Option<Res<Campaign>>,
+    mut state: ResMut<OverworldState>,
+    mut orbit: ResMut<Orbit>,
+    mut mouse_gesture: ResMut<OverworldMouseGesture>,
+    mut touch_gesture: ResMut<OverworldTouchGesture>,
+    ui_query: Query<&Interaction>,
+) {
+    let Some(campaign) = campaign else {
+        *mouse_gesture = OverworldMouseGesture::default();
+        *touch_gesture = OverworldTouchGesture::default();
+        return;
+    };
+    let can_select = !state.campaign_over && !state.moving && state.encounter.is_none();
+    let on_ui = || ui_query.iter().any(|&interaction| interaction != Interaction::None);
+
+    if mouse.just_pressed(MouseButton::Left) {
+        *mouse_gesture = OverworldMouseGesture::default();
+        if !on_ui() {
+            if let Some(cursor) = window.cursor_position() {
+                mouse_gesture.active = true;
+                mouse_gesture.start = cursor;
+                mouse_gesture.last = cursor;
+            }
+        }
+    }
+    if mouse.pressed(MouseButton::Left) && mouse_gesture.active {
+        if let Some(cursor) = window.cursor_position() {
+            if cursor.distance(mouse_gesture.start) > TAP_SLOP {
+                mouse_gesture.dragged = true;
+            }
+            if mouse_gesture.dragged {
+                orbit.pan(cursor - mouse_gesture.last);
+            }
+            mouse_gesture.last = cursor;
+        }
+    }
+    if mouse.just_released(MouseButton::Left) {
+        if mouse_gesture.active && !mouse_gesture.dragged && can_select {
+            if let Some(cursor) = window.cursor_position() {
+                select_overworld_tile(&campaign, *camera, cursor, &mut state);
+            }
+        }
+        *mouse_gesture = OverworldMouseGesture::default();
+    }
+
+    if touches.any_just_pressed() && !touch_gesture.active && !on_ui() {
+        *touch_gesture = OverworldTouchGesture { active: true, dragged: false };
+    }
+    if touch_gesture.active {
+        let down: Vec<_> = touches.iter().collect();
+        match down.as_slice() {
+            [touch] => {
+                if touch.distance().length() > TAP_SLOP {
+                    touch_gesture.dragged = true;
+                }
+                if touch_gesture.dragged {
+                    orbit.pan(touch.delta());
+                }
+            }
+            [a, b, ..] => {
+                touch_gesture.dragged = true;
+                let before = b.previous_position() - a.previous_position();
+                let now = b.position() - a.position();
+                if before.length() > 1.0 && now.length() > 1.0 {
+                    orbit.zoom_overworld_by(now.length() / before.length());
+                    orbit.turn(before.angle_to(now));
+                }
+                let avg_delta = (a.delta() + b.delta()) / 2.0;
+                orbit.pan(Vec2::new(avg_delta.x, 0.0));
+                orbit.tilt(avg_delta.y * 0.005);
+            }
+            [] => {
+                if can_select && !touch_gesture.dragged {
+                    if let Some(touch) = touches.iter_just_released().next() {
+                        select_overworld_tile(&campaign, *camera, touch.position(), &mut state);
+                    }
+                }
+                *touch_gesture = OverworldTouchGesture::default();
+            }
+            _ => {}
+        }
+    }
+
+    let (width, height) = campaign.world.map.size;
+    orbit.clamp_overworld_focus(width, height);
+}
+
+fn select_overworld_tile(
+    campaign: &Campaign,
+    camera: (&Camera, &GlobalTransform),
+    cursor: Vec2,
+    state: &mut OverworldState,
+) {
+    if let Ok(ray) = camera.0.viewport_to_world(camera.1, cursor) {
+        if let Some(pos) = pick_overworld_tile(campaign, ray) {
+            if state.selected_tile == Some(pos) {
+                if let Some(path) = campaign.world.path(0, pos) {
+                    state.path = Some(path);
+                    state.moving = true;
+                    state.selected_tile = None;
+                    state.dirty = true;
+                }
+            } else {
+                state.selected_tile = Some(pos);
+                state.dirty = true;
+            }
+        } else {
+            state.selected_tile = None;
+            state.dirty = true;
+        }
+    }
+}
+
 fn handle_overworld_input(
     keys: Res<ButtonInput<KeyCode>>,
     mut title_menu: ResMut<TitleMenu>,
     mut next_mode: ResMut<NextState<Mode>>,
-    camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
-    window: Single<&Window, With<bevy::window::PrimaryWindow>>,
-    mouse_buttons: Res<ButtonInput<MouseButton>>,
     campaign: Option<ResMut<Campaign>>,
     mut state: ResMut<OverworldState>,
 
@@ -719,31 +861,6 @@ fn handle_overworld_input(
                 c.world.hero_mut(0).unwrap().pos = pos;
                 state.encounter = c.world.move_hero(0, rival_pos);
                 state.dirty = true;
-            }
-        }
-    }
-
-    if mouse_buttons.just_pressed(MouseButton::Left) {
-        if let Some(cursor) = window.cursor_position() {
-            if let Ok(ray) = camera.0.viewport_to_world(camera.1, cursor) {
-                if let Some(pos) = pick_overworld_tile(&c, ray) {
-                    if state.selected_tile == Some(pos) {
-                        // walk
-                        if let Some(path) = c.world.path(0, pos) {
-                            state.path = Some(path);
-                            state.moving = true;
-                            state.selected_tile = None;
-                            state.dirty = true;
-                        }
-                    } else {
-                        // preview
-                        state.selected_tile = Some(pos);
-                        state.dirty = true;
-                    }
-                } else {
-                    state.selected_tile = None;
-                    state.dirty = true;
-                }
             }
         }
     }
