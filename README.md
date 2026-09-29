@@ -13,7 +13,7 @@ Specs live in [`specs/`](specs/README.md): [game design](specs/game-design.md), 
 | `specs/` | Specifications: game design, project plan, sprite specs |
 | `crates/core` (`tc_core`) | Rules, terrain, move generation, board generator. No Bevy. |
 | `crates/ai` (`tc_ai`) | Alpha-beta AI over `tc_core`, resumable in time slices. No Bevy. |
-| `crates/run` (`tc_run`) | Roguelike logic: run state, items, rewards, saves. No Bevy. |
+| `crates/run` (`tc_run`) | Levels, profile, items, draft rewards, saves. No Bevy. |
 | `crates/game` | Bevy 0.19 app: rendering, input, HUD (native + web) |
 | `tools/process_sprites.py` | Turns `assets/spritesheet.jpg` into `assets/atlas.png` + `atlas.ron` |
 | `web/` | Trunk page for the browser build |
@@ -33,8 +33,8 @@ cd web && trunk build --release      # optimised browser build in web/dist (abou
 
 You play the Ashen Sun against the AI by default. Controls: click to select and move · right-drag
 or Q/E to turn the board · right-drag up/down or Z/X to tilt · middle-drag / WASD to pan · wheel
-to zoom · U undo · N new run · 1/2/3 new run of 8/16/32 · F swaps sides with the AI ·
-- /= changes AI level (0–7) · A toggles threat markers · M mute · Menu button or Esc opens the title menu ·
+to zoom · U undo · N restart level · 1–4, 8–0 select level · F swaps sides with the AI ·
+- /= changes AI level (0–7) · A toggles threat markers · M mute · Menu button or Esc opens the level select menu ·
 spells: 15-card deck with 3-card hand; click a card or 5–7 to arm, then a highlighted square (Esc cancels); spends the card and auto-draws up to 3 when empty; D discards the selected card (5 per match).
 Pawns promote to a queen automatically. Red frame + sword = your piece can be captured, amber frame = the piece that threatens it.
 

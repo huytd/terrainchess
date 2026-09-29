@@ -160,7 +160,7 @@ fn handle_run_phase_sfx(
         RunPhase::Draft(_) => {
             play_sound(&mut commands, &sfx.card, muted.0);
         }
-        RunPhase::Over { won } => {
+        RunPhase::Result { won } => {
             if *won {
                 play_sound(&mut commands, &sfx.win, muted.0);
             } else {

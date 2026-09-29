@@ -20,7 +20,6 @@ use tc_core::{Outcome, PieceKind, Side};
 use crate::game::{GameEvent, GameState, MAX_AI_LEVEL};
 use crate::loading::AppState;
 use crate::run::{self, Run, RunPhase, TitleMenu};
-use crate::save;
 
 /// Camera distance from the point it looks at, the zoom.
 const MIN_DISTANCE: f32 = 3.0;
@@ -42,8 +41,10 @@ const START_YAW: f32 = -FRAC_PI_4;
 #[derive(Message, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Undo,
-    /// Start a new run of this size.
-    NewRun(u8),
+    /// Start the specified level.
+    StartLevel(u8),
+    /// Restart the current level.
+    RestartLevel,
     SwapSides,
     AiLevel(i8),
     Deselect,
@@ -479,9 +480,7 @@ fn hotkeys(
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         if title_menu.open {
-            if save::has_save() {
-                title_menu.open = false;
-            }
+            title_menu.open = false;
         } else if state.armed_spell.is_some() || state.selected.is_some() {
             actions.write(Action::Deselect);
         } else {
@@ -494,14 +493,18 @@ fn hotkeys(
     }
 
     for (key, action) in [
-        (KeyCode::Digit1, Action::NewRun(8)),
-        (KeyCode::Digit2, Action::NewRun(16)),
-        (KeyCode::Digit3, Action::NewRun(32)),
+        (KeyCode::Digit1, Action::StartLevel(1)),
+        (KeyCode::Digit2, Action::StartLevel(2)),
+        (KeyCode::Digit3, Action::StartLevel(3)),
+        (KeyCode::Digit4, Action::StartLevel(4)),
         (KeyCode::Digit5, Action::ArmSlot(0)),
         (KeyCode::Digit6, Action::ArmSlot(1)),
         (KeyCode::Digit7, Action::ArmSlot(2)),
+        (KeyCode::Digit8, Action::StartLevel(8)),
+        (KeyCode::Digit9, Action::StartLevel(9)),
+        (KeyCode::Digit0, Action::StartLevel(10)),
         (KeyCode::KeyD, Action::Discard),
-        (KeyCode::KeyN, Action::NewRun(state.size)),
+        (KeyCode::KeyN, Action::RestartLevel),
         (KeyCode::KeyF, Action::SwapSides),
         (KeyCode::Minus, Action::AiLevel(-1)),
         (KeyCode::Equal, Action::AiLevel(1)),
@@ -539,17 +542,28 @@ fn apply_actions(
 ) {
     for &action in actions.read() {
         if run.phase != RunPhase::Playing {
-            if let Action::NewRun(size) = action {
-                let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
-                run::start_new_run(size, &mut run, &mut state, seed);
+            match action {
+                Action::StartLevel(level) => {
+                    let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
+                    run::start_level(level, &mut run, &mut state, seed);
+                }
+                Action::RestartLevel => {
+                    let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
+                    run::start_level(run.level, &mut run, &mut state, seed);
+                }
+                _ => {}
             }
             continue;
         }
 
         match action {
-            Action::NewRun(size) => {
+            Action::StartLevel(level) => {
                 let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
-                run::start_new_run(size, &mut run, &mut state, seed);
+                run::start_level(level, &mut run, &mut state, seed);
+            }
+            Action::RestartLevel => {
+                let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
+                run::start_level(run.level, &mut run, &mut state, seed);
             }
             Action::SwapSides if state.ai_side.is_some() => {
                 state.ai_side = state.ai_side.map(Side::opposite);

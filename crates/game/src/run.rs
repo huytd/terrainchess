@@ -1,22 +1,22 @@
-//! Roguelike run flow, match progression, and drafting (specs/game-design.md §4).
+//! Level select mode, match progression, and drafting (specs/game-design.md §4).
 
 use bevy::prelude::*;
 use tc_core::{Outcome, Side};
-use tc_run::RunState;
+use tc_run::Profile;
 
 use crate::game::GameState;
 use crate::loading::AppState;
 use crate::save;
 
-/// The current phase of a roguelike run.
+/// The current phase of the level run.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunPhase {
     /// In an active match.
     Playing,
-    /// Drafting a reward after a win: 3 item IDs to choose from.
-    Draft([String; 3]),
-    /// Run has concluded in victory or defeat.
-    Over { won: bool },
+    /// Drafting a reward after a win: 1–3 item IDs to choose from.
+    Draft(Vec<String>),
+    /// Match has concluded in victory or defeat.
+    Result { won: bool },
 }
 
 /// Title menu display state.
@@ -31,10 +31,11 @@ impl Default for TitleMenu {
     }
 }
 
-/// Active run state and progression.
+/// Active profile state and current level.
 #[derive(Resource)]
 pub struct Run {
-    pub state: RunState,
+    pub profile: Profile,
+    pub level: u8,
     pub phase: RunPhase,
 }
 
@@ -42,9 +43,9 @@ pub struct Run {
 #[derive(Message, Clone, Debug)]
 pub struct PickCard(pub String);
 
-/// Message to start a new run with the given board size.
+/// Message to start a level with the given level id.
 #[derive(Message, Clone, Copy, Debug)]
-pub struct StartRun(pub u8);
+pub struct StartLevel(pub u8);
 
 /// Derive a seed from system time / clock without panicking on WASM.
 pub fn time_seed() -> u64 {
@@ -63,32 +64,27 @@ pub fn time_seed() -> u64 {
     }
 }
 
-/// Starts a new run of the specified board size, building the match and saving.
-pub fn start_new_run(size: u8, run: &mut Run, game_state: &mut GameState, seed: u64) {
-    run.state = RunState::new(seed, size);
+/// Starts the specified level, building the match.
+pub fn start_level(level_id: u8, run: &mut Run, game_state: &mut GameState, seed: u64) {
+    let Some(level_def) = tc_run::level(level_id) else {
+        bevy::log::warn!("unknown level id {level_id}");
+        return;
+    };
+    run.level = level_id;
     run.phase = RunPhase::Playing;
-    let setup = run.state.match_setup();
+    let setup = run.profile.match_setup(level_def, seed);
     *game_state = GameState::from_setup(&setup);
-    save::store(&run.state);
 }
 
-/// Picks a drafted item, progressing through bonus drafts or starting the next floor.
-pub fn apply_pick(item_id: &str, run: &mut Run, game_state: &mut GameState) {
-    if let RunPhase::Draft(_) = run.phase {
-        if let Err(e) = run.state.pick(item_id) {
+/// Picks a drafted item, saving the profile and moving to the result screen.
+pub fn apply_pick(item_id: &str, run: &mut Run) {
+    if let RunPhase::Draft(_) = &run.phase {
+        if let Err(e) = run.profile.pick(item_id) {
             bevy::log::warn!("failed to pick item '{item_id}': {e}");
             return;
         }
-        if run.state.bonus_picks > 0 {
-            run.state.bonus_picks -= 1;
-            let next_draft = run.state.draft();
-            run.phase = RunPhase::Draft(next_draft);
-        } else {
-            let setup = run.state.match_setup();
-            *game_state = GameState::from_setup(&setup);
-            save::store(&run.state);
-            run.phase = RunPhase::Playing;
-        }
+        save::store(&run.profile);
+        run.phase = RunPhase::Result { won: true };
     }
 }
 
@@ -100,52 +96,49 @@ fn check_run_match_outcome(mut run: ResMut<Run>, game_state: Res<GameState>) {
     if let Some(outcome) = game_state.outcome {
         // Draws are losses; checkmate with White as winner is victory
         let won = matches!(outcome, Outcome::Checkmate { winner: Side::White });
-        let collected = game_state.game.run_items_collected[Side::White.index()];
-        run.state.record_result(won, collected);
-
-        if !won || run.state.outcome.is_some() {
-            save::clear();
-            run.phase = RunPhase::Over { won };
+        if won {
+            if let Some(level_def) = tc_run::level(run.level) {
+                let draft = run.profile.record_win(level_def);
+                save::store(&run.profile);
+                if draft.is_empty() {
+                    run.phase = RunPhase::Result { won: true };
+                } else {
+                    run.phase = RunPhase::Draft(draft);
+                }
+            } else {
+                run.phase = RunPhase::Result { won: true };
+            }
         } else {
-            let draft = run.state.draft();
-            run.phase = RunPhase::Draft(draft);
+            run.phase = RunPhase::Result { won: false };
         }
     }
 }
 
 fn handle_run_messages(
     mut pick_events: MessageReader<PickCard>,
-    mut start_events: MessageReader<StartRun>,
+    mut start_events: MessageReader<StartLevel>,
     mut run: ResMut<Run>,
     mut game_state: ResMut<GameState>,
     time: Res<Time>,
 ) {
     for pick in pick_events.read() {
-        apply_pick(&pick.0, &mut run, &mut game_state);
+        apply_pick(&pick.0, &mut run);
     }
 
     for start in start_events.read() {
         let seed = time.elapsed().as_nanos() as u64 ^ time_seed();
-        start_new_run(start.0, &mut run, &mut game_state, seed);
+        start_level(start.0, &mut run, &mut game_state, seed);
     }
 }
 
 fn initial_run_and_game() -> (Run, GameState) {
-    let saved = save::load();
-    let has_save = saved.is_some();
-    let run_state = match saved {
-        Some(state) => state,
-        None => {
-            let seed = time_seed();
-            RunState::new(seed, 8)
-        }
-    };
-    let setup = run_state.match_setup();
+    let profile = save::load().unwrap_or_else(|| Profile::new(time_seed()));
+    let level_id = 1;
+    let level_def = tc_run::level(level_id).unwrap_or(&tc_run::LEVELS[0]);
+    let seed = time_seed();
+    let setup = profile.match_setup(level_def, seed);
     let game_state = GameState::from_setup(&setup);
-    if has_save {
-        save::store(&run_state);
-    }
-    let run = Run { state: run_state, phase: RunPhase::Playing };
+    let run = Run { profile, level: level_id, phase: RunPhase::Playing };
     (run, game_state)
 }
 
@@ -158,7 +151,7 @@ impl Plugin for RunPlugin {
             .insert_resource(game_state)
             .init_resource::<TitleMenu>()
             .add_message::<PickCard>()
-            .add_message::<StartRun>()
+            .add_message::<StartLevel>()
             .add_systems(
                 Update,
                 (check_run_match_outcome, handle_run_messages).chain().run_if(in_state(AppState::Ready)),

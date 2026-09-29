@@ -1,22 +1,22 @@
-//! Run state persistence to file (native) or localStorage (web).
+//! Profile state persistence to file (native) or localStorage (web).
 
-use tc_run::RunState;
+use tc_run::Profile;
 
 #[cfg(not(target_arch = "wasm32"))]
-const SAVE_PATH: &str = "terrainchess_run.ron";
+const SAVE_PATH: &str = "terrainchess_profile.ron";
 
 #[cfg(target_arch = "wasm32")]
-const STORAGE_KEY: &str = "terrainchess.run";
+const STORAGE_KEY: &str = "terrainchess.profile";
 
-/// Load the saved run state, if present and valid.
-pub fn load() -> Option<RunState> {
+/// Load the saved profile, if present and valid.
+pub fn load() -> Option<Profile> {
     #[cfg(not(target_arch = "wasm32"))]
     {
         match std::fs::read_to_string(SAVE_PATH) {
-            Ok(content) => match RunState::from_ron(&content) {
-                Ok(state) => Some(state),
+            Ok(content) => match Profile::from_ron(&content) {
+                Ok(profile) => Some(profile),
                 Err(e) => {
-                    bevy::log::warn!("failed to deserialize run from {SAVE_PATH}: {e}");
+                    bevy::log::warn!("failed to deserialize profile from {SAVE_PATH}: {e}");
                     None
                 }
             },
@@ -32,10 +32,10 @@ pub fn load() -> Option<RunState> {
     {
         let storage = get_storage()?;
         match storage.get_item(STORAGE_KEY) {
-            Ok(Some(ron_str)) => match RunState::from_ron(&ron_str) {
-                Ok(state) => Some(state),
+            Ok(Some(ron_str)) => match Profile::from_ron(&ron_str) {
+                Ok(profile) => Some(profile),
                 Err(e) => {
-                    bevy::log::warn!("failed to deserialize run from localStorage: {e}");
+                    bevy::log::warn!("failed to deserialize profile from localStorage: {e}");
                     None
                 }
             },
@@ -48,23 +48,18 @@ pub fn load() -> Option<RunState> {
     }
 }
 
-/// Returns true if a saved run state exists.
-pub fn has_save() -> bool {
-    load().is_some()
-}
-
-/// Store the current run state.
-pub fn store(state: &RunState) {
+/// Store the current profile.
+pub fn store(profile: &Profile) {
     #[cfg(not(target_arch = "wasm32"))]
     {
-        match state.to_ron() {
+        match profile.to_ron() {
             Ok(ron_str) => {
                 if let Err(e) = std::fs::write(SAVE_PATH, ron_str) {
                     bevy::log::warn!("failed to write {SAVE_PATH}: {e}");
                 }
             }
             Err(e) => {
-                bevy::log::warn!("failed to serialize run state to ron: {e}");
+                bevy::log::warn!("failed to serialize profile to ron: {e}");
             }
         }
     }
@@ -72,36 +67,15 @@ pub fn store(state: &RunState) {
     #[cfg(target_arch = "wasm32")]
     {
         let Some(storage) = get_storage() else { return };
-        match state.to_ron() {
+        match profile.to_ron() {
             Ok(ron_str) => {
                 if let Err(e) = storage.set_item(STORAGE_KEY, &ron_str) {
                     bevy::log::warn!("failed to write to localStorage: {e:?}");
                 }
             }
             Err(e) => {
-                bevy::log::warn!("failed to serialize run state to ron: {e}");
+                bevy::log::warn!("failed to serialize profile to ron: {e}");
             }
-        }
-    }
-}
-
-/// Clear any saved run state.
-pub fn clear() {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        if let Err(e) = std::fs::remove_file(SAVE_PATH) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                bevy::log::warn!("failed to remove {SAVE_PATH}: {e}");
-            }
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(storage) = get_storage()
-            && let Err(e) = storage.remove_item(STORAGE_KEY)
-        {
-            bevy::log::warn!("failed to remove from localStorage: {e:?}");
         }
     }
 }

@@ -7,8 +7,7 @@ use tc_run::ItemKind;
 use crate::atlas::Atlas;
 use crate::game::GameState;
 use crate::loading::AppState;
-use crate::run::{PickCard, Run, RunPhase, StartRun, TitleMenu};
-use crate::save;
+use crate::run::{PickCard, Run, RunPhase, StartLevel, TitleMenu};
 
 /// Ink colour on light wood.
 pub const INK_WOOD: Color = Color::srgb_u8(0xF7, 0xED, 0xD0);
@@ -78,9 +77,6 @@ fn spell_name(spell: tc_core::SpellId) -> &'static str {
 struct FloorBadge;
 
 #[derive(Component)]
-struct FloorBadgeTitle;
-
-#[derive(Component)]
 struct FloorBadgeText;
 
 #[derive(Component)]
@@ -96,10 +92,7 @@ struct TitleOverlay;
 struct MenuButton;
 
 #[derive(Component)]
-struct TitleContinueButton;
-
-#[derive(Component)]
-struct TitleNewRunButton(u8);
+struct LevelButton(u8);
 
 #[derive(Component)]
 struct DraftOverlay;
@@ -117,7 +110,10 @@ struct DraftCardHighlight(usize);
 struct RunOverOverlay;
 
 #[derive(Component)]
-struct NewRunButton;
+struct RetryButton;
+
+#[derive(Component)]
+struct LevelsButton;
 
 #[derive(Component)]
 struct HandBar;
@@ -185,35 +181,28 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
             ..default()
         })
         .with_children(|col| {
-            // Floor badge plaque (100 x 112 px)
+            // Level badge plaque (e.g. "3 · Knight's Field")
             col.spawn((
                 FloorBadge,
                 Node {
-                    width: Val::Px(100.0),
-                    height: Val::Px(112.0),
+                    min_width: Val::Px(120.0),
+                    height: Val::Px(48.0),
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    padding: UiRect { bottom: Val::Px(8.0), ..default() },
+                    padding: UiRect::axes(Val::Px(24.0), Val::Px(6.0)),
                     ..default()
                 },
                 ImageNode {
                     image: atlas.image.clone(),
                     rect: Some(atlas.rect(badge_name)),
-                    image_mode: NodeImageMode::Stretch,
+                    image_mode: button_slicer(),
                     ..default()
                 },
             ))
             .with_children(|badge| {
                 badge.spawn((
-                    Text::new("Floor"),
-                    TextFont { font_size: FontSize::Px(24.0), ..default() },
-                    TextColor(INK_WOOD),
-                    TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
-                    FloorBadgeTitle,
-                ));
-                badge.spawn((
-                    Text::new("1/8"),
+                    Text::new(""),
                     TextFont { font_size: FontSize::Px(24.0), ..default() },
                     TextColor(INK_WOOD),
                     TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
@@ -296,51 +285,24 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
         ));
 }
 
-#[allow(clippy::too_many_arguments)]
 fn update_floor_badge(
     run: Res<Run>,
     state: Res<GameState>,
-    atlas: Res<Atlas>,
-    mut q_badge: Query<(&mut ImageNode, &mut Node), With<FloorBadge>>,
-    mut q_title: Query<
-        &mut Text,
-        (With<FloorBadgeTitle>, Without<FloorBadgeText>, Without<FloorBadgeEnemyText>),
-    >,
-    mut q_text: Query<
-        &mut Text,
-        (With<FloorBadgeText>, Without<FloorBadgeTitle>, Without<FloorBadgeEnemyText>),
-    >,
+    mut q_text: Query<&mut Text, (With<FloorBadgeText>, Without<FloorBadgeEnemyText>)>,
     mut q_enemy_box: Query<&mut Node, (With<FloorBadgeEnemyBox>, Without<FloorBadge>)>,
     mut q_enemy: Query<&mut Text, With<FloorBadgeEnemyText>>,
 ) {
-    let is_boss = run.state.floor == 7;
-    let badge_name = if is_boss { "badge_boss" } else { "badge_floor" };
-
-    for (mut img, mut node) in &mut q_badge {
-        let r = Some(atlas.rect(badge_name));
-        if img.rect != r {
-            img.rect = r;
-        }
-        node.width = Val::Px(100.0);
-        node.height = Val::Px(112.0);
-    }
-
-    let (title, label) =
-        if is_boss { ("", "Boss".to_string()) } else { ("Floor", format!("{}/8", run.state.floor + 1)) };
-
-    for mut text in &mut q_title {
-        if text.0 != title {
-            text.0 = title.to_string();
-        }
-    }
+    let level_name = tc_run::level(run.level)
+        .map(|l| format!("{} · {}", l.id, l.name))
+        .unwrap_or_else(|| format!("Level {}", run.level));
 
     for mut text in &mut q_text {
-        if text.0 != label {
-            text.0 = label.clone();
+        if text.0 != level_name {
+            text.0 = level_name.clone();
         }
     }
 
-    let enemy_label = if run.state.floor >= 3 && !state.enemy_items.is_empty() {
+    let enemy_label = if !state.enemy_items.is_empty() {
         let names: Vec<_> = state
             .enemy_items
             .iter()
@@ -627,7 +589,7 @@ fn sync_overlays(
                         });
                 });
         }
-        RunPhase::Over { won } => {
+        RunPhase::Result { won } => {
             let badge_name = if *won { "badge_victory" } else { "badge_defeat" };
             let (badge_size, _) = integer_scaled_size(&atlas, badge_name, 60.0);
 
@@ -656,8 +618,8 @@ fn sync_overlays(
                                 align_items: AlignItems::Center,
                                 justify_content: JustifyContent::Center,
                                 row_gap: Val::Px(16.0),
-                                min_width: Val::Px(420.0),
-                                min_height: Val::Px(300.0),
+                                min_width: Val::Px(360.0),
+                                min_height: Val::Px(260.0),
                                 ..default()
                             },
                             ImageNode {
@@ -685,46 +647,87 @@ fn sync_overlays(
 
                             // Title
                             panel.spawn((
-                                Text::new(if *won { "Victory!" } else { "Run lost" }),
+                                Text::new(if *won { "Victory!" } else { "Defeat" }),
                                 TextFont { font_size: FontSize::Px(48.0), ..default() },
                                 TextColor(INK_PARCHMENT),
                                 TextLayout { justify: Justify::Center, ..default() },
                             ));
 
-                            let floor_num = if *won { 8 } else { run.state.floor + 1 };
+                            let level_name = tc_run::level(run.level).map(|l| l.name).unwrap_or("Level");
                             panel.spawn((
-                                Text::new(format!("Reached floor {floor_num}")),
+                                Text::new(if *won {
+                                    format!("{level_name} cleared!")
+                                } else {
+                                    level_name.to_string()
+                                }),
                                 TextFont { font_size: FontSize::Px(24.0), ..default() },
                                 TextColor(INK_PARCHMENT),
                                 TextLayout { justify: Justify::Center, ..default() },
                             ));
 
-                            // Primary action button: btn_gold*
+                            // Action buttons row: Retry and Levels
                             panel
-                                .spawn((
-                                    Button,
-                                    Interaction::default(),
-                                    NewRunButton,
-                                    ButtonVisuals::GOLD,
-                                    Node {
-                                        width: Val::Px(200.0),
-                                        height: Val::Px(56.0),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        ..default()
-                                    },
-                                    ImageNode {
-                                        image: atlas.image.clone(),
-                                        rect: Some(atlas.rect("btn_gold")),
-                                        image_mode: button_slicer(),
-                                        ..default()
-                                    },
-                                ))
-                                .with_child((
-                                    Text::new("New run"),
-                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
-                                    TextColor(INK_WOOD),
-                                ));
+                                .spawn(Node {
+                                    flex_direction: FlexDirection::Row,
+                                    column_gap: Val::Px(16.0),
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::Center,
+                                    margin: UiRect::top(Val::Px(8.0)),
+                                    ..default()
+                                })
+                                .with_children(|btn_row| {
+                                    btn_row
+                                        .spawn((
+                                            Button,
+                                            Interaction::default(),
+                                            RetryButton,
+                                            ButtonVisuals::GOLD,
+                                            Node {
+                                                width: Val::Px(140.0),
+                                                height: Val::Px(52.0),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                ..default()
+                                            },
+                                            ImageNode {
+                                                image: atlas.image.clone(),
+                                                rect: Some(atlas.rect("btn_gold")),
+                                                image_mode: button_slicer(),
+                                                ..default()
+                                            },
+                                        ))
+                                        .with_child((
+                                            Text::new("Retry"),
+                                            TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                            TextColor(INK_WOOD),
+                                        ));
+
+                                    btn_row
+                                        .spawn((
+                                            Button,
+                                            Interaction::default(),
+                                            LevelsButton,
+                                            ButtonVisuals::WOOD,
+                                            Node {
+                                                width: Val::Px(140.0),
+                                                height: Val::Px(52.0),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                ..default()
+                                            },
+                                            ImageNode {
+                                                image: atlas.image.clone(),
+                                                rect: Some(atlas.rect("btn_wood")),
+                                                image_mode: button_slicer(),
+                                                ..default()
+                                            },
+                                        ))
+                                        .with_child((
+                                            Text::new("Levels"),
+                                            TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                            TextColor(INK_WOOD),
+                                        ));
+                                });
                         });
                 });
         }
@@ -1201,23 +1204,12 @@ fn handle_card_interaction(
     }
 }
 
-fn handle_new_run_button(
-    button_query: Query<&Interaction, (Changed<Interaction>, With<NewRunButton>)>,
-    run: Res<Run>,
-    mut start_writer: MessageWriter<StartRun>,
-) {
-    for interaction in &button_query {
-        if *interaction == Interaction::Pressed {
-            start_writer.write(StartRun(run.state.size));
-        }
-    }
-}
-
 fn sync_title_menu(
     mut commands: Commands,
     title_menu: Res<TitleMenu>,
     run: Res<Run>,
     atlas: Res<Atlas>,
+    window: Query<&Window, With<PrimaryWindow>>,
     mut last_open: Local<Option<bool>>,
     overlay_query: Query<Entity, With<TitleOverlay>>,
 ) {
@@ -1234,7 +1226,9 @@ fn sync_title_menu(
         return;
     }
 
-    let has_save = save::has_save();
+    let win_w = window.iter().next().map(|w| w.width()).unwrap_or(800.0);
+    let btn_w = if win_w < 500.0 { ((win_w - 60.0) / 2.0).clamp(140.0, 180.0) } else { 240.0 };
+    let panel_padding = if win_w < 500.0 { 12.0 } else { 20.0 };
 
     commands
         .spawn((
@@ -1252,6 +1246,7 @@ fn sync_title_menu(
                 align_items: AlignItems::Center,
                 ..default()
             },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.72)),
         ))
         .with_children(|overlay| {
             // Main stone panel
@@ -1260,9 +1255,10 @@ fn sync_title_menu(
                     Node {
                         flex_direction: FlexDirection::Column,
                         align_items: AlignItems::Center,
-                        row_gap: Val::Px(10.0),
-                        padding: UiRect::all(Val::Px(20.0)),
-                        flex_shrink: 0.0,
+                        row_gap: Val::Px(8.0),
+                        padding: UiRect::all(Val::Px(panel_padding)),
+                        max_height: Val::Percent(95.0),
+                        overflow: Overflow::scroll_y(),
                         ..default()
                     },
                     ImageNode {
@@ -1277,7 +1273,7 @@ fn sync_title_menu(
                     parent
                         .spawn((
                             Node {
-                                width: Val::Px(380.0),
+                                width: Val::Px(if win_w < 500.0 { 320.0 } else { 380.0 }),
                                 height: Val::Px(52.0),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
@@ -1297,100 +1293,139 @@ fn sync_title_menu(
                             TextLayout { justify: Justify::Center, ..default() },
                         ));
 
-                    // Column of buttons (min 280 x 56 px, 24 px text)
+                    // Items owned count
+                    parent.spawn((
+                        Text::new(format!("Items: {}", run.profile.owned.len())),
+                        TextFont { font_size: FontSize::Px(24.0), ..default() },
+                        TextColor(INK_WOOD),
+                        TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
+                    ));
+
+                    // 2 columns of 5 levels each
                     parent
                         .spawn(Node {
-                            flex_direction: FlexDirection::Column,
-                            row_gap: Val::Px(10.0),
-                            align_items: AlignItems::Center,
-                            margin: UiRect { top: Val::Px(16.0), bottom: Val::Px(16.0), ..default() },
-                            flex_shrink: 0.0,
+                            flex_direction: FlexDirection::Row,
+                            column_gap: Val::Px(10.0),
+                            align_items: AlignItems::FlexStart,
+                            justify_content: JustifyContent::Center,
+                            margin: UiRect::top(Val::Px(4.0)),
                             ..default()
                         })
-                        .with_children(|col| {
-                            if has_save {
-                                col.spawn((
-                                    Button,
-                                    Interaction::default(),
-                                    TitleContinueButton,
-                                    ButtonVisuals::GOLD,
-                                    Node {
-                                        min_width: Val::Px(280.0),
-                                        width: Val::Px(280.0),
-                                        height: Val::Px(56.0),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        padding: UiRect::horizontal(Val::Px(12.0)),
-                                        ..default()
-                                    },
-                                    ImageNode {
-                                        image: atlas.image.clone(),
-                                        rect: Some(atlas.rect("btn_gold")),
-                                        image_mode: button_slicer(),
-                                        ..default()
-                                    },
-                                ))
-                                .with_child((
-                                    Text::new(format!("Continue - Floor {}/8", run.state.floor + 1)),
-                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
-                                    TextColor(INK_WOOD),
-                                    TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
-                                ));
-                            }
-
-                            col.spawn((
-                                Button,
-                                Interaction::default(),
-                                TitleNewRunButton(8),
-                                ButtonVisuals::WOOD,
-                                Node {
-                                    min_width: Val::Px(280.0),
-                                    width: Val::Px(280.0),
-                                    height: Val::Px(56.0),
-                                    justify_content: JustifyContent::Center,
+                        .with_children(|grid| {
+                            for col_levels in tc_run::LEVELS.chunks(5) {
+                                grid.spawn(Node {
+                                    flex_direction: FlexDirection::Column,
+                                    row_gap: Val::Px(8.0),
                                     align_items: AlignItems::Center,
                                     ..default()
-                                },
-                                ImageNode {
-                                    image: atlas.image.clone(),
-                                    rect: Some(atlas.rect("btn_wood")),
-                                    image_mode: button_slicer(),
-                                    ..default()
-                                },
-                            ))
-                            .with_child((
-                                Text::new("New run"),
-                                TextFont { font_size: FontSize::Px(24.0), ..default() },
-                                TextColor(INK_WOOD),
-                                TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
-                            ));
+                                })
+                                .with_children(|col| {
+                                    for level_def in col_levels {
+                                        let is_cleared = run.profile.cleared.contains(&level_def.id);
+                                        let visuals = if is_cleared {
+                                            ButtonVisuals::GOLD
+                                        } else {
+                                            ButtonVisuals::WOOD
+                                        };
+                                        let sprite = if is_cleared { "btn_gold" } else { "btn_wood" };
+                                        let piece_count = level_def.army.map(|a| a.len()).unwrap_or_else(
+                                            || match level_def.size {
+                                                16 => 32,
+                                                _ => 16,
+                                            },
+                                        );
+
+                                        col.spawn((
+                                            Button,
+                                            Interaction::default(),
+                                            LevelButton(level_def.id),
+                                            visuals,
+                                            Node {
+                                                width: Val::Px(btn_w),
+                                                height: Val::Px(52.0),
+                                                flex_direction: FlexDirection::Column,
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
+                                                ..default()
+                                            },
+                                            ImageNode {
+                                                image: atlas.image.clone(),
+                                                rect: Some(atlas.rect(sprite)),
+                                                image_mode: button_slicer(),
+                                                ..default()
+                                            },
+                                        ))
+                                        .with_children(|btn| {
+                                            btn.spawn((
+                                                Text::new(format!("{} · {}", level_def.id, level_def.name)),
+                                                TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                                TextColor(INK_WOOD),
+                                                TextLayout {
+                                                    justify: Justify::Center,
+                                                    linebreak: LineBreak::NoWrap,
+                                                },
+                                            ));
+                                            btn.spawn((
+                                                Text::new(format!(
+                                                    "{}×{} · {} pcs",
+                                                    level_def.size, level_def.size, piece_count
+                                                )),
+                                                TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                                TextColor(INK_WOOD),
+                                                TextLayout {
+                                                    justify: Justify::Center,
+                                                    linebreak: LineBreak::NoWrap,
+                                                },
+                                            ));
+                                        });
+                                    }
+                                });
+                            }
                         });
                 });
         });
 }
 
-fn handle_title_buttons(
-    continue_q: Query<&Interaction, (Changed<Interaction>, With<TitleContinueButton>)>,
-    new_run_q: Query<(&Interaction, &TitleNewRunButton), (Changed<Interaction>, With<Button>)>,
-    menu_q: Query<&Interaction, (Changed<Interaction>, With<MenuButton>)>,
+fn handle_level_buttons(
+    button_query: Query<(&Interaction, &LevelButton), (Changed<Interaction>, With<Button>)>,
     mut title_menu: ResMut<TitleMenu>,
-    mut start_writer: MessageWriter<StartRun>,
+    mut start_writer: MessageWriter<StartLevel>,
 ) {
-    for interaction in &continue_q {
+    for (interaction, btn) in &button_query {
         if *interaction == Interaction::Pressed {
+            start_writer.write(StartLevel(btn.0));
             title_menu.open = false;
         }
     }
+}
 
-    for (interaction, btn) in &new_run_q {
+fn handle_menu_button(
+    button_query: Query<&Interaction, (Changed<Interaction>, With<MenuButton>)>,
+    mut title_menu: ResMut<TitleMenu>,
+) {
+    for interaction in &button_query {
         if *interaction == Interaction::Pressed {
-            start_writer.write(StartRun(btn.0));
-            title_menu.open = false;
+            title_menu.open = !title_menu.open;
         }
     }
+}
 
-    for interaction in &menu_q {
+fn handle_result_buttons(
+    retry_query: Query<&Interaction, (Changed<Interaction>, With<RetryButton>)>,
+    levels_query: Query<&Interaction, (Changed<Interaction>, With<LevelsButton>)>,
+    mut run: ResMut<Run>,
+    mut title_menu: ResMut<TitleMenu>,
+    mut start_writer: MessageWriter<StartLevel>,
+) {
+    for interaction in &retry_query {
         if *interaction == Interaction::Pressed {
+            start_writer.write(StartLevel(run.level));
+        }
+    }
+    for interaction in &levels_query {
+        if *interaction == Interaction::Pressed {
+            run.phase = RunPhase::Playing;
             title_menu.open = true;
         }
     }
@@ -1430,8 +1465,9 @@ impl Plugin for HudPlugin {
                 sync_title_menu,
                 update_draft_card_sizes,
                 handle_card_interaction,
-                handle_new_run_button,
-                handle_title_buttons,
+                handle_result_buttons,
+                handle_level_buttons,
+                handle_menu_button,
                 handle_hand_card_interaction,
                 handle_discard_button_interaction,
                 update_button_visuals,
