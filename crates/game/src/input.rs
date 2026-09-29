@@ -26,8 +26,8 @@ const MIN_DISTANCE: f32 = 3.0;
 const MAX_DISTANCE: f32 = 450.0;
 /// Camera distance limits for the 48×48 overworld map.
 const OVERWORLD_MIN_DISTANCE: f32 = 18.0;
-const OVERWORLD_MAX_DISTANCE: f32 = 140.0;
-pub(crate) const OVERWORLD_START_DISTANCE: f32 = 85.0;
+const OVERWORLD_MAX_DISTANCE: f32 = 40.0;
+pub(crate) const OVERWORLD_START_DISTANCE: f32 = 20.0;
 /// Vertical field of view: enough for depth without distorting the board edges.
 const FOV: f32 = PI / 6.0;
 /// Screen px kept clear of the board for the status panel (top) and toolbar (bottom).

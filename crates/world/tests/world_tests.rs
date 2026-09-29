@@ -74,6 +74,20 @@ fn test_fog_and_movement() {
 }
 
 #[test]
+fn test_ai_does_not_reveal_fog() {
+    let mut world = World::new(42, WorldParams::default());
+    let ai_id = world.heroes.iter().find(|hero| hero.is_ai).unwrap().id;
+    let ai_start = world.hero(ai_id).unwrap().pos;
+
+    assert!(!world.is_revealed(ai_start));
+    let revealed_before_ai_turn = world.fog.clone();
+
+    world.ai_turn(ai_id);
+
+    assert_eq!(world.fog, revealed_before_ai_turn);
+}
+
+#[test]
 fn test_day_loop() {
     let mut world = World::new(42, WorldParams::default());
     let start_day = world.day;

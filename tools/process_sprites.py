@@ -706,7 +706,12 @@ def process(src, src_sky, src_ground, src_gui, src_ow, palette):
     for name, r, c in OW_TILES:
         x0, y0, x1, y1 = owcell(r, c)
         rgb = rgb_ow[y0 + 5 : y1 - 5, x0 + 5 : x1 - 5]  # inset past the magenta sheet grid
-        out[name] = (downscale(rgb, np.ones(rgb.shape[:2], np.float32), TILE, TILE), CENTER)
+        tile = downscale(rgb, np.ones(rgb.shape[:2], np.float32), TILE, TILE)
+        if name.startswith("ow_water_"):
+            # Keep the sheet's ripples and pixel texture, but lift the deep blue
+            # so overworld water reads clearly below the darker fog layer.
+            tile[..., :3] = np.clip(tile[..., :3] * 1.16 + (0, 3, 8), 0, 255)
+        out[name] = (tile, CENTER)
 
     def expand(mask):
         padded = np.pad(mask, 1, constant_values=False)
@@ -729,57 +734,116 @@ def process(src, src_sky, src_ground, src_gui, src_ow, palette):
         return path
 
     grass = out["ow_grass_0"][0]
-    water = out["ow_water_0"][0]
+    water = out["ow_water_1"][0]
     yy, xx = np.indices((TILE, TILE))
+
+    # Road and bridge fills are sampled from the actual sheet illustration,
+    # then repeated at tile scale so their speckles and plank marks stay crisp.
+    road_patch = rgb_ow[119:154, 750:807]
+    road_texture = downscale(road_patch, np.ones(road_patch.shape[:2], np.float32), TILE, TILE)
+    bridge_patch = rgb_ow[37:58, 850:882]
+    bridge_texture = downscale(bridge_patch, np.ones(bridge_patch.shape[:2], np.float32), TILE, TILE)
+    coast_art = []
+    for coast_row in (1, 2):
+        x0, y0, x1, y1 = owcell(coast_row, 6)
+        patch = rgb_ow[y0 + 5 : y1 - 5, x0 + 5 : x1 - 5]
+        coast_art.append(downscale(patch, np.ones(patch.shape[:2], np.float32), TILE, TILE))
+
+    def smooth_min(values, radius):
+        result = values[0]
+        for value in values[1:]:
+            delta = np.abs(result - value)
+            result = np.minimum(result, value) - np.square(np.maximum(radius - delta, 0.0)) / (4.0 * radius)
+        return result
+
     for mask in range(16):
-        road = path_mask(mask, 5)
-        road_edge = expand(road)
-        fringe = expand(road_edge)
+        road = path_mask(mask, 6)
+        road_outer = path_mask(mask, 7)
+        road_fringe = expand(road_outer) & ~road_outer
         road_tile = grass.copy()
-        road_tile[fringe & ~road_edge, :3] = (120, 164, 75)
-        road_tile[road_edge & ~road, :3] = (89, 53, 29)
-        road_tile[road, :3] = (204, 163, 109)
+        # A restrained green lip around the darker outline blends the 14 px
+        # road into grass without widening the dirt itself.
+        road_tile[road_fringe, :3] = np.clip(road_tile[road_fringe, :3] * 0.82 + (24, 33, 8), 0, 255)
+        road_tile[road_outer & ~road, :3] = (91, 64, 44)
+        road_tile[road, :3] = road_texture[road, :3]
         out[f"ow_road_{mask:02x}"] = (road_tile, CENTER)
 
         deck = path_mask(mask, 6)
-        deck_edge = expand(deck)
+        deck_outer = path_mask(mask, 7)
         bridge_tile = water.copy()
-        bridge_tile[deck_edge & ~deck, :3] = (76, 47, 34)
-        bridge_tile[deck, :3] = (157, 113, 74)
-        vertical_planks = bool(mask & 5) or not bool(mask & 10)
-        horizontal_planks = bool(mask & 10)
-        plank_lines = np.zeros((TILE, TILE), dtype=bool)
-        if vertical_planks:
-            plank_lines |= (yy % 4 == 3) & deck
-        if horizontal_planks:
-            plank_lines |= (xx % 4 == 3) & deck
-        bridge_tile[plank_lines, :3] = (112, 73, 46)
+        bridge_tile[deck_outer & ~deck, :3] = (66, 48, 39)
+        horizontal = bool(mask & 10) and not bool(mask & 5)
+        deck_texture = np.rot90(bridge_texture) if horizontal else bridge_texture
+        bridge_tile[deck, :3] = deck_texture[deck, :3]
         out[f"ow_bridge_{mask:02x}"] = (bridge_tile, CENTER)
 
+        # The two sheet cells contain the full blue-water, foam, sand, and
+        # grass transition. Use them directly for straight shores, rotating or
+        # mirroring the art so every side has the same water-to-land profile.
         if mask == 0:
-            land = np.zeros((TILE, TILE), dtype=bool)
+            coast_tile = water.copy()
         elif mask == 15:
-            land = np.ones((TILE, TILE), dtype=bool)
+            coast_tile = grass.copy()
+        elif mask.bit_count() == 1:
+            source = coast_art[mask & 1]
+            if mask == 2:  # east: source art already has land on the right
+                coast_tile = source.copy()
+            elif mask == 8:  # west
+                coast_tile = np.flip(source, axis=1).copy()
+            elif mask == 1:  # north
+                coast_tile = np.rot90(source).copy()
+            else:  # south
+                coast_tile = np.rot90(source, 3).copy()
         else:
-            land_distance = []
-            water_distance = []
-            for bit, distance in (
-                (1, yy.astype(np.float32) + 0.5),
-                (2, TILE - xx.astype(np.float32) - 0.5),
-                (4, TILE - yy.astype(np.float32) - 0.5),
-                (8, xx.astype(np.float32) + 0.5),
-            ):
-                (land_distance if mask & bit else water_distance).append(distance)
-            land = np.minimum.reduce(land_distance) < np.minimum.reduce(water_distance)
+            # Pick the closest land/water edge for the main coast shape. The
+            # resulting curves stay aligned to tile edges, and rounded unions
+            # give the adjacent-edge masks soft inner-corner variants.
+            side_distance = {
+                1: yy.astype(np.float32) + 0.5,
+                2: TILE - xx.astype(np.float32) - 0.5,
+                4: TILE - yy.astype(np.float32) - 0.5,
+                8: xx.astype(np.float32) + 0.5,
+            }
+            land_sides = [side_distance[bit] for bit in side_distance if mask & bit]
+            water_sides = [side_distance[bit] for bit in side_distance if not mask & bit]
+            # Smooth the distances where adjacent shoreline edges meet. These
+            # rounded distance unions provide curved inside and outside corner
+            # masks while retaining the exact cardinal joins at tile edges.
+            corner_radius = 3.5 if mask.bit_count() in (2, 3) else 0.0
+            if corner_radius and len(land_sides) > 1:
+                land_distance = smooth_min(land_sides, corner_radius)
+            else:
+                land_distance = np.minimum.reduce(land_sides)
+            if corner_radius and len(water_sides) > 1:
+                water_distance = smooth_min(water_sides, corner_radius)
+            else:
+                water_distance = np.minimum.reduce(water_sides)
+            shore = water_distance - land_distance
+            land = shore > 0.0
+            coast_tile = np.where(land[..., None], grass, water).copy()
 
-        coast_tile = np.where(land[..., None], grass, water).copy()
-        shoreline = np.zeros((TILE, TILE), dtype=bool)
-        shoreline[:-1, :] |= land[:-1, :] != land[1:, :]
-        shoreline[1:, :] |= land[1:, :] != land[:-1, :]
-        shoreline[:, :-1] |= land[:, :-1] != land[:, 1:]
-        shoreline[:, 1:] |= land[:, 1:] != land[:, :-1]
-        coast_tile[shoreline & land, :3] = (205, 177, 119)
-        coast_tile[shoreline & ~land, :3] = (102, 177, 177)
+            source = coast_art[(mask >> 1) & 1]
+            source_rgb = source[..., :3]
+            r, g, b = source_rgb[..., 0], source_rgb[..., 1], source_rgb[..., 2]
+            sand_samples = source_rgb[(r > g + 8) & (g > b + 5) & (r > 105)]
+            foam_samples = source_rgb[(g > r + 7) & (b > r + 10) & (g > 95)]
+            outline_samples = source_rgb[(r < 120) & (g < 120) & (b < 125) & (r >= b - 18)]
+            if not len(sand_samples):
+                sand_samples = np.array([[205, 177, 119]], dtype=np.float32)
+            if not len(foam_samples):
+                foam_samples = np.array([[116, 189, 194]], dtype=np.float32)
+            if not len(outline_samples):
+                outline_samples = np.array([[67, 72, 64]], dtype=np.float32)
+
+            # Reuse colors sampled from the coast pixels as speckled bands,
+            # rather than painting a single pale line along the whole shore.
+            sample_key = (xx * 13 + yy * 29 + mask * 17) % 997
+            foam = (shore >= -2.0) & (shore < -0.5)
+            outline = (shore >= -0.5) & (shore < 0.8)
+            sand = (shore >= 0.8) & (shore < 5.0)
+            coast_tile[foam, :3] = foam_samples[sample_key[foam] % len(foam_samples)]
+            coast_tile[outline, :3] = outline_samples[sample_key[outline] % len(outline_samples)]
+            coast_tile[sand, :3] = sand_samples[sample_key[sand] % len(sand_samples)]
         out[f"ow_coast_{mask:02x}"] = (coast_tile, CENTER)
 
     # Rows 4-5: camp buildings, flag slot erased and left transparent; the

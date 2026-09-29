@@ -67,7 +67,9 @@ impl World {
             params,
         };
 
-        for id in world.turn_order.clone() {
+        let human_heroes: Vec<_> =
+            world.heroes.iter().filter(|hero| !hero.is_ai).map(|hero| hero.id).collect();
+        for id in human_heroes {
             world.reveal_fog(id);
         }
         world.refill_movement();
@@ -188,7 +190,9 @@ impl World {
                     hero.movement -= c;
                     hero.prev_pos = hero.pos;
                     hero.pos = p;
-                    self.reveal_fog(hero_id);
+                    if !hero.is_ai {
+                        self.reveal_fog(hero_id);
+                    }
 
                     let mut immediate_reward = false;
                     if let Some(obj) = self.map.get_object(p)

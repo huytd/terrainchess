@@ -595,6 +595,8 @@ fn update_overworld_map(
         unlit: true,
         alpha_mode: AlphaMode::Blend,
         cull_mode: None,
+        // The fog is a ground tint; sort it behind every transparent billboard.
+        depth_bias: -1000.0,
         ..default()
     });
     commands.entity(root_ent).with_children(|parent| {

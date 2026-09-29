@@ -176,6 +176,7 @@ fn setup_sky(
     let center = board_center(state.size);
     commands.spawn((
         SkyDome,
+        SceneryPart,
         Mesh3d(meshes.add(mesh)),
         MeshMaterial3d(material),
         Transform::from_translation(center),
@@ -196,6 +197,7 @@ fn setup_sky(
         });
         commands.spawn((
             SkyDome,
+            SceneryPart,
             Mesh3d(meshes.add(cylinder)),
             MeshMaterial3d(band_material),
             Transform::from_translation(center),
@@ -242,6 +244,7 @@ fn setup_sky(
         );
 
         commands.spawn((
+            SceneryPart,
             CloudCard { initial_angle, radius, height },
             Mesh3d(meshes.add(q.mesh())),
             MeshMaterial3d(cloud_material.clone()),
