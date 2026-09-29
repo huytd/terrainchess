@@ -95,6 +95,15 @@ fn road_tile(map: &WorldMap, pos: MapPos, is_water: bool) -> (&'static str, u32)
     }
 }
 
+/// Rotate the footstep art's top-left-to-bottom-right diagonal along this path tile.
+fn path_marker_rotation(from: MapPos, current: MapPos, to: MapPos) -> Quat {
+    let incoming = Vec2::new(current.x as f32 - from.x as f32, current.y as f32 - from.y as f32);
+    let outgoing = Vec2::new(to.x as f32 - current.x as f32, to.y as f32 - current.y as f32);
+    let direction = incoming + outgoing;
+    let yaw = direction.x.atan2(direction.y) - std::f32::consts::FRAC_PI_4;
+    Quat::from_rotation_y(yaw)
+}
+
 pub struct OverworldPlugin;
 
 impl Plugin for OverworldPlugin {
@@ -495,7 +504,10 @@ fn update_overworld_map(
                 let sprite =
                     if is_last { if in_range { "ow_target" } else { "ow_blocked" } } else { "ow_path" };
 
-                let mesh = card_mesh(&mut look, &mut meshes, &atlas, sprite, false);
+                let size = atlas.px(sprite) * PX;
+                let mut marker = Quads::default();
+                marker.add(flat(Vec3::ZERO, size), full_uv(atlas.uv(sprite)), 1.0);
+                let mesh = meshes.add(marker.mesh());
                 let mut mat = StandardMaterial::from(Color::WHITE);
                 mat.base_color_texture = Some(atlas.image.clone());
                 mat.alpha_mode = AlphaMode::Blend;
@@ -504,16 +516,19 @@ fn update_overworld_map(
 
                 let h = tile_height(map.get(*p).unwrap().biome);
                 let top = Vec3::new(p.x as f32, h + 0.05, p.y as f32);
+                let rotation = if is_last {
+                    Quat::IDENTITY
+                } else {
+                    let from = if i == 0 { hero.pos } else { path[i - 1] };
+                    path_marker_rotation(from, *p, path[i + 1])
+                };
                 commands.entity(root_ent).with_children(|parent| {
                     parent.spawn((
                         Mesh3d(mesh),
                         MeshMaterial3d(mat_handle),
-                        Transform::from_translation(top).with_scale(Vec3::splat(if is_last {
-                            1.3
-                        } else {
-                            0.8
-                        })),
-                        crate::board_view::Billboard,
+                        Transform::from_translation(top)
+                            .with_rotation(rotation)
+                            .with_scale(Vec3::splat(if is_last { 1.3 } else { 0.8 })),
                     ));
                 });
             }
