@@ -26,27 +26,6 @@ use tc_core::piece::PieceKind;
 use tc_world::map::{Biome, CampKind, MapTile, ObjectKind, WorldMap};
 use tc_world::{MapPos, encounter::Encounter};
 
-/// Ashen Sun mounted-lord frames (frame 0 = idle, 1.. = walk cycle), facing right.
-const HERO_SUN_FRAMES: [&str; 7] = [
-    "ow_hero_sun_0",
-    "ow_hero_sun_1",
-    "ow_hero_sun_2",
-    "ow_hero_sun_3",
-    "ow_hero_sun_4",
-    "ow_hero_sun_5",
-    "ow_hero_sun_6",
-];
-
-/// Hollow Crown mounted-lich frames (frame 0 = idle, 1.. = walk cycle), facing right.
-const HERO_CROWN_FRAMES: [&str; 6] = [
-    "ow_hero_crown_0",
-    "ow_hero_crown_1",
-    "ow_hero_crown_2",
-    "ow_hero_crown_3",
-    "ow_hero_crown_4",
-    "ow_hero_crown_5",
-];
-
 /// One seamless overworld tile texture per biome, picked by a position hash so
 /// neighbouring tiles of the same biome don't look identical.
 fn biome_tile(biome: Biome, x: u16, y: u16) -> &'static str {
@@ -249,8 +228,6 @@ struct OverworldState {
     pub encounter: Option<Encounter>,
     pub selected_tile: Option<MapPos>,
     pub anim_timer: Timer,
-    /// Walk-cycle frame for the player hero, advanced one step per tile moved.
-    pub hero_frame: u32,
     /// True while the hero is walking west/left, so its sprite is mirrored.
     pub facing_left: bool,
 }
@@ -268,7 +245,6 @@ impl Default for OverworldState {
             campaign_over: false,
             campaign_won: false,
             deck_open: false,
-            hero_frame: 0,
             facing_left: false,
         }
     }
@@ -519,20 +495,14 @@ fn update_overworld_map(
             }
         }
     }
-    // Heroes: mounted-lord sprites, animated through their walk frames while
-    // moving (player only; the AI hero has no move animation yet), idle
-    // otherwise, mirrored via `card_mesh`'s `flip` when walking left.
+    // Heroes: mounted-lord sprites, mirrored via `card_mesh`'s `flip` when
+    // walking left.
     for hero in &c.world.heroes {
         if !hero.alive || !c.world.is_revealed(hero.pos) {
             continue;
         }
         let is_player = hero.id == 0;
-        let frames: &[&str] = if is_player { &HERO_SUN_FRAMES } else { &HERO_CROWN_FRAMES };
-        let sprite = if is_player && state.moving {
-            frames[1 + (state.hero_frame as usize % (frames.len() - 1))]
-        } else {
-            frames[0]
-        };
+        let sprite = if is_player { "ow_hero_sun_0" } else { "ow_hero_crown_0" };
         let flip = is_player && state.facing_left;
         let mesh = card_mesh(&mut look, &mut meshes, &atlas, sprite, flip);
         let top =
@@ -789,7 +759,6 @@ fn animate_hero(
     mut next_mode: ResMut<NextState<Mode>>,
 ) {
     if !state.moving {
-        state.hero_frame = 0;
         return;
     }
     let Some(mut c) = campaign else {
@@ -798,7 +767,6 @@ fn animate_hero(
 
     state.anim_timer.tick(time.delta());
     if state.anim_timer.just_finished() {
-        state.hero_frame = state.hero_frame.wrapping_add(1);
         if let Some(path) = &mut state.path {
             if !path.is_empty() {
                 let next_pos = path.remove(0);
