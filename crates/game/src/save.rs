@@ -8,6 +8,51 @@ const SAVE_PATH: &str = "terrainchess_run.ron";
 #[cfg(target_arch = "wasm32")]
 const STORAGE_KEY: &str = "terrainchess.run";
 
+/// Load the saved run state, if present and valid.
+pub fn load() -> Option<RunState> {
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        match std::fs::read_to_string(SAVE_PATH) {
+            Ok(content) => match RunState::from_ron(&content) {
+                Ok(state) => Some(state),
+                Err(e) => {
+                    bevy::log::warn!("failed to deserialize run from {SAVE_PATH}: {e}");
+                    None
+                }
+            },
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+            Err(e) => {
+                bevy::log::warn!("failed to read {SAVE_PATH}: {e}");
+                None
+            }
+        }
+    }
+
+    #[cfg(target_arch = "wasm32")]
+    {
+        let storage = get_storage()?;
+        match storage.get_item(STORAGE_KEY) {
+            Ok(Some(ron_str)) => match RunState::from_ron(&ron_str) {
+                Ok(state) => Some(state),
+                Err(e) => {
+                    bevy::log::warn!("failed to deserialize run from localStorage: {e}");
+                    None
+                }
+            },
+            Ok(None) => None,
+            Err(e) => {
+                bevy::log::warn!("failed to read from localStorage: {e:?}");
+                None
+            }
+        }
+    }
+}
+
+/// Returns true if a saved run state exists.
+pub fn has_save() -> bool {
+    load().is_some()
+}
+
 /// Store the current run state.
 pub fn store(state: &RunState) {
     #[cfg(not(target_arch = "wasm32"))]
@@ -79,107 +124,6 @@ fn get_storage() -> Option<web_sys::Storage> {
         Err(e) => {
             bevy::log::warn!("failed to access localStorage: {e:?}");
             None
-        }
-    }
-}
-
-#[cfg(not(target_arch = "wasm32"))]
-const CAMPAIGN_SAVE_PATH: &str = "terrainchess_campaign.ron";
-
-#[cfg(target_arch = "wasm32")]
-const CAMPAIGN_STORAGE_KEY: &str = "terrainchess.campaign";
-
-pub fn load_campaign() -> Option<tc_world::World> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        match std::fs::read_to_string(CAMPAIGN_SAVE_PATH) {
-            Ok(content) => match tc_world::World::from_ron(&content) {
-                Ok(state) => Some(state),
-                Err(e) => {
-                    bevy::log::warn!("failed to deserialize campaign from {CAMPAIGN_SAVE_PATH}: {e}");
-                    None
-                }
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => {
-                bevy::log::warn!("failed to read {CAMPAIGN_SAVE_PATH}: {e}");
-                None
-            }
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        let storage = get_storage()?;
-        match storage.get_item(CAMPAIGN_STORAGE_KEY) {
-            Ok(Some(ron_str)) => match tc_world::World::from_ron(&ron_str) {
-                Ok(state) => Some(state),
-                Err(e) => {
-                    bevy::log::warn!("failed to deserialize campaign from localStorage: {e}");
-                    None
-                }
-            },
-            Ok(None) => None,
-            Err(e) => {
-                bevy::log::warn!("failed to read from localStorage: {e:?}");
-                None
-            }
-        }
-    }
-}
-
-pub fn has_campaign_save() -> bool {
-    load_campaign().is_some()
-}
-
-pub fn store_campaign(state: &tc_world::World) {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        match state.to_ron() {
-            Ok(ron_str) => {
-                if let Err(e) = std::fs::write(CAMPAIGN_SAVE_PATH, ron_str) {
-                    bevy::log::warn!("failed to write {CAMPAIGN_SAVE_PATH}: {e}");
-                }
-            }
-            Err(e) => {
-                bevy::log::warn!("failed to serialize campaign to ron: {e}");
-            }
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        let Some(storage) = get_storage() else { return };
-        match state.to_ron() {
-            Ok(ron_str) => {
-                if let Err(e) = storage.set_item(CAMPAIGN_STORAGE_KEY, &ron_str) {
-                    bevy::log::warn!("failed to write to localStorage: {e:?}");
-                }
-            }
-            Err(e) => {
-                bevy::log::warn!("failed to serialize campaign to ron: {e}");
-            }
-        }
-    }
-}
-
-#[allow(dead_code)]
-pub fn clear_campaign() {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        if let Err(e) = std::fs::remove_file(CAMPAIGN_SAVE_PATH) {
-            if e.kind() != std::io::ErrorKind::NotFound {
-                bevy::log::warn!("failed to remove {CAMPAIGN_SAVE_PATH}: {e}");
-            }
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        if let Some(storage) = get_storage()
-            && let Err(e) = storage.remove_item(CAMPAIGN_STORAGE_KEY)
-        {
-            bevy::log::warn!("failed to remove from localStorage: {e:?}");
         }
     }
 }
