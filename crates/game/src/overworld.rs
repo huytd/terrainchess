@@ -7,6 +7,7 @@
     clippy::type_complexity
 )]
 use bevy::input::keyboard::KeyCode;
+use bevy::input::mouse::{MouseScrollUnit, MouseWheel};
 use bevy::prelude::*;
 
 use crate::atlas::Atlas;
@@ -15,7 +16,7 @@ use crate::board_view::{
     ThreatBadge, card_mesh, flat, full_uv, hash, rotate_uv, square_top,
 };
 use crate::game::{GameState, Mode};
-use crate::hud::{INK_WOOD, button_slicer, panel_slicer};
+use crate::hud::{ButtonDisabled, ButtonVisuals, INK_WOOD, button_slicer, panel_slicer};
 use crate::input::{MainCamera, Orbit};
 use crate::loading::AppState;
 use crate::run::{Campaign, TitleMenu};
@@ -111,7 +112,19 @@ impl Plugin for OverworldPlugin {
             .add_systems(OnEnter(Mode::Deploy), show_classic)
             .add_systems(OnEnter(Mode::OverworldBattle), (show_classic, setup_overworld_battle_hud))
             .add_systems(OnExit(Mode::OverworldBattle), teardown_overworld_battle_hud)
-            .add_systems(Update, (handle_deploy, handle_deploy_input).run_if(in_state(Mode::Deploy)))
+            .add_systems(
+                Update,
+                (
+                    handle_deploy,
+                    handle_deck_interactions,
+                    update_deck_ui,
+                    scroll_deck_list,
+                    update_deploy_start,
+                    handle_deploy_input,
+                )
+                    .chain()
+                    .run_if(in_state(Mode::Deploy)),
+            )
             .add_systems(Update, handle_battle.run_if(in_state(Mode::OverworldBattle)))
             .add_systems(Update, update_retreat_button_visibility.run_if(in_state(Mode::OverworldBattle)))
             .add_systems(OnEnter(Mode::Deploy), setup_deploy)
@@ -193,9 +206,11 @@ fn teardown_overworld_battle_hud(mut commands: Commands, root: Query<Entity, Wit
 /// else `RunPhase` isn't `Playing`).
 fn update_retreat_button_visibility(
     run: Res<crate::run::Run>,
+    state: Res<OverworldState>,
     mut q: Query<&mut Visibility, With<RetreatButton>>,
 ) {
-    let show = run.phase == crate::run::RunPhase::Playing;
+    let show =
+        run.phase == crate::run::RunPhase::Playing && !matches!(state.encounter, Some(Encounter::Hero(_)));
     for mut vis in &mut q {
         *vis = if show { Visibility::Inherited } else { Visibility::Hidden };
     }
@@ -227,6 +242,8 @@ struct OverworldState {
     pub dirty: bool,
     pub reward_draft: Option<[String; 3]>,
     pub campaign_over: bool,
+    pub campaign_won: bool,
+    pub deck_open: bool,
     pub path: Option<Vec<MapPos>>,
     pub moving: bool,
     pub encounter: Option<Encounter>,
@@ -249,6 +266,8 @@ impl Default for OverworldState {
             anim_timer: Timer::from_seconds(0.12, TimerMode::Repeating),
             reward_draft: None,
             campaign_over: false,
+            campaign_won: false,
+            deck_open: false,
             hero_frame: 0,
             facing_left: false,
         }
@@ -579,7 +598,6 @@ fn pick_overworld_tile(c: &Campaign, ray: Ray3d) -> Option<MapPos> {
 
 fn handle_overworld_input(
     keys: Res<ButtonInput<KeyCode>>,
-    retreat_q: Query<&Interaction, (Changed<Interaction>, With<RetreatButton>)>,
     mut title_menu: ResMut<TitleMenu>,
     mut next_mode: ResMut<NextState<Mode>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
@@ -594,23 +612,37 @@ fn handle_overworld_input(
     back_q: Query<&Interaction, (Changed<Interaction>, With<BackButton>)>,
     mut game_state: ResMut<GameState>,
 ) {
+    for int in &over_q {
+        if *int == Interaction::Pressed {
+            title_menu.open = true;
+            next_mode.set(Mode::Classic); // Return to classic title menu mode
+            state.campaign_over = false;
+            state.campaign_won = false;
+            state.encounter = None;
+            return;
+        }
+    }
+
+    // The Main Menu button above is the only active control after the run ends.
+    if state.campaign_over {
+        return;
+    }
+
     if keys.just_pressed(KeyCode::Escape) {
         title_menu.open = true;
     }
 
     let Some(mut c) = campaign else { return };
 
-    for int in &over_q {
-        if *int == Interaction::Pressed {
-            title_menu.open = true;
-            next_mode.set(Mode::Classic); // Return to classic title menu mode
-        }
-    }
-
     for int in &end_q {
         if *int == Interaction::Pressed {
             c.world.end_turn();
-            c.world.end_turn(); // skip AI for now
+            let ai_id = c.world.turn_order[c.world.current];
+            let encounter = c.world.ai_turn(ai_id);
+            state.encounter = encounter;
+            if state.encounter.is_none() {
+                c.world.end_turn();
+            }
             crate::save::store_campaign(&c.world);
             state.dirty = true;
             return;
@@ -619,6 +651,9 @@ fn handle_overworld_input(
 
     for int in &back_q {
         if *int == Interaction::Pressed {
+            if matches!(state.encounter, Some(Encounter::Hero(_))) {
+                continue;
+            }
             let hero = c.world.hero_mut(0).unwrap();
             hero.pos = hero.prev_pos;
             state.encounter = None;
@@ -643,7 +678,7 @@ fn handle_overworld_input(
     } // blocked
 
     if keys.just_pressed(KeyCode::F6) {
-        // Dev key: F6 = teleport to nearest uncleared camp
+        // Dev keys: F6 = teleport to nearest uncleared camp; F7 = start a rival encounter
         let hero = &c.world.heroes[0];
         let mut nearest = None;
         let mut min_dist = u16::MAX;
@@ -667,13 +702,33 @@ fn handle_overworld_input(
         }
     }
 
+    if keys.just_pressed(KeyCode::F7) {
+        if let Some(rival) = c.world.heroes.iter().find(|hero| hero.is_ai && hero.alive) {
+            let rival_pos = rival.pos;
+            let adjacent = [
+                rival_pos.x.checked_sub(1).map(|x| MapPos::new(x, rival_pos.y)),
+                rival_pos.x.checked_add(1).map(|x| MapPos::new(x, rival_pos.y)),
+                rival_pos.y.checked_sub(1).map(|y| MapPos::new(rival_pos.x, y)),
+                rival_pos.y.checked_add(1).map(|y| MapPos::new(rival_pos.x, y)),
+            ]
+            .into_iter()
+            .flatten()
+            .find(|pos| tc_world::path::tile_cost(&c.world.map, *pos).is_some());
+
+            if let Some(pos) = adjacent {
+                c.world.hero_mut(0).unwrap().pos = pos;
+                state.encounter = c.world.move_hero(0, rival_pos);
+                state.dirty = true;
+            }
+        }
+    }
+
     if mouse_buttons.just_pressed(MouseButton::Left) {
         if let Some(cursor) = window.cursor_position() {
             if let Ok(ray) = camera.0.viewport_to_world(camera.1, cursor) {
                 if let Some(pos) = pick_overworld_tile(&c, ray) {
                     if state.selected_tile == Some(pos) {
                         // walk
-                        let hero = c.world.heroes.first().unwrap();
                         if let Some(path) = c.world.path(0, pos) {
                             state.path = Some(path);
                             state.moving = true;
@@ -980,77 +1035,197 @@ fn update_overworld_hud(
                     ));
                 });
 
-            if let Some(Encounter::Camp(obj)) = &state.encounter {
-                // Encounter Panel
-                parent
-                    .spawn((
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Percent(30.0),
-                            top: Val::Percent(30.0),
-                            width: Val::Percent(40.0),
-                            padding: UiRect::all(Val::Px(20.0)),
-                            flex_direction: FlexDirection::Column,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        ImageNode {
-                            image: atlas.image.clone(),
-                            rect: Some(atlas.rect("panel_gui_stone")),
-                            image_mode: crate::hud::panel_slicer(),
-                            ..default()
-                        },
-                    ))
-                    .with_children(|panel| {
+            if !state.campaign_over
+                && let Some(encounter) = &state.encounter
+            {
+                let (title, details, can_back) = match encounter {
+                    Encounter::Camp(obj) => {
                         let (camp_name, defenders) = match &obj.kind {
-                            tc_world::map::ObjectKind::Camp(tc_world::map::CampKind::Village) => {
-                                ("Village", "Captain, 3 Pawns")
-                            }
-                            tc_world::map::ObjectKind::Camp(tc_world::map::CampKind::KnightCamp) => {
+                            ObjectKind::Camp(CampKind::Village) => ("Village", "Captain, 3 Pawns"),
+                            ObjectKind::Camp(CampKind::KnightCamp) => {
                                 ("Knight Camp", "Captain, Knight, 3 Pawns")
                             }
-                            tc_world::map::ObjectKind::Camp(tc_world::map::CampKind::BishopCamp) => {
+                            ObjectKind::Camp(CampKind::BishopCamp) => {
                                 ("Bishop Camp", "Captain, Bishop, 3 Pawns")
                             }
-                            tc_world::map::ObjectKind::Camp(tc_world::map::CampKind::Fortress) => {
-                                ("Fortress", "Captain, Rook, 3 Pawns")
-                            }
-                            tc_world::map::ObjectKind::Camp(tc_world::map::CampKind::Citadel) => {
-                                ("Citadel", "Captain, Queen, 3 Pawns")
-                            }
+                            ObjectKind::Camp(CampKind::Fortress) => ("Fortress", "Captain, Rook, 3 Pawns"),
+                            ObjectKind::Camp(CampKind::Citadel) => ("Citadel", "Captain, Queen, 3 Pawns"),
                             _ => ("Camp", "Unknown"),
                         };
+                        (format!("Attack {camp_name}?"), format!("Defenders: {defenders}"), true)
+                    }
+                    Encounter::Hero(rival_id) => {
+                        let rival = c.world.hero(*rival_id).map_or("Rival", |hero| hero.name.as_str());
+                        (
+                            format!("Challenge {rival}?"),
+                            "Defeat the rival to claim Oakhaven.".to_string(),
+                            false,
+                        )
+                    }
+                };
+                parent
+                    .spawn(Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        right: Val::Px(0.0),
+                        top: Val::Percent(30.0),
+                        width: Val::Percent(100.0),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    })
+                    .with_children(|wrapper| {
+                        wrapper
+                            .spawn((
+                                Node {
+                                    width: Val::Percent(90.0),
+                                    max_width: Val::Px(380.0),
+                                    padding: UiRect::all(Val::Px(16.0)),
+                                    flex_direction: FlexDirection::Column,
+                                    align_items: AlignItems::Center,
+                                    row_gap: Val::Px(8.0),
+                                    ..default()
+                                },
+                                ImageNode {
+                                    image: atlas.image.clone(),
+                                    rect: Some(atlas.rect("panel_gui_stone")),
+                                    image_mode: crate::hud::panel_slicer(),
+                                    ..default()
+                                },
+                            ))
+                            .with_children(|panel| {
+                                panel.spawn((
+                                    Text::new(&title),
+                                    TextFont { font_size: FontSize::Px(28.0), ..default() },
+                                    TextColor(crate::hud::INK_WOOD),
+                                    TextLayout { justify: Justify::Center, ..default() },
+                                ));
 
-                        panel.spawn((
-                            Text::new(format!("Attack {}?", camp_name)),
-                            TextFont { font_size: FontSize::Px(32.0), ..default() },
-                            TextColor(crate::hud::INK_WOOD),
-                        ));
+                                panel.spawn((
+                                    Text::new(details),
+                                    TextFont { font_size: FontSize::Px(18.0), ..default() },
+                                    TextColor(crate::hud::INK_WOOD),
+                                    TextLayout { justify: Justify::Center, ..default() },
+                                ));
 
-                        panel.spawn((
-                            Text::new(format!("Defenders: {}", defenders)),
-                            TextFont { font_size: FontSize::Px(20.0), ..default() },
-                            TextColor(crate::hud::INK_WOOD),
-                            Node { margin: UiRect::top(Val::Px(10.0)), ..default() },
-                        ));
+                                panel
+                                    .spawn(Node {
+                                        flex_direction: FlexDirection::Row,
+                                        margin: UiRect::top(Val::Px(8.0)),
+                                        column_gap: Val::Px(12.0),
+                                        ..default()
+                                    })
+                                    .with_children(|row| {
+                                        row.spawn((
+                                            Button,
+                                            Interaction::default(),
+                                            AttackButton,
+                                            Node {
+                                                width: Val::Px(112.0),
+                                                height: Val::Px(40.0),
+                                                justify_content: JustifyContent::Center,
+                                                align_items: AlignItems::Center,
+                                                ..default()
+                                            },
+                                            ImageNode {
+                                                image: atlas.image.clone(),
+                                                rect: Some(atlas.rect("btn_gold")),
+                                                image_mode: crate::hud::button_slicer(),
+                                                ..default()
+                                            },
+                                        ))
+                                        .with_child((
+                                            Text::new("Fight"),
+                                            TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                            TextColor(crate::hud::INK_WOOD),
+                                        ));
 
-                        panel
-                            .spawn(Node {
-                                flex_direction: FlexDirection::Row,
-                                margin: UiRect::top(Val::Px(20.0)),
-                                column_gap: Val::Px(20.0),
+                                        if can_back {
+                                            row.spawn((
+                                                Button,
+                                                Interaction::default(),
+                                                BackButton,
+                                                Node {
+                                                    width: Val::Px(100.0),
+                                                    height: Val::Px(40.0),
+                                                    justify_content: JustifyContent::Center,
+                                                    align_items: AlignItems::Center,
+                                                    ..default()
+                                                },
+                                                ImageNode {
+                                                    image: atlas.image.clone(),
+                                                    rect: Some(atlas.rect("btn_wood")),
+                                                    image_mode: crate::hud::button_slicer(),
+                                                    ..default()
+                                                },
+                                            ))
+                                            .with_child((
+                                                Text::new("Back"),
+                                                TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                                TextColor(crate::hud::INK_WOOD),
+                                            ));
+                                        }
+                                    });
+                            });
+                    });
+            }
+        }
+        if state.campaign_over {
+            parent
+                .spawn(Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    top: Val::Percent(35.0),
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                })
+                .with_children(|wrapper| {
+                    wrapper
+                        .spawn((
+                            Node {
+                                width: Val::Percent(90.0),
+                                max_width: Val::Px(380.0),
+                                padding: UiRect::all(Val::Px(16.0)),
+                                flex_direction: FlexDirection::Column,
+                                align_items: AlignItems::Center,
+                                row_gap: Val::Px(8.0),
                                 ..default()
-                            })
-                            .with_children(|row| {
-                                row.spawn((
+                            },
+                            ImageNode {
+                                image: atlas.image.clone(),
+                                rect: Some(atlas.rect("panel_gui_stone")),
+                                image_mode: crate::hud::panel_slicer(),
+                                ..default()
+                            },
+                        ))
+                        .with_children(|panel| {
+                            panel.spawn((
+                                Text::new(if state.campaign_won {
+                                    "Victory — Oakhaven is yours"
+                                } else {
+                                    "Defeat"
+                                }),
+                                TextFont { font_size: FontSize::Px(28.0), ..default() },
+                                TextColor(crate::hud::INK_WOOD),
+                                TextLayout { justify: Justify::Center, ..default() },
+                            ));
+                            panel.spawn((
+                                Text::new(format!("Days taken: {}", c.world.day)),
+                                TextFont { font_size: FontSize::Px(20.0), ..default() },
+                                TextColor(crate::hud::INK_WOOD),
+                            ));
+                            panel
+                                .spawn((
                                     Button,
                                     Interaction::default(),
-                                    AttackButton,
+                                    CampaignOverButton,
                                     Node {
-                                        width: Val::Px(100.0),
+                                        width: Val::Px(160.0),
                                         height: Val::Px(40.0),
                                         justify_content: JustifyContent::Center,
                                         align_items: AlignItems::Center,
+                                        margin: UiRect::top(Val::Px(20.0)),
                                         ..default()
                                     },
                                     ImageNode {
@@ -1061,89 +1236,11 @@ fn update_overworld_hud(
                                     },
                                 ))
                                 .with_child((
-                                    Text::new("Attack"),
+                                    Text::new("Main Menu"),
                                     TextFont { font_size: FontSize::Px(24.0), ..default() },
                                     TextColor(crate::hud::INK_WOOD),
                                 ));
-
-                                row.spawn((
-                                    Button,
-                                    Interaction::default(),
-                                    BackButton,
-                                    Node {
-                                        width: Val::Px(100.0),
-                                        height: Val::Px(40.0),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        ..default()
-                                    },
-                                    ImageNode {
-                                        image: atlas.image.clone(),
-                                        rect: Some(atlas.rect("btn_wood")),
-                                        image_mode: crate::hud::button_slicer(),
-                                        ..default()
-                                    },
-                                ))
-                                .with_child((
-                                    Text::new("Back"),
-                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
-                                    TextColor(crate::hud::INK_WOOD),
-                                ));
-                            });
-                    });
-            }
-        }
-        if state.campaign_over {
-            parent
-                .spawn((
-                    Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Percent(30.0),
-                        top: Val::Percent(30.0),
-                        width: Val::Percent(40.0),
-                        padding: UiRect::all(Val::Px(20.0)),
-                        flex_direction: FlexDirection::Column,
-                        align_items: AlignItems::Center,
-                        ..default()
-                    },
-                    ImageNode {
-                        image: atlas.image.clone(),
-                        rect: Some(atlas.rect("panel_gui_stone")),
-                        image_mode: crate::hud::panel_slicer(),
-                        ..default()
-                    },
-                ))
-                .with_children(|panel| {
-                    panel.spawn((
-                        Text::new("Campaign Over"),
-                        TextFont { font_size: FontSize::Px(32.0), ..default() },
-                        TextColor(Color::WHITE),
-                    ));
-                    panel
-                        .spawn((
-                            Button,
-                            Interaction::default(),
-                            CampaignOverButton,
-                            Node {
-                                width: Val::Px(160.0),
-                                height: Val::Px(40.0),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                margin: UiRect::top(Val::Px(20.0)),
-                                ..default()
-                            },
-                            ImageNode {
-                                image: atlas.image.clone(),
-                                rect: Some(atlas.rect("btn_gold")),
-                                image_mode: crate::hud::button_slicer(),
-                                ..default()
-                            },
-                        ))
-                        .with_child((
-                            Text::new("Main Menu"),
-                            TextFont { font_size: FontSize::Px(24.0), ..default() },
-                            TextColor(crate::hud::INK_WOOD),
-                        ));
+                        });
                 });
         }
     });
@@ -1157,6 +1254,27 @@ struct StartBattleButton;
 
 #[derive(Component)]
 struct AutoDeployButton;
+
+#[derive(Component)]
+struct DeckButton;
+
+#[derive(Component)]
+struct DeckPanelRoot;
+
+#[derive(Component)]
+struct DeckCloseButton;
+
+#[derive(Component)]
+struct DeckCollectionList;
+
+#[derive(Component)]
+struct DeckCardButton(usize);
+
+#[derive(Component)]
+struct DeckCardLabel(usize);
+
+#[derive(Component)]
+struct DeckCountText;
 
 #[derive(Component)]
 struct DraftCardButton(String);
@@ -1176,6 +1294,8 @@ fn setup_deploy(
     mut commands: Commands,
     atlas: Res<Atlas>,
     game_state: Res<GameState>,
+    campaign: Option<Res<Campaign>>,
+    state: Res<OverworldState>,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
@@ -1198,66 +1318,235 @@ fn setup_deploy(
         commands.spawn((DeployZoneMarker, Mesh3d(meshes.add(q.mesh())), MeshMaterial3d(materials.add(mat))));
     }
 
+    let cards = campaign.as_ref().map_or(&[][..], |c| c.world.heroes[0].cards.as_slice());
     commands
         .spawn((
             DeployRoot,
             Node {
                 position_type: PositionType::Absolute,
-                right: Val::Px(20.0),
-                bottom: Val::Px(20.0),
-                flex_direction: FlexDirection::Row,
-                column_gap: Val::Px(10.0),
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
                 ..default()
             },
         ))
-        .with_children(|p| {
-            p.spawn((
-                Button,
-                Interaction::default(),
-                AutoDeployButton,
-                Node {
-                    width: Val::Px(120.0),
-                    height: Val::Px(40.0),
-                    justify_content: JustifyContent::Center,
-                    align_items: AlignItems::Center,
-                    ..default()
-                },
-                ImageNode {
-                    image: atlas.image.clone(),
-                    rect: Some(atlas.rect("btn_gold")),
-                    image_mode: crate::hud::button_slicer(),
-                    ..default()
-                },
-            ))
-            .with_child((
-                Text::new("Auto"),
-                TextFont { font_size: FontSize::Px(24.0), ..default() },
-                TextColor(crate::hud::INK_WOOD),
-            ));
+        .with_children(|root| {
+            root.spawn(Node {
+                position_type: PositionType::Absolute,
+                right: Val::Px(12.0),
+                bottom: Val::Px(12.0),
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(6.0),
+                ..default()
+            })
+            .with_children(|p| {
+                p.spawn((
+                    Button,
+                    Interaction::default(),
+                    AutoDeployButton,
+                    Node {
+                        width: Val::Px(82.0),
+                        height: Val::Px(40.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    ImageNode {
+                        image: atlas.image.clone(),
+                        rect: Some(atlas.rect("btn_gold")),
+                        image_mode: crate::hud::button_slicer(),
+                        ..default()
+                    },
+                ))
+                .with_child((
+                    Text::new("Auto"),
+                    TextFont { font_size: FontSize::Px(20.0), ..default() },
+                    TextColor(crate::hud::INK_WOOD),
+                ));
 
-            p.spawn((
+                p.spawn((
+                    Button,
+                    Interaction::default(),
+                    DeckButton,
+                    Node {
+                        width: Val::Px(82.0),
+                        height: Val::Px(40.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    ImageNode {
+                        image: atlas.image.clone(),
+                        rect: Some(atlas.rect("btn_wood")),
+                        image_mode: crate::hud::button_slicer(),
+                        ..default()
+                    },
+                ))
+                .with_child((
+                    Text::new("Deck"),
+                    TextFont { font_size: FontSize::Px(20.0), ..default() },
+                    TextColor(crate::hud::INK_WOOD),
+                ));
+
+                p.spawn((
+                    Button,
+                    Interaction::default(),
+                    StartBattleButton,
+                    ButtonDisabled(false),
+                    ButtonVisuals::GOLD,
+                    Node {
+                        width: Val::Px(142.0),
+                        height: Val::Px(40.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    ImageNode {
+                        image: atlas.image.clone(),
+                        rect: Some(atlas.rect("btn_gold")),
+                        image_mode: crate::hud::button_slicer(),
+                        ..default()
+                    },
+                ))
+                .with_child((
+                    Text::new("Start battle"),
+                    TextFont { font_size: FontSize::Px(20.0), ..default() },
+                    TextColor(crate::hud::INK_WOOD),
+                ));
+            });
+
+            root.spawn((
+                DeckPanelRoot,
+                GlobalZIndex(100),
                 Button,
                 Interaction::default(),
-                StartBattleButton,
                 Node {
-                    width: Val::Px(160.0),
-                    height: Val::Px(40.0),
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    top: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
+                    display: if state.deck_open { Display::Flex } else { Display::None },
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
                     ..default()
                 },
-                ImageNode {
-                    image: atlas.image.clone(),
-                    rect: Some(atlas.rect("btn_gold")),
-                    image_mode: crate::hud::button_slicer(),
-                    ..default()
-                },
+                BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.65)),
             ))
-            .with_child((
-                Text::new("Start battle"),
-                TextFont { font_size: FontSize::Px(24.0), ..default() },
-                TextColor(crate::hud::INK_WOOD),
-            ));
+            .with_children(|modal| {
+                modal
+                    .spawn((
+                        Node {
+                            width: Val::Percent(90.0),
+                            max_width: Val::Px(460.0),
+                            height: Val::Percent(72.0),
+                            max_height: Val::Px(620.0),
+                            min_height: Val::Px(300.0),
+                            padding: UiRect::all(Val::Px(18.0)),
+                            flex_direction: FlexDirection::Column,
+                            row_gap: Val::Px(10.0),
+                            ..default()
+                        },
+                        ImageNode {
+                            image: atlas.image.clone(),
+                            rect: Some(atlas.rect("panel_gui_stone")),
+                            image_mode: panel_slicer(),
+                            ..default()
+                        },
+                    ))
+                    .with_children(|panel| {
+                        panel
+                            .spawn(Node {
+                                width: Val::Percent(100.0),
+                                flex_direction: FlexDirection::Row,
+                                justify_content: JustifyContent::SpaceBetween,
+                                align_items: AlignItems::Center,
+                                padding: UiRect::horizontal(Val::Px(8.0)),
+                                ..default()
+                            })
+                            .with_children(|header| {
+                                header.spawn((
+                                    DeckCountText,
+                                    Text::new("Deck 0/15"),
+                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                    TextColor(crate::hud::INK_WOOD),
+                                ));
+                                header
+                                    .spawn((
+                                        Button,
+                                        Interaction::default(),
+                                        DeckCloseButton,
+                                        Node {
+                                            width: Val::Px(86.0),
+                                            height: Val::Px(38.0),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            ..default()
+                                        },
+                                        ImageNode {
+                                            image: atlas.image.clone(),
+                                            rect: Some(atlas.rect("btn_wood")),
+                                            image_mode: crate::hud::button_slicer(),
+                                            ..default()
+                                        },
+                                    ))
+                                    .with_child((
+                                        Text::new("Done"),
+                                        TextFont { font_size: FontSize::Px(20.0), ..default() },
+                                        TextColor(crate::hud::INK_WOOD),
+                                    ));
+                            });
+
+                        panel
+                            .spawn((
+                                DeckCollectionList,
+                                ScrollPosition::default(),
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    flex_grow: 1.0,
+                                    min_height: Val::Px(0.0),
+                                    flex_direction: FlexDirection::Row,
+                                    flex_wrap: FlexWrap::Wrap,
+                                    align_content: AlignContent::FlexStart,
+                                    align_items: AlignItems::Center,
+                                    justify_content: JustifyContent::SpaceBetween,
+                                    row_gap: Val::Px(8.0),
+                                    column_gap: Val::Px(8.0),
+                                    overflow: Overflow::scroll_y(),
+                                    ..default()
+                                },
+                            ))
+                            .with_children(|list| {
+                                for (index, spell) in cards.iter().copied().enumerate() {
+                                    list.spawn((
+                                        Button,
+                                        Interaction::default(),
+                                        DeckCardButton(index),
+                                        Node {
+                                            width: Val::Percent(48.0),
+                                            min_height: Val::Px(48.0),
+                                            padding: UiRect::horizontal(Val::Px(5.0)),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            ..default()
+                                        },
+                                        ImageNode {
+                                            image: atlas.image.clone(),
+                                            rect: Some(atlas.rect("btn_wood")),
+                                            image_mode: crate::hud::button_slicer(),
+                                            ..default()
+                                        },
+                                    ))
+                                    .with_child((
+                                        DeckCardLabel(index),
+                                        Text::new(spell_label(spell)),
+                                        TextFont { font_size: FontSize::Px(16.0), ..default() },
+                                        TextColor(crate::hud::INK_WOOD),
+                                        TextLayout { justify: Justify::Center, ..default() },
+                                    ));
+                                }
+                            });
+                    });
+            });
         });
 }
 
@@ -1265,7 +1554,9 @@ fn teardown_deploy(
     mut commands: Commands,
     root: Query<Entity, With<DeployRoot>>,
     zone: Query<Entity, With<DeployZoneMarker>>,
+    mut state: ResMut<OverworldState>,
 ) {
+    state.deck_open = false;
     for e in &root {
         commands.entity(e).despawn();
     }
@@ -1275,15 +1566,24 @@ fn teardown_deploy(
 }
 
 fn handle_deploy(
-    start_q: Query<&Interaction, (Changed<Interaction>, With<StartBattleButton>)>,
+    start_q: Query<(&Interaction, &ButtonDisabled), (Changed<Interaction>, With<StartBattleButton>)>,
     auto_q: Query<&Interaction, (Changed<Interaction>, With<AutoDeployButton>)>,
     mut next_mode: ResMut<NextState<Mode>>,
     mut game_state: ResMut<GameState>,
     mut campaign: Option<ResMut<Campaign>>,
     state: Res<OverworldState>,
 ) {
-    for int in &start_q {
-        if *int == Interaction::Pressed {
+    for (int, disabled) in &start_q {
+        if *int == Interaction::Pressed && !disabled.0 {
+            if let Some(campaign) = campaign.as_ref() {
+                let hero = &campaign.world.heroes[0];
+                let deck = if hero.has_valid_deck() {
+                    hero.deck.clone()
+                } else {
+                    hero.cards.iter().take(15).copied().collect()
+                };
+                game_state.game.set_deck(tc_core::Side::White, deck);
+            }
             game_state.selected = None;
             game_state.pieces_dirty = true;
             next_mode.set(Mode::OverworldBattle);
@@ -1301,13 +1601,134 @@ fn handle_deploy(
     }
 }
 
+fn handle_deck_interactions(
+    deck_q: Query<&Interaction, (Changed<Interaction>, With<DeckButton>)>,
+    close_q: Query<&Interaction, (Changed<Interaction>, With<DeckCloseButton>)>,
+    card_q: Query<(&Interaction, &DeckCardButton), (Changed<Interaction>, With<Button>)>,
+    mut campaign: Option<ResMut<Campaign>>,
+    mut state: ResMut<OverworldState>,
+) {
+    for interaction in &deck_q {
+        if *interaction == Interaction::Pressed {
+            state.deck_open = !state.deck_open;
+        }
+    }
+    for interaction in &close_q {
+        if *interaction == Interaction::Pressed {
+            state.deck_open = false;
+        }
+    }
+
+    let Some(ref mut campaign) = campaign else { return };
+    for (interaction, card) in &card_q {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        let hero = &mut campaign.world.heroes[0];
+        let Some(&spell) = hero.cards.get(card.0) else { continue };
+        if let Some(selected) = hero.deck.iter().position(|chosen| *chosen == spell) {
+            hero.deck.remove(selected);
+            crate::save::store_campaign(&campaign.world);
+        } else if hero.deck.len() < 15 {
+            hero.deck.push(spell);
+            crate::save::store_campaign(&campaign.world);
+        }
+    }
+}
+
+fn update_deck_ui(
+    campaign: Option<Res<Campaign>>,
+    state: Res<OverworldState>,
+    atlas: Res<Atlas>,
+    mut panel_q: Query<&mut Node, With<DeckPanelRoot>>,
+    mut count_q: Query<&mut Text, With<DeckCountText>>,
+    mut label_q: Query<(&mut Text, &DeckCardLabel), Without<DeckCountText>>,
+    mut card_q: Query<(&DeckCardButton, &mut ImageNode), Without<ButtonVisuals>>,
+) {
+    for mut node in &mut panel_q {
+        node.display = if state.deck_open { Display::Flex } else { Display::None };
+    }
+    let Some(campaign) = campaign else { return };
+    let hero = &campaign.world.heroes[0];
+    let selected_count = hero.deck.len();
+    for mut text in &mut count_q {
+        text.0 = format!("Deck {selected_count}/15");
+    }
+    for (mut text, label) in &mut label_q {
+        let Some(&spell) = hero.cards.get(label.0) else { continue };
+        text.0 = spell_label(spell);
+    }
+    for (card, mut image) in &mut card_q {
+        let Some(&spell) = hero.cards.get(card.0) else { continue };
+        let occurrence = hero.cards[..card.0].iter().filter(|&&card| card == spell).count();
+        let selected = hero.deck.iter().filter(|&&card| card == spell).count() > occurrence;
+        let rect = atlas.rect(if selected { "btn_gold" } else { "btn_wood" });
+        if image.rect != Some(rect) {
+            image.rect = Some(rect);
+        }
+    }
+}
+
+fn update_deploy_start(
+    campaign: Option<Res<Campaign>>,
+    mut start_q: Query<&mut ButtonDisabled, With<StartBattleButton>>,
+) {
+    let allowed = campaign.is_some_and(|campaign| {
+        let hero = &campaign.world.heroes[0];
+        let required = hero.cards.len().min(15);
+        hero.deck.len() == required
+    });
+    for mut disabled in &mut start_q {
+        disabled.0 = !allowed;
+    }
+}
+
+fn scroll_deck_list(
+    mut wheel: MessageReader<MouseWheel>,
+    state: Res<OverworldState>,
+    mut list_q: Query<(&mut ScrollPosition, &ComputedNode), With<DeckCollectionList>>,
+) {
+    for event in wheel.read() {
+        if !state.deck_open {
+            continue;
+        }
+        let amount = match event.unit {
+            MouseScrollUnit::Line => event.y * 42.0,
+            MouseScrollUnit::Pixel => event.y,
+        };
+        for (mut scroll, computed) in &mut list_q {
+            let max_y = (computed.content_size().y - computed.size().y) * computed.inverse_scale_factor();
+            scroll.y = (scroll.y - amount).clamp(0.0, max_y.max(0.0));
+        }
+    }
+}
+
+fn spell_label(spell: tc_core::SpellId) -> String {
+    let name = match spell {
+        tc_core::SpellId::RaiseEarth => "Raise Earth",
+        tc_core::SpellId::LowerEarth => "Lower Earth",
+        tc_core::SpellId::Freeze => "Freeze",
+        tc_core::SpellId::Bridge => "Bridge",
+        tc_core::SpellId::DigTunnel => "Dig Tunnel",
+        tc_core::SpellId::Shield => "Shield",
+        tc_core::SpellId::Swap => "Swap",
+        tc_core::SpellId::Rewind => "Rewind",
+    };
+    let kind = if spell.is_quick() { "Quick" } else { "Action" };
+    format!("{name} · {kind}")
+}
+
 fn handle_deploy_input(
     mut game_state: ResMut<GameState>,
+    state: Res<OverworldState>,
     mouse: Res<ButtonInput<MouseButton>>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
     window: Single<&Window, With<bevy::window::PrimaryWindow>>,
     atlas: Res<Atlas>,
 ) {
+    if state.deck_open {
+        return;
+    }
     if !mouse.just_pressed(MouseButton::Left) {
         return;
     }
@@ -1463,14 +1884,27 @@ fn handle_battle(
         lost = init_white;
         enemy_lost = init_black;
 
-        if let Some(enc) = state.encounter.take() {
+        let encounter = state.encounter.take();
+        let hero_battle = matches!(encounter, Some(Encounter::Hero(_)));
+        if let Some(enc) = encounter {
             c.world.apply_battle(0, enc, tc_world::encounter::BattleResult { outcome, lost, enemy_lost });
         }
-
-        crate::save::store_campaign(&c.world);
         state.dirty = true;
 
+        let player_alive = c.world.hero(0).is_some_and(|hero| hero.alive);
+        if hero_battle || !player_alive {
+            state.campaign_won = hero_battle && c.world.winner() == Some(0);
+            state.campaign_over = true;
+            state.reward_draft = None;
+            state.encounter = None;
+            run.phase = crate::run::RunPhase::Playing;
+            crate::save::clear_campaign();
+            next_mode.set(Mode::Overworld);
+            return;
+        }
+
         if outcome == tc_world::encounter::Outcome::Won {
+            crate::save::store_campaign(&c.world);
             let catalog = tc_run::item::catalog();
             let mut spells: Vec<_> =
                 catalog.iter().filter(|i| matches!(i.kind, tc_run::item::ItemKind::Spell { .. })).collect();
@@ -1489,13 +1923,14 @@ fn handle_battle(
             state.reward_draft = Some(chosen);
             // Stay in OverworldBattle so the Draft UI displays
         } else if outcome == tc_world::encounter::Outcome::Retreated {
+            crate::save::store_campaign(&c.world);
             next_mode.set(Mode::Overworld);
         } else {
-            // Checkmate -> Game Over overlay, clear save
+            state.campaign_won = false;
+            state.campaign_over = true;
             crate::save::clear_campaign();
             state.encounter = None;
             state.reward_draft = None;
-            state.campaign_over = true;
             next_mode.set(Mode::Overworld);
         }
     };
@@ -1516,13 +1951,13 @@ fn handle_battle(
     }
 
     for int in &retreat_q {
-        if *int == Interaction::Pressed {
+        if *int == Interaction::Pressed && !matches!(state.encounter, Some(Encounter::Hero(_))) {
             do_outcome(tc_world::encounter::Outcome::Retreated, &mut c, &mut game_state, &mut state);
             return;
         }
     }
 
-    if keys.just_pressed(KeyCode::KeyR) {
+    if keys.just_pressed(KeyCode::KeyR) && !matches!(state.encounter, Some(Encounter::Hero(_))) {
         do_outcome(tc_world::encounter::Outcome::Retreated, &mut c, &mut game_state, &mut state);
         return;
     }

@@ -1,7 +1,38 @@
+use serde::Serialize;
 use tc_core::Match;
 use tc_core::piece::PieceKind;
 use tc_core::rng::Rng;
 use tc_world::*;
+
+fn bare_world(width: u16, height: u16, seed: u64) -> World {
+    let params = WorldParams { width, height, ..WorldParams::default() };
+    let heroes = vec![
+        Hero::new(0, Faction::AshenSun, "Player".into(), MapPos::new(1, 1), false, seed),
+        Hero::new(
+            1,
+            Faction::HollowCrown,
+            "Rival".into(),
+            MapPos::new(width.saturating_sub(2), height.saturating_sub(2)),
+            true,
+            seed ^ 1,
+        ),
+    ];
+    World {
+        map: WorldMap::new(width, height),
+        heroes,
+        day: 1,
+        turn_order: vec![0, 1],
+        current: 1,
+        fog: vec![0; (width as usize * height as usize).div_ceil(64)],
+        rng_state: seed,
+        params,
+    }
+}
+
+fn set_revealed(world: &mut World, pos: MapPos) {
+    let index = pos.y as usize * world.map.size.0 as usize + pos.x as usize;
+    world.fog[index / 64] |= 1 << (index % 64);
+}
 
 #[test]
 fn test_deterministic_generation() {
@@ -237,4 +268,321 @@ fn test_region_fairness() {
             assert!(hi <= lo * 1.2, "seed {seed}, {heroes} heroes: region path totals {totals:?}");
         }
     }
+}
+
+#[test]
+fn test_ai_turn_is_deterministic() {
+    let mut first = bare_world(16, 12, 81);
+    let mut second = first.clone();
+    assert_eq!(first.heroes[1].cards.len(), 15);
+
+    for _ in 0..5 {
+        assert_eq!(first.ai_turn(1), second.ai_turn(1));
+        first.refill_movement();
+        second.refill_movement();
+    }
+    assert_eq!(first, second);
+}
+
+#[test]
+fn test_ai_respects_movement_and_impassable_terrain() {
+    let mut world = bare_world(8, 6, 91);
+    let ai_start = MapPos::new(1, 2);
+    let player_pos = MapPos::new(6, 2);
+    world.heroes[0].pos = player_pos;
+    world.heroes[0].prev_pos = player_pos;
+    world.heroes[1].pos = ai_start;
+    world.heroes[1].prev_pos = ai_start;
+    world.heroes[1].movement = 10.0;
+
+    for y in 0..world.map.size.1 {
+        world.map.get_mut(MapPos::new(3, y)).unwrap().biome = Biome::Mountain;
+        world.map.get_mut(MapPos::new(4, y)).unwrap().biome = Biome::Water;
+        for x in 0..3 {
+            set_revealed(&mut world, MapPos::new(x, y));
+        }
+    }
+
+    let initial_movement = world.heroes[1].movement;
+    world.ai_turn(1);
+    let ai = world.hero(1).unwrap();
+    assert!(ai.movement >= 0.0);
+    assert!(ai.movement <= initial_movement);
+    assert!(ai.pos.x < 3);
+    assert!(tc_world::path::tile_cost(&world.map, ai.pos).is_some());
+    assert!(world.path(1, player_pos).is_none());
+}
+
+#[test]
+fn test_strong_ai_hunts_player() {
+    let mut world = bare_world(12, 6, 12);
+    let player_pos = MapPos::new(10, 2);
+    world.heroes[0].pos = player_pos;
+    world.heroes[0].prev_pos = player_pos;
+    world.heroes[1].pos = MapPos::new(2, 2);
+    world.heroes[1].prev_pos = world.heroes[1].pos;
+    world.heroes[1].roster.push(PieceKind::Queen);
+    world.heroes[1].movement = 4.0;
+
+    let mut encounter = None;
+    for _ in 0..3 {
+        encounter = world.ai_turn(1);
+        if encounter.is_some() {
+            break;
+        }
+        world.refill_movement();
+    }
+    assert_eq!(encounter, Some(Encounter::Hero(0)));
+    assert_eq!(world.hero(1).unwrap().pos, player_pos);
+}
+
+#[test]
+fn test_ai_wins_camp_and_recruits_boss() {
+    let mut world = bare_world(8, 6, 27);
+    let camp_pos = MapPos::new(2, 1);
+    world.heroes[1].pos = MapPos::new(1, 1);
+    world.heroes[1].prev_pos = world.heroes[1].pos;
+    world.heroes[1].movement = 10.0;
+    world.map.objects.push(MapObject {
+        pos: camp_pos,
+        kind: ObjectKind::Camp(CampKind::KnightCamp),
+        owner: None,
+        cleared: false,
+        guards: vec![PieceKind::King],
+        tier: 1,
+    });
+
+    world.ai_turn(1);
+    let camp = world.map.get_object(camp_pos).unwrap();
+    assert!(camp.cleared);
+    assert_eq!(camp.owner, Some(1));
+    assert!(world.hero(1).unwrap().roster.contains(&PieceKind::Knight));
+}
+
+#[test]
+fn test_ai_continues_after_a_camp_win() {
+    let mut world = bare_world(10, 6, 28);
+    world.heroes[1].pos = MapPos::new(1, 1);
+    world.heroes[1].prev_pos = world.heroes[1].pos;
+    world.heroes[1].movement = 10.0;
+    for (pos, kind) in [(MapPos::new(2, 1), CampKind::KnightCamp), (MapPos::new(3, 1), CampKind::BishopCamp)]
+    {
+        world.map.objects.push(MapObject {
+            pos,
+            kind: ObjectKind::Camp(kind),
+            owner: None,
+            cleared: false,
+            guards: vec![PieceKind::King],
+            tier: 1,
+        });
+    }
+
+    world.ai_turn(1);
+    assert!(world.map.get_object(MapPos::new(2, 1)).unwrap().cleared);
+    assert!(world.map.get_object(MapPos::new(3, 1)).unwrap().cleared);
+    assert!(world.hero(1).unwrap().roster.contains(&PieceKind::Knight));
+    assert!(world.hero(1).unwrap().roster.contains(&PieceKind::Bishop));
+}
+
+#[test]
+fn test_ai_skips_camps_above_its_army_value() {
+    let mut world = bare_world(8, 6, 29);
+    let camp_pos = MapPos::new(2, 1);
+    world.heroes[1].pos = MapPos::new(1, 1);
+    world.heroes[1].prev_pos = world.heroes[1].pos;
+    world.heroes[1].movement = 10.0;
+    world.map.objects.push(MapObject {
+        pos: camp_pos,
+        kind: ObjectKind::Camp(CampKind::Citadel),
+        owner: None,
+        cleared: false,
+        guards: vec![PieceKind::King, PieceKind::Queen],
+        tier: 1,
+    });
+
+    world.ai_turn(1);
+    assert!(world.hero(1).unwrap().alive);
+    assert!(!world.map.get_object(camp_pos).unwrap().cleared);
+}
+
+#[test]
+fn test_losing_ai_camp_fight_retreats_and_preserves_the_king() {
+    let attacker = vec![PieceKind::King, PieceKind::Pawn, PieceKind::Pawn, PieceKind::Pawn];
+    let guards = attacker.clone();
+    let seed = (0..1000)
+        .find(|seed| {
+            let mut rng = Rng::new(*seed);
+            rng.next_u64();
+            let result = tc_world::resolve::auto_resolve(&attacker, &guards, &mut rng);
+            result.outcome == tc_world::encounter::Outcome::Checkmated
+                && result.enemy_lost.iter().filter(|&&piece| piece == PieceKind::Pawn).count() < 3
+        })
+        .unwrap();
+    let mut rng = Rng::new(seed);
+    rng.next_u64();
+    let result = tc_world::resolve::auto_resolve(&attacker, &guards, &mut rng);
+    let mut expected_roster = attacker.clone();
+    for lost in result.lost {
+        if let Some(index) = expected_roster.iter().position(|&piece| piece == lost) {
+            expected_roster.remove(index);
+        }
+    }
+    let mut expected_guards = guards.clone();
+    for lost in result.enemy_lost {
+        if let Some(index) = expected_guards.iter().position(|&piece| piece == lost) {
+            expected_guards.remove(index);
+        }
+    }
+    let mut world = bare_world(8, 6, seed);
+    let camp_pos = MapPos::new(2, 1);
+    world.heroes[0].pos = MapPos::new(6, 4);
+    world.heroes[0].prev_pos = world.heroes[0].pos;
+    world.heroes[1].pos = MapPos::new(1, 1);
+    world.heroes[1].prev_pos = world.heroes[1].pos;
+    world.heroes[1].roster = attacker;
+    world.heroes[1].movement = 10.0;
+    world.map.objects.push(MapObject {
+        pos: camp_pos,
+        kind: ObjectKind::Camp(CampKind::Village),
+        owner: None,
+        cleared: false,
+        guards: guards.clone(),
+        tier: 1,
+    });
+
+    world.ai_turn(1);
+    let ai = world.hero(1).unwrap();
+    assert!(ai.alive);
+    assert_eq!(ai.pos, MapPos::new(1, 1));
+    assert_eq!(ai.movement, 0.0);
+    assert_eq!(ai.roster, expected_roster);
+    assert!(ai.roster.contains(&PieceKind::King));
+    let camp = world.map.get_object(camp_pos).unwrap();
+    assert!(!camp.cleared);
+    assert_eq!(camp.owner, None);
+    assert_eq!(camp.guards, expected_guards);
+    assert_eq!(world.winner(), None);
+}
+
+#[test]
+fn test_ai_survives_and_clears_camps_over_60_turns_on_multiple_seeds() {
+    let mut seeds_with_cleared_camp = 0;
+    for seed in 0..11 {
+        let mut world = bare_world(10, 6, seed);
+        world.heroes[0].pos = MapPos::new(8, 4);
+        world.heroes[0].prev_pos = world.heroes[0].pos;
+        world.heroes[1].pos = MapPos::new(1, 1);
+        world.heroes[1].prev_pos = world.heroes[1].pos;
+        world.heroes[1].movement = 10.0;
+        for (pos, kind) in
+            [(MapPos::new(2, 1), CampKind::KnightCamp), (MapPos::new(4, 1), CampKind::BishopCamp)]
+        {
+            world.map.objects.push(MapObject {
+                pos,
+                kind: ObjectKind::Camp(kind),
+                owner: None,
+                cleared: false,
+                guards: vec![PieceKind::King],
+                tier: 1,
+            });
+        }
+
+        for _ in 0..60 {
+            world.ai_turn(1);
+            world.end_turn();
+            world.end_turn();
+        }
+
+        assert!(world.hero(1).unwrap().alive, "AI died for seed {seed}");
+        if world.map.objects.iter().any(|object| object.cleared) {
+            seeds_with_cleared_camp += 1;
+        }
+    }
+
+    assert!(seeds_with_cleared_camp >= 6, "cleared a camp on {seeds_with_cleared_camp}/11 seeds");
+}
+
+#[test]
+fn test_starter_deck_save_and_legacy_campaign_load() {
+    let mut world = bare_world(8, 6, 33);
+    assert_eq!(world.heroes[0].cards.len(), 15);
+    assert_eq!(world.heroes[0].deck.len(), 15);
+    world.heroes[0].deck.rotate_left(3);
+    let selected_deck = world.heroes[0].deck.clone();
+    let loaded = World::from_ron(&world.to_ron().unwrap()).unwrap();
+    assert_eq!(loaded.heroes[0].deck, selected_deck);
+
+    #[derive(Serialize)]
+    struct LegacyHero {
+        id: u8,
+        faction: Faction,
+        name: String,
+        pos: MapPos,
+        prev_pos: MapPos,
+        roster: Vec<PieceKind>,
+        cards: Vec<tc_core::SpellId>,
+        items: Vec<tc_run::item::ItemId>,
+        movement: f32,
+        is_ai: bool,
+        alive: bool,
+    }
+
+    #[derive(Serialize)]
+    struct LegacyWorld {
+        map: WorldMap,
+        heroes: Vec<LegacyHero>,
+        day: u32,
+        turn_order: Vec<HeroId>,
+        current: usize,
+        fog: Vec<u64>,
+        rng_state: u64,
+        params: WorldParams,
+    }
+
+    let old = LegacyWorld {
+        map: world.map.clone(),
+        heroes: world
+            .heroes
+            .iter()
+            .map(|hero| LegacyHero {
+                id: hero.id,
+                faction: hero.faction,
+                name: hero.name.clone(),
+                pos: hero.pos,
+                prev_pos: hero.prev_pos,
+                roster: hero.roster.clone(),
+                cards: Vec::new(),
+                items: hero.items.clone(),
+                movement: hero.movement,
+                is_ai: hero.is_ai,
+                alive: hero.alive,
+            })
+            .collect(),
+        day: world.day,
+        turn_order: world.turn_order.clone(),
+        current: world.current,
+        fog: world.fog.clone(),
+        rng_state: world.rng_state,
+        params: world.params.clone(),
+    };
+    let old_ron = ron::ser::to_string(&old).unwrap();
+    let upgraded = World::from_ron(&old_ron).unwrap();
+    for hero in upgraded.heroes {
+        assert_eq!(hero.cards.len(), 15);
+        assert_eq!(hero.deck.len(), 15);
+    }
+}
+
+#[test]
+fn test_battle_setup_uses_selected_hero_decks() {
+    let mut world = bare_world(8, 6, 34);
+    world.heroes[0].deck.rotate_left(4);
+    world.heroes[1].deck.rotate_left(7);
+    let player_deck = world.heroes[0].deck.clone();
+    let rival_deck = world.heroes[1].deck.clone();
+    let setup = world.battle_setup(0, &Encounter::Hero(1));
+
+    assert_eq!(setup.player, tc_core::Side::White);
+    assert_eq!(setup.player_deck, player_deck);
+    assert_eq!(setup.enemy_deck, rival_deck);
 }

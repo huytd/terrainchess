@@ -7,7 +7,8 @@ use tc_run::MatchSetup;
 use crate::encounter::{BattleResult, Encounter, Outcome};
 use crate::hero::{Hero, HeroId};
 use crate::map::{Biome, CampKind, MapPos, ObjectKind, WorldMap};
-use crate::path::find_path;
+use crate::path::{astar, find_path, tile_cost};
+use crate::resolve::can_auto_resolve_win;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct WorldParams {
@@ -161,6 +162,18 @@ impl World {
 
     pub fn path(&self, hero_id: HeroId, dest: MapPos) -> Option<Vec<MapPos>> {
         let hero = self.hero(hero_id)?;
+        if hero.is_ai {
+            return astar(&self.map, hero.pos, dest, 0.5, |_, _, pos| {
+                let risky_camp = self.map.objects.iter().any(|object| {
+                    object.pos == pos
+                        && !object.cleared
+                        && object.owner.is_none()
+                        && matches!(object.kind, ObjectKind::Camp(_))
+                        && !can_auto_resolve_win(&hero.roster, &self.guards_for(&object.guards, object.tier))
+                });
+                if risky_camp { None } else { tile_cost(&self.map, pos) }
+            });
+        }
         find_path(&self.map, hero.pos, dest)
     }
 
@@ -235,14 +248,18 @@ impl World {
             player: if !hero.is_ai { Side::White } else { Side::Black },
             relics: Vec::new(),
             pickups: Vec::new(),
-            player_deck: hero.cards.clone(),
+            player_deck: if hero.has_valid_deck() {
+                hero.deck.clone()
+            } else {
+                hero.cards.iter().take(15).copied().collect()
+            },
             enemy_deck: Vec::new(),
             enemy_items: Vec::new(),
             veteran: [false, false],
             armies: None,
         };
 
-        if setup.player_deck.len() < 15 {
+        if setup.player_deck.len() != 15 {
             setup.player_deck = tc_core::filler_deck(seed);
         }
 
@@ -263,12 +280,13 @@ impl World {
             }
             Encounter::Hero(other_id) => {
                 let other = self.hero(*other_id).unwrap();
-                if !other.is_ai {
-                    setup.player = Side::Black;
-                }
                 setup.armies = Some([hero.roster.clone(), other.roster.clone()]);
-                setup.enemy_deck = other.cards.clone();
-                if setup.enemy_deck.len() < 15 {
+                setup.enemy_deck = if other.has_valid_deck() {
+                    other.deck.clone()
+                } else {
+                    other.cards.iter().take(15).copied().collect()
+                };
+                if setup.enemy_deck.len() != 15 {
                     setup.enemy_deck = tc_core::filler_deck(seed ^ 0x454E_454D_595F_4445);
                 }
             }
@@ -277,11 +295,23 @@ impl World {
     }
 
     pub fn apply_battle(&mut self, hero_id: HeroId, encounter: Encounter, result: BattleResult) {
+        let is_ai_camp =
+            self.hero(hero_id).is_some_and(|hero| hero.is_ai) && matches!(&encounter, Encounter::Camp(_));
+        // Auto-resolve does not remove Kings, but preserve that guarantee here
+        // too so an AI camp loss can never eliminate the rival.
+        let ai_camp_outcome = if is_ai_camp && result.outcome == Outcome::Checkmated {
+            Outcome::Retreated
+        } else {
+            result.outcome
+        };
         let hero = self.hero_mut(hero_id).unwrap();
 
-        // Only remove pieces if not retreated? Actually if retreated we still lose what died.
+        // Retreats still lose the pieces that fell during the battle.
         let mut survivor_roster = hero.roster.clone();
         for lost in &result.lost {
+            if is_ai_camp && *lost == PieceKind::King {
+                continue;
+            }
             if let Some(pos) = survivor_roster.iter().position(|p| p == lost) {
                 survivor_roster.remove(pos);
             }
@@ -316,7 +346,7 @@ impl World {
                     } else {
                         self.hero_mut(hero_id).unwrap().roster.push(boss);
                     }
-                } else if result.outcome == Outcome::Retreated {
+                } else if ai_camp_outcome == Outcome::Retreated {
                     let map_obj = self.map.get_object_mut(obj.pos).unwrap();
                     let mut remaining_guards = obj.guards.clone();
                     for lost in result.enemy_lost {
@@ -356,6 +386,10 @@ impl World {
     }
 
     pub fn from_ron(s: &str) -> Result<Self, ron::error::SpannedError> {
-        ron::from_str(s)
+        let mut world: Self = ron::from_str(s)?;
+        for hero in &mut world.heroes {
+            hero.normalize_cards(world.rng_state ^ hero.id as u64);
+        }
+        Ok(world)
     }
 }

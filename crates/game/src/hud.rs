@@ -7,7 +7,7 @@ use tc_run::ItemKind;
 use crate::atlas::Atlas;
 use crate::game::GameState;
 use crate::loading::AppState;
-use crate::run::{PickCard, Run, RunPhase, StartCampaign, StartRun, TitleMenu};
+use crate::run::{PickCard, Run, RunPhase, StartCampaign, TitleMenu};
 use crate::save;
 
 /// Ink colour on light wood.
@@ -96,12 +96,6 @@ struct TitleOverlay;
 struct MenuButton;
 
 #[derive(Component)]
-struct TitleContinueButton;
-
-#[derive(Component)]
-struct TitleNewRunButton(u8);
-
-#[derive(Component)]
 pub struct TitleCampaignButton(pub bool);
 
 #[derive(Component)]
@@ -118,9 +112,6 @@ struct DraftCardHighlight(usize);
 
 #[derive(Component)]
 struct RunOverOverlay;
-
-#[derive(Component)]
-struct NewRunButton;
 
 #[derive(Component)]
 struct HandBar;
@@ -155,7 +146,7 @@ impl ButtonVisuals {
         pressed: "btn_wood_pressed",
         disabled: Some("btn_wood_disabled"),
     };
-    const GOLD: Self = Self {
+    pub(crate) const GOLD: Self = Self {
         normal: "btn_gold",
         hover: "btn_gold_hover",
         pressed: "btn_gold_pressed",
@@ -170,7 +161,7 @@ impl ButtonVisuals {
 }
 
 #[derive(Component, Default, PartialEq, Eq)]
-struct ButtonDisabled(bool);
+pub(crate) struct ButtonDisabled(pub(crate) bool);
 
 fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
     // Floor badge and enemy modifier in the top-left corner
@@ -705,33 +696,6 @@ fn sync_overlays(
                                 TextColor(INK_PARCHMENT),
                                 TextLayout { justify: Justify::Center, ..default() },
                             ));
-
-                            // Primary action button: btn_gold*
-                            panel
-                                .spawn((
-                                    Button,
-                                    Interaction::default(),
-                                    NewRunButton,
-                                    ButtonVisuals::GOLD,
-                                    Node {
-                                        width: Val::Px(200.0),
-                                        height: Val::Px(56.0),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        ..default()
-                                    },
-                                    ImageNode {
-                                        image: atlas.image.clone(),
-                                        rect: Some(atlas.rect("btn_gold")),
-                                        image_mode: button_slicer(),
-                                        ..default()
-                                    },
-                                ))
-                                .with_child((
-                                    Text::new("New run"),
-                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
-                                    TextColor(INK_WOOD),
-                                ));
                         });
                 });
         }
@@ -1210,22 +1174,9 @@ fn handle_card_interaction(
     }
 }
 
-fn handle_new_run_button(
-    button_query: Query<&Interaction, (Changed<Interaction>, With<NewRunButton>)>,
-    run: Res<Run>,
-    mut start_writer: MessageWriter<StartRun>,
-) {
-    for interaction in &button_query {
-        if *interaction == Interaction::Pressed {
-            start_writer.write(StartRun(run.state.size));
-        }
-    }
-}
-
 fn sync_title_menu(
     mut commands: Commands,
     title_menu: Res<TitleMenu>,
-    run: Res<Run>,
     atlas: Res<Atlas>,
     mut last_open: Local<Option<bool>>,
     overlay_query: Query<Entity, With<TitleOverlay>>,
@@ -1243,7 +1194,6 @@ fn sync_title_menu(
         return;
     }
 
-    let has_save = save::has_save();
     let has_campaign_save = save::has_campaign_save();
 
     commands
@@ -1374,94 +1324,17 @@ fn sync_title_menu(
                                 TextColor(INK_WOOD),
                                 TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                             ));
-
-                            if has_save {
-                                col.spawn((
-                                    Button,
-                                    Interaction::default(),
-                                    TitleContinueButton,
-                                    ButtonVisuals::GOLD,
-                                    Node {
-                                        min_width: Val::Px(280.0),
-                                        width: Val::Px(280.0),
-                                        height: Val::Px(56.0),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        padding: UiRect::horizontal(Val::Px(12.0)),
-                                        ..default()
-                                    },
-                                    ImageNode {
-                                        image: atlas.image.clone(),
-                                        rect: Some(atlas.rect("btn_gold")),
-                                        image_mode: button_slicer(),
-                                        ..default()
-                                    },
-                                ))
-                                .with_child((
-                                    Text::new(format!("Continue - Floor {}/8", run.state.floor + 1)),
-                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
-                                    TextColor(INK_WOOD),
-                                    TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
-                                ));
-                            }
-
-                            for (size, label) in
-                                [(8, "Classic run 8x8"), (16, "Classic run 16x16"), (32, "Classic run 32x32")]
-                            {
-                                col.spawn((
-                                    Button,
-                                    Interaction::default(),
-                                    TitleNewRunButton(size),
-                                    ButtonVisuals::WOOD,
-                                    Node {
-                                        min_width: Val::Px(280.0),
-                                        width: Val::Px(280.0),
-                                        height: Val::Px(56.0),
-                                        justify_content: JustifyContent::Center,
-                                        align_items: AlignItems::Center,
-                                        ..default()
-                                    },
-                                    ImageNode {
-                                        image: atlas.image.clone(),
-                                        rect: Some(atlas.rect("btn_wood")),
-                                        image_mode: button_slicer(),
-                                        ..default()
-                                    },
-                                ))
-                                .with_child((
-                                    Text::new(label),
-                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
-                                    TextColor(INK_WOOD),
-                                    TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
-                                ));
-                            }
                         });
                 });
         });
 }
 
 fn handle_title_buttons(
-    continue_q: Query<&Interaction, (Changed<Interaction>, With<TitleContinueButton>)>,
-    new_run_q: Query<(&Interaction, &TitleNewRunButton), (Changed<Interaction>, With<Button>)>,
     menu_q: Query<&Interaction, (Changed<Interaction>, With<MenuButton>)>,
     mut title_menu: ResMut<TitleMenu>,
-    mut start_writer: MessageWriter<StartRun>,
     campaign_q: Query<(&Interaction, &TitleCampaignButton), (Changed<Interaction>, With<Button>)>,
     mut campaign_writer: MessageWriter<StartCampaign>,
 ) {
-    for interaction in &continue_q {
-        if *interaction == Interaction::Pressed {
-            title_menu.open = false;
-        }
-    }
-
-    for (interaction, btn) in &new_run_q {
-        if *interaction == Interaction::Pressed {
-            start_writer.write(StartRun(btn.0));
-            title_menu.open = false;
-        }
-    }
-
     for (interaction, btn) in &campaign_q {
         if *interaction == Interaction::Pressed {
             campaign_writer.write(StartCampaign(btn.0));
@@ -1510,7 +1383,6 @@ impl Plugin for HudPlugin {
                 sync_title_menu,
                 update_draft_card_sizes,
                 handle_card_interaction,
-                handle_new_run_button,
                 handle_title_buttons,
                 handle_hand_card_interaction,
                 handle_discard_button_interaction,

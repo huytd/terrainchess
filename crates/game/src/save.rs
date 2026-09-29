@@ -8,51 +8,6 @@ const SAVE_PATH: &str = "terrainchess_run.ron";
 #[cfg(target_arch = "wasm32")]
 const STORAGE_KEY: &str = "terrainchess.run";
 
-/// Load the saved run state, if present and valid.
-pub fn load() -> Option<RunState> {
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        match std::fs::read_to_string(SAVE_PATH) {
-            Ok(content) => match RunState::from_ron(&content) {
-                Ok(state) => Some(state),
-                Err(e) => {
-                    bevy::log::warn!("failed to deserialize run from {SAVE_PATH}: {e}");
-                    None
-                }
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => {
-                bevy::log::warn!("failed to read {SAVE_PATH}: {e}");
-                None
-            }
-        }
-    }
-
-    #[cfg(target_arch = "wasm32")]
-    {
-        let storage = get_storage()?;
-        match storage.get_item(STORAGE_KEY) {
-            Ok(Some(ron_str)) => match RunState::from_ron(&ron_str) {
-                Ok(state) => Some(state),
-                Err(e) => {
-                    bevy::log::warn!("failed to deserialize run from localStorage: {e}");
-                    None
-                }
-            },
-            Ok(None) => None,
-            Err(e) => {
-                bevy::log::warn!("failed to read from localStorage: {e:?}");
-                None
-            }
-        }
-    }
-}
-
-/// Returns true if a saved run state exists.
-pub fn has_save() -> bool {
-    load().is_some()
-}
-
 /// Store the current run state.
 pub fn store(state: &RunState) {
     #[cfg(not(target_arch = "wasm32"))]

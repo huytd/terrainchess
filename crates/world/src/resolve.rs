@@ -16,6 +16,19 @@ pub fn army_value(roster: &[PieceKind]) -> u32 {
         .sum()
 }
 
+/// Whether an army meets the minimum odds required for the AI to attack a camp.
+pub(crate) fn can_auto_resolve_win(attacker_roster: &[PieceKind], defenders: &[PieceKind]) -> bool {
+    let attacker_val = army_value(attacker_roster);
+    let defender_val = army_value(defenders);
+    if attacker_val < defender_val {
+        return false;
+    }
+
+    let total_val = attacker_val + defender_val;
+    let win_chance = if total_val == 0 { 1.0 } else { attacker_val as f32 / total_val as f32 };
+    win_chance >= 0.5
+}
+
 pub fn auto_resolve(attacker_roster: &[PieceKind], defenders: &[PieceKind], rng: &mut Rng) -> BattleResult {
     let attacker_val = army_value(attacker_roster);
     let defender_val = army_value(defenders);

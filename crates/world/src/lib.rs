@@ -1,3 +1,4 @@
+pub mod ai;
 pub mod encounter;
 pub mod generator;
 pub mod hero;

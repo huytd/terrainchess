@@ -47,10 +47,6 @@ pub struct Run {
 #[derive(Message, Clone, Debug)]
 pub struct PickCard(pub String);
 
-/// Message to start a new run with the given board size.
-#[derive(Message, Clone, Copy, Debug)]
-pub struct StartRun(pub u8);
-
 #[derive(Message, Clone, Copy, Debug)]
 pub struct StartCampaign(pub bool); // true for continue, false for new
 
@@ -69,15 +65,6 @@ pub fn time_seed() -> u64 {
         let t = bevy::platform::time::Instant::now();
         (t.elapsed().as_nanos() as u64) ^ 0x9E37_79B9_7F4A_7C15
     }
-}
-
-/// Starts a new run of the specified board size, building the match and saving.
-pub fn start_new_run(size: u8, run: &mut Run, game_state: &mut GameState, seed: u64) {
-    run.state = RunState::new(seed, size);
-    run.phase = RunPhase::Playing;
-    let setup = run.state.match_setup();
-    *game_state = GameState::from_setup(&setup);
-    save::store(&run.state);
 }
 
 /// Picks a drafted item, progressing through bonus drafts or starting the next floor.
@@ -132,7 +119,6 @@ fn check_run_match_outcome(
 fn handle_run_messages(
     mut commands: Commands,
     mut pick_events: MessageReader<PickCard>,
-    mut start_events: MessageReader<StartRun>,
     mut campaign_events: MessageReader<StartCampaign>,
     mut next_mode: ResMut<NextState<crate::game::Mode>>,
     mode: Res<State<crate::game::Mode>>,
@@ -144,11 +130,6 @@ fn handle_run_messages(
         if *mode.get() == crate::game::Mode::Classic {
             apply_pick(&pick.0, &mut run, &mut game_state);
         }
-    }
-
-    for start in start_events.read() {
-        let seed = time.elapsed().as_nanos() as u64 ^ time_seed();
-        start_new_run(start.0, &mut run, &mut game_state, seed);
     }
 
     for campaign in campaign_events.read() {
@@ -170,20 +151,9 @@ fn handle_run_messages(
 }
 
 fn initial_run_and_game() -> (Run, GameState) {
-    let saved = save::load();
-    let has_save = saved.is_some();
-    let run_state = match saved {
-        Some(state) => state,
-        None => {
-            let seed = time_seed();
-            RunState::new(seed, 8)
-        }
-    };
+    let run_state = RunState::new(time_seed(), 8);
     let setup = run_state.match_setup();
     let game_state = GameState::from_setup(&setup);
-    if has_save {
-        save::store(&run_state);
-    }
     let run = Run { state: run_state, phase: RunPhase::Playing };
     (run, game_state)
 }
@@ -197,7 +167,6 @@ impl Plugin for RunPlugin {
             .insert_resource(game_state)
             .init_resource::<TitleMenu>()
             .add_message::<PickCard>()
-            .add_message::<StartRun>()
             .add_message::<StartCampaign>()
             .add_systems(
                 Update,
