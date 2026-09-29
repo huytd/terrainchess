@@ -24,13 +24,17 @@ use crate::run::{Run, RunPhase, TitleMenu};
 /// Camera distance from the point it looks at, the zoom.
 const MIN_DISTANCE: f32 = 3.0;
 const MAX_DISTANCE: f32 = 450.0;
+/// Camera distance limits for the 48×48 overworld map.
+const OVERWORLD_MIN_DISTANCE: f32 = 18.0;
+const OVERWORLD_MAX_DISTANCE: f32 = 140.0;
+pub(crate) const OVERWORLD_START_DISTANCE: f32 = 85.0;
 /// Vertical field of view: enough for depth without distorting the board edges.
 const FOV: f32 = PI / 6.0;
 /// Screen px kept clear of the board for the status panel (top) and toolbar (bottom).
 const HUD_TOP: f32 = 30.0;
 const HUD_BOTTOM: f32 = 60.0;
-/// A touch that moves further than this (screen px) is a drag, not a tap.
-const TAP_SLOP: f32 = 12.0;
+/// A pointer that moves further than this (screen px) is a drag, not a tap.
+pub(crate) const TAP_SLOP: f32 = 12.0;
 /// Minimum and maximum camera tilt above the board.
 const MIN_PITCH: f32 = 12.0 * PI / 180.0;
 const MAX_PITCH: f32 = 70.0 * PI / 180.0;
@@ -148,8 +152,21 @@ impl Orbit {
         self.distance = (self.distance / factor).clamp(MIN_DISTANCE, MAX_DISTANCE);
     }
 
+    pub(crate) fn zoom_overworld_by(&mut self, factor: f32) {
+        self.distance = (self.distance / factor).clamp(OVERWORLD_MIN_DISTANCE, OVERWORLD_MAX_DISTANCE);
+    }
+
+    pub(crate) fn clamp_overworld_focus(&mut self, width: u16, height: u16) {
+        self.focus.x = self.focus.x.clamp(0.0, width.saturating_sub(1) as f32);
+        self.focus.z = self.focus.z.clamp(0.0, height.saturating_sub(1) as f32);
+    }
+
+    pub(crate) fn tilt(&mut self, delta: f32) {
+        self.pitch = (self.pitch + delta).clamp(MIN_PITCH, MAX_PITCH);
+    }
+
     /// Turn immediately (dragging), keeping any pending animated turn relative.
-    fn turn(&mut self, angle: f32) {
+    pub(crate) fn turn(&mut self, angle: f32) {
         self.yaw += angle;
         self.target_yaw += angle;
     }
@@ -179,8 +196,12 @@ fn fit_camera(
     mut fit: ResMut<FitCamera>,
     mut orbit: ResMut<Orbit>,
     state: Res<GameState>,
+    mode: Res<State<crate::game::Mode>>,
     window: Single<&Window, With<PrimaryWindow>>,
 ) {
+    if *mode.get() == crate::game::Mode::Overworld {
+        return;
+    }
     let win = window.size();
     let key = (win, state.seed, state.size);
     if fit.0 == Some(key) || win.x < 1.0 {
@@ -233,10 +254,13 @@ fn mouse_camera(
     time: Res<Time>,
     run: Res<Run>,
     title_menu: Res<TitleMenu>,
+    mode: Res<State<crate::game::Mode>>,
+    campaign: Option<Res<crate::run::Campaign>>,
     ui_query: Query<&Interaction>,
     mut orbit: ResMut<Orbit>,
 ) {
-    if title_menu.open || run.phase != RunPhase::Playing {
+    let overworld = *mode.get() == crate::game::Mode::Overworld;
+    if title_menu.open || (!overworld && run.phase != RunPhase::Playing) {
         return;
     }
     if ui_query.iter().any(|&i| i != Interaction::None)
@@ -245,7 +269,12 @@ fn mouse_camera(
         return;
     }
     if scroll.delta.y != 0.0 {
-        orbit.zoom_by(1.15f32.powf(scroll.delta.y.signum()));
+        let factor = 1.15f32.powf(scroll.delta.y.signum());
+        if overworld {
+            orbit.zoom_overworld_by(factor);
+        } else {
+            orbit.zoom_by(factor);
+        }
     }
     if mouse.pressed(MouseButton::Right) {
         orbit.turn(-motion.delta.x * 0.01);
@@ -282,6 +311,19 @@ fn mouse_camera(
     if key_tilt != 0.0 {
         let tilt_speed = 60.0 * PI / 180.0;
         orbit.pitch = (orbit.pitch + key_tilt * tilt_speed * time.delta_secs()).clamp(MIN_PITCH, MAX_PITCH);
+    }
+
+    if overworld {
+        if keys.just_pressed(KeyCode::KeyQ) {
+            orbit.target_yaw += FRAC_PI_4;
+        }
+        if keys.just_pressed(KeyCode::KeyE) {
+            orbit.target_yaw -= FRAC_PI_4;
+        }
+        if let Some(campaign) = campaign {
+            let (width, height) = campaign.world.map.size;
+            orbit.clamp_overworld_focus(width, height);
+        }
     }
 }
 
@@ -614,6 +656,8 @@ impl Plugin for InputPlugin {
                             .and_then(not(in_state(crate::game::Mode::Overworld)))
                             .and_then(not(in_state(crate::game::Mode::Deploy))),
                     ),
+                    mouse_camera
+                        .run_if(in_state(AppState::Ready).and_then(in_state(crate::game::Mode::Overworld))),
                     fit_camera,
                     apply_orbit,
                 )
