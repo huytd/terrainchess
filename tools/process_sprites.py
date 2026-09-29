@@ -319,7 +319,8 @@ GUI_BOXES = [
 ]
 
 # --- Overworld sheet (assets/overworld.png, see specs/assets-overworld.md) ------
-# Rows 1-3: seamless terrain tiles, sliced strictly by (row, col) like TILES.
+# Rows 1-3: direct terrain cells. The road/bridge sheet art is one connected
+# illustration, so those tiles (and shoreline transitions) are generated below.
 OW_TILES = [
     ("ow_grass_0", 0, 0),
     ("ow_grass_1", 0, 1),
@@ -339,17 +340,6 @@ OW_TILES = [
     ("ow_water_0", 0, 6),
     ("ow_water_1", 1, 5),
     ("ow_water_2", 2, 5),
-    ("ow_coast_0", 1, 6),
-    ("ow_coast_1", 2, 6),
-    # One canonical piece per road/bridge shape; the other rotations (N/E/S/W
-    # connections) are made in code with board_view::rotate_uv.
-    ("ow_road_corner", 0, 7),  # as drawn: connects south + east
-    ("ow_road_cross", 1, 7),  # connects all 4 sides
-    ("ow_road_straight", 2, 7),  # as drawn: connects east + west
-    ("ow_bridge_ns", 0, 8),
-    ("ow_bridge_ew", 2, 8),
-    ("ow_river_0", 1, 9),
-    ("ow_river_1", 2, 9),
 ]
 
 # Rows 4-5: camp buildings (2 rows tall for fortress/citadel), each with a small
@@ -715,8 +705,82 @@ def process(src, src_sky, src_ground, src_gui, src_ow, palette):
     # Rows 1-3: seamless terrain tiles, sliced strictly by cell (no trimming).
     for name, r, c in OW_TILES:
         x0, y0, x1, y1 = owcell(r, c)
-        rgb = rgb_ow[y0 + 3 : y1 - 3, x0 + 3 : x1 - 3]  # skip the thin grid line
+        rgb = rgb_ow[y0 + 5 : y1 - 5, x0 + 5 : x1 - 5]  # inset past the magenta sheet grid
         out[name] = (downscale(rgb, np.ones(rgb.shape[:2], np.float32), TILE, TILE), CENTER)
+
+    def expand(mask):
+        padded = np.pad(mask, 1, constant_values=False)
+        return np.logical_or.reduce(
+            [padded[y : y + TILE, x : x + TILE] for y in range(3) for x in range(3)]
+        )
+
+    def path_mask(mask, half_width):
+        path = np.zeros((TILE, TILE), dtype=bool)
+        lo, hi = TILE // 2 - half_width, TILE // 2 + half_width
+        path[lo:hi, lo:hi] = True
+        if mask & 1:  # north
+            path[: TILE // 2, lo:hi] = True
+        if mask & 2:  # east
+            path[lo:hi, TILE // 2 :] = True
+        if mask & 4:  # south
+            path[TILE // 2 :, lo:hi] = True
+        if mask & 8:  # west
+            path[lo:hi, : TILE // 2] = True
+        return path
+
+    grass = out["ow_grass_0"][0]
+    water = out["ow_water_0"][0]
+    yy, xx = np.indices((TILE, TILE))
+    for mask in range(16):
+        road = path_mask(mask, 5)
+        road_edge = expand(road)
+        fringe = expand(road_edge)
+        road_tile = grass.copy()
+        road_tile[fringe & ~road_edge, :3] = (120, 164, 75)
+        road_tile[road_edge & ~road, :3] = (89, 53, 29)
+        road_tile[road, :3] = (204, 163, 109)
+        out[f"ow_road_{mask:02x}"] = (road_tile, CENTER)
+
+        deck = path_mask(mask, 6)
+        deck_edge = expand(deck)
+        bridge_tile = water.copy()
+        bridge_tile[deck_edge & ~deck, :3] = (76, 47, 34)
+        bridge_tile[deck, :3] = (157, 113, 74)
+        vertical_planks = bool(mask & 5) or not bool(mask & 10)
+        horizontal_planks = bool(mask & 10)
+        plank_lines = np.zeros((TILE, TILE), dtype=bool)
+        if vertical_planks:
+            plank_lines |= (yy % 4 == 3) & deck
+        if horizontal_planks:
+            plank_lines |= (xx % 4 == 3) & deck
+        bridge_tile[plank_lines, :3] = (112, 73, 46)
+        out[f"ow_bridge_{mask:02x}"] = (bridge_tile, CENTER)
+
+        if mask == 0:
+            land = np.zeros((TILE, TILE), dtype=bool)
+        elif mask == 15:
+            land = np.ones((TILE, TILE), dtype=bool)
+        else:
+            land_distance = []
+            water_distance = []
+            for bit, distance in (
+                (1, yy.astype(np.float32) + 0.5),
+                (2, TILE - xx.astype(np.float32) - 0.5),
+                (4, TILE - yy.astype(np.float32) - 0.5),
+                (8, xx.astype(np.float32) + 0.5),
+            ):
+                (land_distance if mask & bit else water_distance).append(distance)
+            land = np.minimum.reduce(land_distance) < np.minimum.reduce(water_distance)
+
+        coast_tile = np.where(land[..., None], grass, water).copy()
+        shoreline = np.zeros((TILE, TILE), dtype=bool)
+        shoreline[:-1, :] |= land[:-1, :] != land[1:, :]
+        shoreline[1:, :] |= land[1:, :] != land[:-1, :]
+        shoreline[:, :-1] |= land[:, :-1] != land[:, 1:]
+        shoreline[:, 1:] |= land[:, 1:] != land[:, :-1]
+        coast_tile[shoreline & land, :3] = (205, 177, 119)
+        coast_tile[shoreline & ~land, :3] = (102, 177, 177)
+        out[f"ow_coast_{mask:02x}"] = (coast_tile, CENTER)
 
     # Rows 4-5: camp buildings, flag slot erased and left transparent; the
     # controlling faction's banner is overlaid in code near the top-right.

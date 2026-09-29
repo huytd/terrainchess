@@ -57,8 +57,8 @@ impl Atlas {
     /// Texture coordinates of a sprite. Unknown names panic: the manifest is generated.
     pub fn uv(&self, name: &str) -> Uv {
         let r = self.sprite_rect(name);
-        // A small inset keeps nearest sampling from bleeding into the neighbouring sprite.
-        let inset = 0.02;
+        // Tile edges use half-texel centers so linear sampling cannot pull in the atlas gutter.
+        let inset = if name.starts_with("ow_") && r.w == 32 && r.h == 32 { 0.5 } else { 0.02 };
         Uv {
             min: Vec2::new(r.x as f32 + inset, r.y as f32 + inset) / self.size,
             max: Vec2::new((r.x + r.w) as f32 - inset, (r.y + r.h) as f32 - inset) / self.size,
