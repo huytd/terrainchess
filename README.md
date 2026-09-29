@@ -40,6 +40,14 @@ Pawns promote to a queen automatically. Red frame + sword = your piece can be ca
 On phones and tablets (web build): tap to select and move · drag to pan · pinch to zoom · twist two
 fingers to turn the board · two-finger vertical drag to tilt.
 
+## Deploys
+
+Web builds and deployments are automated with GitHub Actions:
+- Pull requests receive a sticky comment with a Vercel preview deployment URL.
+- Merges to `main` deploy to production.
+
+Deployments require the `VERCEL_TOKEN` repository secret.
+
 ## Art
 
 After regenerating or editing `assets/spritesheet.jpg`, rebuild the atlas (needs Pillow, numpy, scipy):
