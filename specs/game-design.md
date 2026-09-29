@@ -62,6 +62,8 @@ The board size can be set in the menu for a new run. Inside a run, the size can 
 
 ## 4. Roguelike layer
 
+*(Note: The structure described here is superseded by [game-design-overworld.md](game-design-overworld.md) once the overworld is implemented.)*
+
 ### Run structure
 
 - A run is a series of **matches** (e.g. 7 "floors" + 1 boss match).
