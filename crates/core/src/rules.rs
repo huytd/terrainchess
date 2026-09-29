@@ -130,30 +130,43 @@ impl Match {
         self.hands[side.index()].deck.len()
     }
 
-    pub fn can_discard_hand(&self, side: Side) -> bool {
-        let hand = &self.hands[side.index()];
-        !hand.used.iter().any(|&u| u) && hand.hand.iter().any(|c| c.is_some()) && !hand.deck.is_empty()
+    pub fn discards_left(&self, side: Side) -> u8 {
+        self.hands[side.index()].discards_left
     }
 
-    pub fn discard_hand(&mut self, side: Side) -> Result<(), String> {
-        let hand = &self.hands[side.index()];
-        if hand.used.iter().any(|&u| u) {
-            return Err("cannot discard hand when cards have already been used".to_string());
+    pub fn can_discard(&self, side: Side, slot: usize) -> bool {
+        if slot >= 3 {
+            return false;
         }
-        if !hand.hand.iter().any(|c| c.is_some()) {
-            return Err("cannot discard an empty hand".to_string());
+        let hand = &self.hands[side.index()];
+        hand.discards_left > 0 && !hand.deck.is_empty() && hand.hand[slot].is_some() && !hand.used[slot]
+    }
+
+    pub fn discard(&mut self, side: Side, slot: usize) -> Result<(), String> {
+        if slot >= 3 {
+            return Err("slot index out of bounds".to_string());
+        }
+        let hand = &self.hands[side.index()];
+        if hand.discards_left == 0 {
+            return Err("no discards remaining this match".to_string());
         }
         if hand.deck.is_empty() {
             return Err("cannot discard when deck is empty".to_string());
         }
+        if hand.hand[slot].is_none() {
+            return Err("cannot discard an empty slot".to_string());
+        }
+        if hand.used[slot] {
+            return Err("cannot discard a card that has already been used".to_string());
+        }
 
         let hand = &mut self.hands[side.index()];
-        for slot in &mut hand.hand {
-            if let Some(card) = slot.take() {
-                hand.discarded.push(card);
-            }
-        }
-        hand.draw();
+        hand.discards_left -= 1;
+        let card = hand.hand[slot].take().unwrap();
+        hand.discarded.push(card);
+        let new_card = hand.deck.remove(0);
+        hand.hand[slot] = Some(new_card);
+        hand.used[slot] = false;
         Ok(())
     }
 

@@ -36,7 +36,6 @@ impl Default for TitleMenu {
 pub struct Run {
     pub state: RunState,
     pub phase: RunPhase,
-    pub sandbox: bool,
 }
 
 /// Message to select a reward card from the active draft.
@@ -46,10 +45,6 @@ pub struct PickCard(pub String);
 /// Message to start a new run with the given board size.
 #[derive(Message, Clone, Copy, Debug)]
 pub struct StartRun(pub u8);
-
-/// Message to toggle sandbox hotseat mode.
-#[derive(Message, Clone, Copy, Debug)]
-pub struct ToggleSandbox;
 
 /// Derive a seed from system time / clock without panicking on WASM.
 pub fn time_seed() -> u64 {
@@ -70,26 +65,11 @@ pub fn time_seed() -> u64 {
 
 /// Starts a new run of the specified board size, building the match and saving.
 pub fn start_new_run(size: u8, run: &mut Run, game_state: &mut GameState, seed: u64) {
-    run.sandbox = false;
     run.state = RunState::new(seed, size);
     run.phase = RunPhase::Playing;
     let setup = run.state.match_setup();
     *game_state = GameState::from_setup(&setup);
     save::store(&run.state);
-}
-
-/// Toggles sandbox (hotseat on a fresh random board; run paused and not saved).
-pub fn toggle_sandbox(run: &mut Run, game_state: &mut GameState, seed: u64) {
-    if !run.sandbox {
-        run.sandbox = true;
-        // Hotseat on a fresh random board, AI side None
-        *game_state = GameState::new(run.state.size, seed, None, 2);
-    } else {
-        run.sandbox = false;
-        // Return to the run's current match rebuilt from its setup
-        let setup = run.state.match_setup();
-        *game_state = GameState::from_setup(&setup);
-    }
 }
 
 /// Picks a drafted item, progressing through bonus drafts or starting the next floor.
@@ -113,7 +93,7 @@ pub fn apply_pick(item_id: &str, run: &mut Run, game_state: &mut GameState) {
 }
 
 fn check_run_match_outcome(mut run: ResMut<Run>, game_state: Res<GameState>) {
-    if run.sandbox || run.phase != RunPhase::Playing {
+    if run.phase != RunPhase::Playing {
         return;
     }
 
@@ -136,7 +116,6 @@ fn check_run_match_outcome(mut run: ResMut<Run>, game_state: Res<GameState>) {
 fn handle_run_messages(
     mut pick_events: MessageReader<PickCard>,
     mut start_events: MessageReader<StartRun>,
-    mut toggle_events: MessageReader<ToggleSandbox>,
     mut run: ResMut<Run>,
     mut game_state: ResMut<GameState>,
     time: Res<Time>,
@@ -148,11 +127,6 @@ fn handle_run_messages(
     for start in start_events.read() {
         let seed = time.elapsed().as_nanos() as u64 ^ time_seed();
         start_new_run(start.0, &mut run, &mut game_state, seed);
-    }
-
-    for _ in toggle_events.read() {
-        let seed = time.elapsed().as_nanos() as u64 ^ time_seed();
-        toggle_sandbox(&mut run, &mut game_state, seed);
     }
 }
 
@@ -171,7 +145,7 @@ fn initial_run_and_game() -> (Run, GameState) {
     if has_save {
         save::store(&run_state);
     }
-    let run = Run { state: run_state, phase: RunPhase::Playing, sandbox: false };
+    let run = Run { state: run_state, phase: RunPhase::Playing };
     (run, game_state)
 }
 
@@ -185,7 +159,6 @@ impl Plugin for RunPlugin {
             .init_resource::<TitleMenu>()
             .add_message::<PickCard>()
             .add_message::<StartRun>()
-            .add_message::<ToggleSandbox>()
             .add_systems(
                 Update,
                 (check_run_match_outcome, handle_run_messages).chain().run_if(in_state(AppState::Ready)),

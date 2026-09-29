@@ -16,5 +16,5 @@ pub use movegen::{Move, MoveKind};
 pub use piece::{MoveProfile, Piece, PieceKind, Side};
 pub use position::Position;
 pub use rules::{DrawReason, Match, Outcome, Pickup, Rules, TimedCave, TimedEffect};
-pub use spell::{SpellCast, SpellHand, SpellId, filler_deck};
+pub use spell::{MAX_DISCARDS, SpellCast, SpellHand, SpellId, filler_deck};
 pub use terrain::{Feature, Obstacle, Terrain, Tile, TileKind};

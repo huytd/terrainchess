@@ -424,56 +424,116 @@ fn drawing_happens_as_soon_as_every_non_empty_slot_is_used() {
 }
 
 #[test]
-fn discard_hand_rules() {
+fn discard_rules() {
     let fen = "7k/8/8/8/8/8/8/7K w - - 0 1";
     let mut game = game_with_fen(fen);
 
-    // 1. Cannot discard with empty hand
-    assert!(game.discard_hand(Side::White).is_err());
-    assert!(!game.can_discard_hand(Side::White));
+    // Initial state: hand is empty, cannot discard any slot
+    for slot in 0..3 {
+        assert!(!game.can_discard(Side::White, slot));
+        assert!(game.discard(Side::White, slot).is_err());
+    }
 
-    // Deck with 5 cards: [RaiseEarth, LowerEarth, Shield, Swap, Freeze]
-    let deck =
-        vec![SpellId::RaiseEarth, SpellId::LowerEarth, SpellId::Shield, SpellId::Swap, SpellId::Freeze];
+    // Give White a deck with 8 cards:
+    // Hand draws first 3: [RaiseEarth, LowerEarth, Shield]
+    // Remaining in deck: [Swap, Freeze, Bridge, DigTunnel, Rewind]
+    let deck = vec![
+        SpellId::RaiseEarth,
+        SpellId::LowerEarth,
+        SpellId::Shield,
+        SpellId::Swap,
+        SpellId::Freeze,
+        SpellId::Bridge,
+        SpellId::DigTunnel,
+        SpellId::Rewind,
+    ];
     game.set_deck(Side::White, deck);
-    assert!(game.can_discard_hand(Side::White));
+    assert_eq!(game.discards_left(Side::White), 5);
+    assert_eq!(game.deck_len(Side::White), 5);
+    assert_eq!(
+        game.hand(Side::White).hand,
+        [Some(SpellId::RaiseEarth), Some(SpellId::LowerEarth), Some(SpellId::Shield)]
+    );
 
     let hash_before = game.pos.hash();
     let turn_before = game.pos.side_to_move;
 
-    // Discard hand: moves [RaiseEarth, LowerEarth, Shield] to discarded,
-    // and draws [Swap, Freeze, None] from deck!
-    game.discard_hand(Side::White).expect("discard should succeed");
+    // 1. Discarding a slot replaces only that card and puts it in the discard pile
+    assert!(game.can_discard(Side::White, 1));
+    game.discard(Side::White, 1).expect("discarding slot 1 should succeed");
 
     assert_eq!(
         game.hand(Side::White).discarded,
-        vec![SpellId::RaiseEarth, SpellId::LowerEarth, SpellId::Shield],
-        "hand moved to discarded"
+        vec![SpellId::LowerEarth],
+        "discarded card placed in discard pile"
     );
     assert_eq!(
         game.hand(Side::White).hand,
-        [Some(SpellId::Swap), Some(SpellId::Freeze), None],
-        "drew new cards from deck"
+        [Some(SpellId::RaiseEarth), Some(SpellId::Swap), Some(SpellId::Shield)],
+        "only slot 1 replaced, drawn from top of deck"
     );
-    assert_eq!(game.hand(Side::White).used, [false, false, false]);
-    assert_eq!(game.deck_len(Side::White), 0);
+    assert_eq!(game.deck_len(Side::White), 4);
+    assert_eq!(game.discards_left(Side::White), 4);
 
     // Does not end turn and does not change position hash:
     assert_eq!(game.pos.side_to_move, turn_before);
     assert_eq!(game.pos.hash(), hash_before);
 
-    // 2. Cannot discard when deck is empty
-    assert!(!game.can_discard_hand(Side::White));
-    assert!(game.discard_hand(Side::White).is_err());
+    // 2. Used cards cannot be discarded (while other unused slots still can)
+    // Cast quick spell Shield (slot 2)
+    game.cast(SpellCast::Shield(sq("h1"))).unwrap();
+    assert!(game.hand(Side::White).used[2], "slot 2 is now marked used");
+    assert!(!game.can_discard(Side::White, 2), "used card cannot be discarded");
+    assert!(game.discard(Side::White, 2).is_err(), "used card discard returns error");
 
-    // 3. Cannot discard when any slot has already been used
+    // Other unused slots can still be discarded even if another slot was used:
+    assert!(game.can_discard(Side::White, 0));
+    assert!(game.can_discard(Side::White, 1));
+
+    // 3. Discard limit: each side may discard at most 5 times per match (the 6th discard fails)
+    // Currently discards_left == 4. We will perform 4 more discards:
+    game.discard(Side::White, 0).expect("discard #2 should succeed");
+    assert_eq!(game.discards_left(Side::White), 3);
+    assert_eq!(game.hand(Side::White).hand[0], Some(SpellId::Freeze));
+
+    game.discard(Side::White, 0).expect("discard #3 should succeed");
+    assert_eq!(game.discards_left(Side::White), 2);
+    assert_eq!(game.hand(Side::White).hand[0], Some(SpellId::Bridge));
+
+    game.discard(Side::White, 0).expect("discard #4 should succeed");
+    assert_eq!(game.discards_left(Side::White), 1);
+    assert_eq!(game.hand(Side::White).hand[0], Some(SpellId::DigTunnel));
+
+    game.discard(Side::White, 0).expect("discard #5 should succeed");
+    assert_eq!(game.discards_left(Side::White), 0);
+    assert_eq!(game.hand(Side::White).hand[0], Some(SpellId::Rewind));
+
+    // 6th discard fails because discards_left == 0
+    assert!(!game.can_discard(Side::White, 0));
+    assert!(game.discard(Side::White, 0).is_err());
+
+    // 4. Empty deck forbids discarding
     let mut game2 = game_with_fen(fen);
-    game2.set_deck(Side::White, vec![SpellId::Shield, SpellId::RaiseEarth, SpellId::Swap, SpellId::Freeze]);
-    // Cast quick spell Shield: slot 0 becomes used
-    game2.cast(SpellCast::Shield(sq("h1"))).unwrap();
-    assert!(game2.hand(Side::White).used[0]);
-    assert!(!game2.can_discard_hand(Side::White));
-    assert!(game2.discard_hand(Side::White).is_err());
+    game2.set_deck(Side::White, vec![SpellId::RaiseEarth, SpellId::LowerEarth, SpellId::Shield]);
+    assert_eq!(game2.deck_len(Side::White), 0);
+    assert_eq!(game2.discards_left(Side::White), 5);
+    assert!(!game2.can_discard(Side::White, 0));
+    assert!(game2.discard(Side::White, 0).is_err());
+
+    // 5. Counter resets for a new match
+    let mut new_game = game_with_fen(fen);
+    new_game.set_deck(
+        Side::White,
+        vec![SpellId::RaiseEarth, SpellId::LowerEarth, SpellId::Shield, SpellId::Swap],
+    );
+    assert_eq!(new_game.discards_left(Side::White), 5);
+}
+
+#[test]
+fn spell_hand_serde_default_discards_left() {
+    let ron_str = "(deck: [], hand: (None, None, None), used: (false, false, false), discarded: [])";
+    let hand: tc_core::SpellHand = ron::from_str(ron_str).expect("should deserialize old SpellHand");
+    assert_eq!(hand.discards_left, 5);
 }
 
 #[test]

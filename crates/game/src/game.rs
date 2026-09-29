@@ -15,7 +15,7 @@ pub enum GameEvent {
     Pickup { at: Sq },
     Selected { sq: Sq },
     Cleared { at: Sq, pawn_at: Sq, side: Side },
-    Discarded { side: Side },
+    Discarded { side: Side, slot: usize, spell: SpellId },
     HandDrawn { side: Side },
 }
 
@@ -165,8 +165,11 @@ impl GameState {
 
     pub fn discard(&mut self) {
         let side = self.game.pos.side_to_move;
-        if self.game.discard_hand(side).is_ok() {
-            self.events.push(GameEvent::Discarded { side });
+        let Some(slot) = self.armed_slot else { return };
+        let hand = self.game.hand(side);
+        let Some(spell) = hand.hand[slot] else { return };
+        if self.game.discard(side, slot).is_ok() {
+            self.events.push(GameEvent::Discarded { side, slot, spell });
             self.disarm();
             self.pieces_dirty = true;
         }

@@ -7,7 +7,7 @@ use tc_run::ItemKind;
 use crate::atlas::Atlas;
 use crate::game::GameState;
 use crate::loading::AppState;
-use crate::run::{PickCard, Run, RunPhase, StartRun, TitleMenu, ToggleSandbox};
+use crate::run::{PickCard, Run, RunPhase, StartRun, TitleMenu};
 use crate::save;
 
 /// Ink colour on light wood.
@@ -100,9 +100,6 @@ struct TitleContinueButton;
 
 #[derive(Component)]
 struct TitleNewRunButton(u8);
-
-#[derive(Component)]
-struct TitleSandboxButton;
 
 #[derive(Component)]
 struct DraftOverlay;
@@ -316,7 +313,7 @@ fn update_floor_badge(
     mut q_enemy_box: Query<&mut Node, (With<FloorBadgeEnemyBox>, Without<FloorBadge>)>,
     mut q_enemy: Query<&mut Text, With<FloorBadgeEnemyText>>,
 ) {
-    let is_boss = !run.sandbox && run.state.floor == 7;
+    let is_boss = run.state.floor == 7;
     let badge_name = if is_boss { "badge_boss" } else { "badge_floor" };
 
     for (mut img, mut node) in &mut q_badge {
@@ -328,13 +325,8 @@ fn update_floor_badge(
         node.height = Val::Px(112.0);
     }
 
-    let (title, label) = if run.sandbox {
-        ("", "Sandbox".to_string())
-    } else if is_boss {
-        ("", "Boss".to_string())
-    } else {
-        ("Floor", format!("{}/8", run.state.floor + 1))
-    };
+    let (title, label) =
+        if is_boss { ("", "Boss".to_string()) } else { ("Floor", format!("{}/8", run.state.floor + 1)) };
 
     for mut text in &mut q_title {
         if text.0 != title {
@@ -348,7 +340,7 @@ fn update_floor_badge(
         }
     }
 
-    let enemy_label = if !run.sandbox && run.state.floor >= 3 && !state.enemy_items.is_empty() {
+    let enemy_label = if run.state.floor >= 3 && !state.enemy_items.is_empty() {
         let names: Vec<_> = state
             .enemy_items
             .iter()
@@ -768,7 +760,7 @@ fn sync_hand_bar(
     atlas: Res<Atlas>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut last_key: Local<
-        Option<(bool, [Option<tc_core::SpellId>; 3], [bool; 3], usize, bool, Option<usize>, (u32, u32))>,
+        Option<(bool, [Option<tc_core::SpellId>; 3], [bool; 3], usize, u8, bool, Option<usize>, (u32, u32))>,
     >,
     hand_bar_query: Query<Entity, With<HandBar>>,
 ) {
@@ -777,20 +769,22 @@ fn sync_hand_bar(
         && run.phase == RunPhase::Playing
         && !state.ai_to_move()
         && state.outcome.is_none()
-        && (run.sandbox || side == Side::White);
+        && side == Side::White;
 
     let hand = state.game.hand(side);
     let hand_cards = hand.hand;
     let hand_used = hand.used;
     let deck_len = state.game.deck_len(side);
-    let can_discard = state.game.can_discard_hand(side);
+    let discards_left = state.game.discards_left(side);
     let armed_slot = state.armed_slot;
+    let can_discard = armed_slot.is_some_and(|slot| state.game.can_discard(side, slot));
 
     let win = window.iter().next();
     let (win_w, win_h) = win.map(|w| (w.width(), w.height())).unwrap_or((1280.0, 800.0));
     let win_dim = (win_w as u32, win_h as u32);
 
-    let current_key = (show, hand_cards, hand_used, deck_len, can_discard, armed_slot, win_dim);
+    let current_key =
+        (show, hand_cards, hand_used, deck_len, discards_left, can_discard, armed_slot, win_dim);
 
     if *last_key == Some(current_key) {
         return;
@@ -832,8 +826,9 @@ fn sync_hand_bar(
     let overlap = if win_w < 500.0 { 0.37 } else { 0.15 };
     let dx = (1.0 - overlap) * card_w;
 
+    let sidebar_w = if win_w < 600.0 { 108.0 } else { 120.0 };
     let center_x = if win_w < 600.0 {
-        let sidebar_zone = 92.0 + 6.0 + 8.0;
+        let sidebar_zone = sidebar_w + 6.0 + 8.0;
         (win_w - sidebar_zone) * 0.5
     } else {
         win_w * 0.5
@@ -1063,7 +1058,7 @@ fn sync_hand_bar(
                         ButtonVisuals::WOOD,
                         ButtonDisabled(!can_discard),
                         Node {
-                            width: Val::Px(if win_w < 600.0 { 92.0 } else { 112.0 }),
+                            width: Val::Px(sidebar_w),
                             height: Val::Px(if win_w < 600.0 { 70.0 } else { 78.0 }),
                             flex_direction: FlexDirection::Column,
                             justify_content: JustifyContent::Center,
@@ -1093,7 +1088,7 @@ fn sync_hand_bar(
                             },
                         ));
                         btn.spawn((
-                            Text::new("Discard"),
+                            Text::new(format!("Discard {discards_left}/{}", tc_core::MAX_DISCARDS)),
                             TextFont { font_size: FontSize::Px(24.0), ..default() },
                             TextColor(text_color),
                             TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
@@ -1371,48 +1366,17 @@ fn sync_title_menu(
                                     TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                                 ));
                             }
-
-                            col.spawn((
-                                Button,
-                                Interaction::default(),
-                                TitleSandboxButton,
-                                ButtonVisuals::WOOD,
-                                Node {
-                                    min_width: Val::Px(280.0),
-                                    width: Val::Px(280.0),
-                                    height: Val::Px(56.0),
-                                    justify_content: JustifyContent::Center,
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                },
-                                ImageNode {
-                                    image: atlas.image.clone(),
-                                    rect: Some(atlas.rect("btn_wood")),
-                                    image_mode: button_slicer(),
-                                    ..default()
-                                },
-                            ))
-                            .with_child((
-                                Text::new("Sandbox"),
-                                TextFont { font_size: FontSize::Px(24.0), ..default() },
-                                TextColor(INK_WOOD),
-                                TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
-                            ));
                         });
                 });
         });
 }
 
-#[allow(clippy::too_many_arguments)]
 fn handle_title_buttons(
     continue_q: Query<&Interaction, (Changed<Interaction>, With<TitleContinueButton>)>,
     new_run_q: Query<(&Interaction, &TitleNewRunButton), (Changed<Interaction>, With<Button>)>,
-    sandbox_q: Query<&Interaction, (Changed<Interaction>, With<TitleSandboxButton>)>,
     menu_q: Query<&Interaction, (Changed<Interaction>, With<MenuButton>)>,
     mut title_menu: ResMut<TitleMenu>,
     mut start_writer: MessageWriter<StartRun>,
-    mut toggle_writer: MessageWriter<ToggleSandbox>,
-    run: Res<Run>,
 ) {
     for interaction in &continue_q {
         if *interaction == Interaction::Pressed {
@@ -1423,15 +1387,6 @@ fn handle_title_buttons(
     for (interaction, btn) in &new_run_q {
         if *interaction == Interaction::Pressed {
             start_writer.write(StartRun(btn.0));
-            title_menu.open = false;
-        }
-    }
-
-    for interaction in &sandbox_q {
-        if *interaction == Interaction::Pressed {
-            if !run.sandbox {
-                toggle_writer.write(ToggleSandbox);
-            }
             title_menu.open = false;
         }
     }

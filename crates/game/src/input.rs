@@ -44,7 +44,6 @@ pub enum Action {
     Undo,
     /// Start a new run of this size.
     NewRun(u8),
-    ToggleSandbox,
     SwapSides,
     AiLevel(i8),
     Deselect,
@@ -52,7 +51,7 @@ pub enum Action {
     Turn(i8),
     /// Arm the hand slot at this 0-based index.
     ArmSlot(usize),
-    /// Discard current hand and draw a new one.
+    /// Discard armed card and draw a new one into that slot.
     Discard,
     /// Dev cheat: refill hand with 3 random castable spells.
     CheatSpells,
@@ -503,7 +502,6 @@ fn hotkeys(
         (KeyCode::Digit7, Action::ArmSlot(2)),
         (KeyCode::KeyD, Action::Discard),
         (KeyCode::KeyN, Action::NewRun(state.size)),
-        (KeyCode::KeyH, Action::ToggleSandbox),
         (KeyCode::KeyF, Action::SwapSides),
         (KeyCode::Minus, Action::AiLevel(-1)),
         (KeyCode::Equal, Action::AiLevel(1)),
@@ -552,10 +550,6 @@ fn apply_actions(
             Action::NewRun(size) => {
                 let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
                 run::start_new_run(size, &mut run, &mut state, seed);
-            }
-            Action::ToggleSandbox => {
-                let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
-                run::toggle_sandbox(&mut run, &mut state, seed);
             }
             Action::SwapSides if state.ai_side.is_some() => {
                 state.ai_side = state.ai_side.map(Side::opposite);

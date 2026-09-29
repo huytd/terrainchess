@@ -62,19 +62,45 @@ impl SpellCast {
     }
 }
 
+pub const MAX_DISCARDS: u8 = 5;
+
+fn default_discards_left() -> u8 {
+    MAX_DISCARDS
+}
+
 /// Spell deck, hand of up to 3 cards, slot usage, and discard pile.
-#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SpellHand {
     pub deck: Vec<SpellId>,
     pub hand: [Option<SpellId>; 3],
     pub used: [bool; 3],
     pub discarded: Vec<SpellId>,
+    #[serde(default = "default_discards_left")]
+    pub discards_left: u8,
+}
+
+impl Default for SpellHand {
+    fn default() -> Self {
+        SpellHand {
+            deck: Vec::new(),
+            hand: [None; 3],
+            used: [false; 3],
+            discarded: Vec::new(),
+            discards_left: MAX_DISCARDS,
+        }
+    }
 }
 
 impl SpellHand {
     /// Creates a hand from an already shuffled deck, empties the hand and draws up to 3 cards.
     pub fn new(deck: Vec<SpellId>) -> Self {
-        let mut sh = SpellHand { deck, hand: [None; 3], used: [false; 3], discarded: Vec::new() };
+        let mut sh = SpellHand {
+            deck,
+            hand: [None; 3],
+            used: [false; 3],
+            discarded: Vec::new(),
+            discards_left: MAX_DISCARDS,
+        };
         sh.draw();
         sh
     }
