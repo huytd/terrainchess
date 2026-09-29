@@ -1,4 +1,4 @@
-//! Tests for spells and pickups in tc_core (PLAN.md §6).
+//! Tests for spells and pickups in tc_core (specs/game-design.md §4).
 
 use tc_core::{
     Feature, Match, Move, MoveKind, Obstacle, Pickup, PieceKind, Position, Rules, Side, SpellCast, SpellId,

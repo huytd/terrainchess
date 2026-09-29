@@ -1,12 +1,13 @@
 # Terrain Chess
 
 A pixel-art chess roguelike where hills, cliffs, water and caves change how pieces move.
-Design: [PLAN.md](PLAN.md) · Art spec: [SPRITES.md](SPRITES.md).
+Specs live in [`specs/`](specs/README.md): [game design](specs/game-design.md), [project plan](specs/project-plan.md) and asset specs.
 
 ## Layout
 
 | Path | What |
 |---|---|
+| `specs/` | Specifications: game design, project plan, sprite specs |
 | `crates/core` (`tc_core`) | Rules, terrain, move generation, board generator. No Bevy. |
 | `crates/ai` (`tc_ai`) | Alpha-beta AI over `tc_core`, resumable in time slices. No Bevy. |
 | `crates/game` | Bevy 0.19 app: rendering, input, HUD (native + web) |

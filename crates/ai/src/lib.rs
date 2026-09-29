@@ -1,4 +1,4 @@
-//! Terrain Chess AI (PLAN.md §7): negamax with alpha-beta, iterative deepening,
+//! Terrain Chess AI (specs/game-design.md §5): negamax with alpha-beta, iterative deepening,
 //! move ordering (TT move, MVV-LVA, killers), quiescence and a transposition table.
 //!
 //! The search is a [`SearchJob`] that runs in slices, so a single-threaded web build

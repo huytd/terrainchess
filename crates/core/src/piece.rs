@@ -1,4 +1,4 @@
-//! Pieces and their data-driven movement profiles (PLAN.md §2, §4).
+//! Pieces and their data-driven movement profiles (specs/project-plan.md §2, specs/game-design.md §2).
 
 use serde::{Deserialize, Serialize};
 

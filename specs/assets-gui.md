@@ -1,10 +1,10 @@
 # Terrain Chess — GUI Sheet Spec
 
 Art for the on-screen interface: card frames and card art, buttons, panels, the hand bar,
-badges and small icons. The board and pieces stay on `SPRITES.md`; the island and sky are on
-`ENVIRONMENT_SPRITES.md`. This is a third, separate sheet.
+badges and small icons. The board and pieces stay on `assets-sprites.md`; the island and sky are on
+`assets-environment.md`. This is a third, separate sheet.
 
-**Style:** the same as `SPRITES.md`: modern indie pixel art, bold clean outlines, vivid readable
+**Style:** the same as `assets-sprites.md`: modern indie pixel art, bold clean outlines, vivid readable
 colours, soft cel shading. Fantasy with a dark edge: carved wood, parchment, iron fittings, gold
 trim for rare things. The GUI is drawn on top of a colourful 3D scene, so every panel is
 **fully opaque** and has a clear dark outline.
@@ -26,7 +26,7 @@ trim for rare things. The GUI is drawn on top of a colourful 3D scene, so every 
 | Outline | 1 logical px dark navy `#1A1C2C` around every frame, button, panel and icon |
 | Light | From the **top-left** |
 | Rendering | Crisp pixels, no anti-aliasing, no blur, **no text or letters anywhere** (the game draws all text) |
-| Palette | The §1 palette of `SPRITES.md` |
+| Palette | The §1 palette of `assets-sprites.md` |
 
 **Cell numbering is 1-based: (row, col).** A frame spanning several cells is written
 `(r,c)–(r2,c2)`.

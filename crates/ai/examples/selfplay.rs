@@ -1,4 +1,4 @@
-//! AI vs AI on generated boards (PLAN.md §10): spots boards or rules that break chess.
+//! AI vs AI on generated boards (specs/project-plan.md §4): spots boards or rules that break chess.
 //!
 //! `cargo run --release -p tc_ai --example selfplay -- [games] [size] [ms_per_move]`
 

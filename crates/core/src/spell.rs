@@ -1,4 +1,4 @@
-//! Spell definitions and casting actions (PLAN.md §6).
+//! Spell definitions and casting actions (specs/game-design.md §4).
 
 use serde::{Deserialize, Serialize};
 

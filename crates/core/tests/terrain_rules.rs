@@ -1,4 +1,4 @@
-//! One fixture per terrain rule in PLAN.md §4.
+//! One fixture per terrain rule in specs/game-design.md §2.
 
 use tc_core::movegen::Ctx;
 use tc_core::{

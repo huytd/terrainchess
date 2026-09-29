@@ -61,7 +61,7 @@ impl Position {
         if size <= 8 { 2 } else { 3 }
     }
 
-    /// The starting army for a board size (PLAN.md §5).
+    /// The starting army for a board size (specs/game-design.md §3).
     pub fn start(size: u8) -> Self {
         use PieceKind::*;
         const STANDARD: [PieceKind; 8] = [Rook, Knight, Bishop, Queen, King, Bishop, Knight, Rook];

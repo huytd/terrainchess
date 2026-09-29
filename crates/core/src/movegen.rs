@@ -1,4 +1,4 @@
-//! Terrain-aware move generation (PLAN.md §4). Check detection reuses the same
+//! Terrain-aware move generation (specs/game-design.md §2). Check detection reuses the same
 //! step rules, so terrain that blocks a move also blocks the matching attack.
 //! Captures only go level or downhill: a piece on higher ground is safe from anything
 //! below it, though the lower piece may still climb onto that square once it is empty.

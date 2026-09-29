@@ -47,7 +47,7 @@ opt-level = 3
 codegen-units = 1
 lto = "thin"
 
-# Web release builds: small over fast (see PLAN.md M8).
+# Web release builds: small over fast (see specs/project-plan.md M8).
 [profile.wasm-release]
 inherits = "release"
 opt-level = "z"
