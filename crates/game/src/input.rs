@@ -19,8 +19,7 @@ use tc_core::{Outcome, PieceKind, Side};
 
 use crate::game::{GameEvent, GameState, MAX_AI_LEVEL};
 use crate::loading::AppState;
-use crate::run::{self, Run, RunPhase, TitleMenu};
-use crate::save;
+use crate::run::{Run, RunPhase, TitleMenu};
 
 /// Camera distance from the point it looks at, the zoom.
 const MIN_DISTANCE: f32 = 3.0;
@@ -42,8 +41,6 @@ const START_YAW: f32 = -FRAC_PI_4;
 #[derive(Message, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Undo,
-    /// Start a new run of this size.
-    NewRun(u8),
     SwapSides,
     AiLevel(i8),
     Deselect,
@@ -478,13 +475,9 @@ fn hotkeys(
     mut actions: MessageWriter<Action>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
-        if title_menu.open {
-            if save::has_save() {
-                title_menu.open = false;
-            }
-        } else if state.armed_spell.is_some() || state.selected.is_some() {
+        if !title_menu.open && (state.armed_spell.is_some() || state.selected.is_some()) {
             actions.write(Action::Deselect);
-        } else {
+        } else if !title_menu.open {
             title_menu.open = true;
         }
     }
@@ -494,14 +487,10 @@ fn hotkeys(
     }
 
     for (key, action) in [
-        (KeyCode::Digit1, Action::NewRun(8)),
-        (KeyCode::Digit2, Action::NewRun(16)),
-        (KeyCode::Digit3, Action::NewRun(32)),
         (KeyCode::Digit5, Action::ArmSlot(0)),
         (KeyCode::Digit6, Action::ArmSlot(1)),
         (KeyCode::Digit7, Action::ArmSlot(2)),
         (KeyCode::KeyD, Action::Discard),
-        (KeyCode::KeyN, Action::NewRun(state.size)),
         (KeyCode::KeyF, Action::SwapSides),
         (KeyCode::Minus, Action::AiLevel(-1)),
         (KeyCode::Equal, Action::AiLevel(1)),
@@ -532,25 +521,17 @@ fn hotkeys(
 fn apply_actions(
     mut actions: MessageReader<Action>,
     mut state: ResMut<GameState>,
-    mut run: ResMut<Run>,
+    run: Res<Run>,
     mut orbit: ResMut<Orbit>,
     mut arrows: ResMut<ArrowsEnabled>,
     time: Res<Time>,
 ) {
     for &action in actions.read() {
         if run.phase != RunPhase::Playing {
-            if let Action::NewRun(size) = action {
-                let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
-                run::start_new_run(size, &mut run, &mut state, seed);
-            }
             continue;
         }
 
         match action {
-            Action::NewRun(size) => {
-                let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
-                run::start_new_run(size, &mut run, &mut state, seed);
-            }
             Action::SwapSides if state.ai_side.is_some() => {
                 state.ai_side = state.ai_side.map(Side::opposite);
                 state.selected = None;

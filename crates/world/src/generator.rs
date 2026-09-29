@@ -391,7 +391,7 @@ pub fn generate_world(mut seed: u64, params: WorldParams) -> (WorldMap, Vec<Hero
         for (i, &pos) in starts.iter().enumerate() {
             let faction = if i == 0 { Faction::AshenSun } else { Faction::HollowCrown };
             let name = if i == 0 { "Lord Caelen".to_string() } else { "Lich-King Malakor".to_string() };
-            heroes.push(Hero::new(i as u8, faction, name, pos, i > 0));
+            heroes.push(Hero::new(i as u8, faction, name, pos, i > 0, seed ^ i as u64));
         }
 
         let mut road_tiles = Vec::new();
