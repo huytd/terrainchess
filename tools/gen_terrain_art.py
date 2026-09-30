@@ -3,7 +3,6 @@
 wall_rock  32×32  chunky rounded boulders for cliff sides; tiles in both directions.
 grass_lip  32×16  a grass overhang with a bumpy, outlined hanging edge; tiles sideways,
                   transparent below the edge.
-stone_lip  32×16  a cut-stone rim for board squares, in the board stone's greys.
 
 Run on its own to write a 8× preview: python tools/gen_terrain_art.py /tmp/art.png
 """
@@ -103,40 +102,11 @@ def grass_lip(w=32, h=16, seed=11):
     return img
 
 
-# Board stone greys, light to dark, and the outline under the rim.
-STONE = [(150, 149, 153), (121, 120, 123), (104, 102, 107), (88, 86, 92)]
-STONE_OUTLINE = (52, 50, 58)
-
-
-def stone_lip(w=32, h=16):
-    """A beveled stone band: light top edge, blocks split by joints, dark underside."""
-    img = np.zeros((h, w, 4), dtype=np.uint8)
-    band = 7
-    for x in range(w):
-        for y in range(band + 1):
-            if y == band:
-                c = STONE_OUTLINE
-            elif y == 0:
-                c = STONE[0]
-            elif y >= band - 2:
-                c = STONE[3]
-            else:
-                c = STONE[1] if (x // 4 + y) % 5 else STONE[2]
-            if x % 16 == 0 and 0 < y < band:
-                c = STONE_OUTLINE
-            elif x % 16 == 1 and 0 < y < band - 1:
-                c = STONE[0]
-            img[y, x, :3] = c
-            img[y, x, 3] = 255
-    return img
-
-
 def terrain_art():
     """Sprites for the atlas: name -> (RGBA uint8 array, anchor)."""
     return {
         "wall_rock": (wall_rock(), (0.5, 0.5)),
         "grass_lip": (grass_lip(), (0.5, 0.5)),
-        "stone_lip": (stone_lip(), (0.5, 0.5)),
     }
 
 

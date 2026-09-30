@@ -585,7 +585,7 @@ pub(crate) fn flat(c: Vec3, size: Vec2) -> [Vec3; 4] {
 /// How far a square's top rounds down toward an edge that drops away.
 pub(crate) const CUSHION: f32 = 0.17;
 /// How far the grass lip stands out from the cliff, and how far it hangs below the curve.
-const LIP_OUT: f32 = 0.025;
+const LIP_OUT: f32 = 0.006;
 const LIP_HANG: f32 = 0.2;
 /// World height of one repeat of the cliff rock texture (32 px, like a square's width).
 const ROCK_REPEAT: f32 = 1.0;
@@ -715,7 +715,8 @@ fn lip_strip(
     tint: Color,
 ) {
     let uv = atlas.uv(sprite);
-    let hi = top_y - CUSHION * 0.3;
+    // Starts exactly where the rounded top meets the wall, so the lip continues the curve.
+    let hi = top_y - CUSHION + 0.004;
     let bottom = (top_y - CUSHION - LIP_HANG).max(lo + 0.02);
     if hi <= bottom {
         return;
@@ -726,6 +727,13 @@ fn lip_strip(
         [uv.at(u.0, 1.0), uv.at(u.1, 1.0), uv.at(u.1, 0.0), uv.at(u.0, 0.0)],
         tint,
     );
+}
+
+/// A lip tint lit like a rim facing `out` (horizontal outward normal).
+fn shade_lip(tint: Color, out: Vec2) -> Color {
+    let (diffuse, _) = shine(Vec3::new(out.x, 0.0, out.y));
+    let c = tint.to_srgba();
+    Color::srgb(c.red * diffuse, c.green * diffuse, c.blue * diffuse)
 }
 
 /// Cliff walls, rounded corners and grass lips around one column.
@@ -764,9 +772,13 @@ pub(crate) fn rim(
         }
         let len = (b - a).length();
         let hi = if drops[side] { top.y - r } else { top.y };
-        rock_wall(solid, atlas, p3(a), p3(b), (0.0, len), los[side], hi, tints[side]);
+        // Walls reach a little below the neighbour's ground: its own rounded rim can dip
+        // there, and the gap would show the sky.
+        rock_wall(solid, atlas, p3(a), p3(b), (0.0, len), los[side] - r, hi, tints[side]);
         if let Some((sprite, t)) = lip.filter(|_| drops[side]) {
             let o = n * LIP_OUT;
+            // Shade the lip like the bottom of the curve above it, so they read as one.
+            let t = shade_lip(t, n);
             lip_strip(lips, atlas, sprite, p3(a + o), p3(b + o), (0.0, len), los[side], top.y, t);
         }
     }
@@ -797,11 +809,12 @@ pub(crate) fn rim(
                 p3(center + d0 * r),
                 p3(center + d1 * r),
                 (0.0, seg),
-                lo,
+                lo - r,
                 top.y - r,
                 tint,
             );
             if let Some((sprite, t)) = lip {
+                let t = shade_lip(t, (d0 + d1).normalize_or_zero());
                 let rr = r + LIP_OUT;
                 lip_strip(
                     lips,
@@ -921,8 +934,8 @@ fn spawn_terrain(
         });
         let lift = 0.03 * tile.height as f32;
         let tints = [0.476, 0.504, 0.588, 0.527].map(|s: f32| Color::srgb(s + lift, s + lift, s + lift));
-        // Board squares are cut stone, so their rims are stone too.
-        let lip = (!tile.is_water()).then(|| ("stone_lip", Color::srgb(0.95, 0.93, 0.86)));
+        // Board squares are cut stone: the rounded top is their edge, no lip.
+        let lip = None;
         rim(&mut solid, &mut lips, &atlas, top, drops, los, tints, lip);
 
         // Grid lines along square edges and column top rims:
