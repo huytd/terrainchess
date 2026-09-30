@@ -1270,7 +1270,8 @@ fn spawn_prepare(
             PanelKind::Inner,
             Node {
                 width: Val::Px(grid_w),
-                min_height: Val::Px(40.0),
+                // Room for two lines, so hovering a card with a long effect doesn't resize the panel.
+                min_height: Val::Px((small * 2.5 + 8.0).ceil()),
                 padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
