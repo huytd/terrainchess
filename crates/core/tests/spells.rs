@@ -853,3 +853,12 @@ fn target_block_explains_wrong_squares() {
     assert_eq!(game.target_block(SpellId::Shield, sq("d4")), Some(TargetBlock::NotATarget(SpellId::Shield)));
     assert_eq!(game.cast_block(SpellId::Curse), Some(CastBlock::NoTargets(SpellId::Curse)));
 }
+
+#[test]
+fn swap_onto_last_rank_promotes_pawn() {
+    let mut game = game_with_fen("1R2k3/8/8/8/8/8/1P6/4K3 w - - 0 1");
+    game.set_deck(Side::White, vec![SpellId::Swap, SpellId::Swap, SpellId::Swap]);
+    game.cast(SpellCast::Swap(sq("b2"), sq("b8"))).unwrap();
+    assert_eq!(game.pos.get(sq("b8")).unwrap().kind, PieceKind::Queen);
+    assert_eq!(game.pos.get(sq("b2")).unwrap().kind, PieceKind::Rook);
+}

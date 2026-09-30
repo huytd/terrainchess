@@ -434,6 +434,18 @@ impl GameState {
                 self.terrain_dirty = true;
             }
             self.pieces_dirty = true;
+            // Swap/Blink can drop a pawn on its last rank, where the rules promote it.
+            let is_kind =
+                |m: &Match, sq: Sq, k: tc_core::PieceKind| m.pos.get(sq).is_some_and(|p| p.kind == k);
+            let moved_pawn = squares.iter().any(|&sq| is_kind(&before, sq, tc_core::PieceKind::Pawn));
+            for &sq in &squares {
+                if moved_pawn
+                    && is_kind(&self.game, sq, tc_core::PieceKind::Queen)
+                    && !is_kind(&before, sq, tc_core::PieceKind::Queen)
+                {
+                    self.events.push(GameEvent::Promoted { at: sq });
+                }
+            }
             self.events.push(GameEvent::Cast { spell, squares });
             if self.game.in_check()
                 && let Some(king) = self.game.pos.king(self.game.pos.side_to_move)

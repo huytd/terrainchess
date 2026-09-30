@@ -943,6 +943,18 @@ impl Match {
             }
         }
 
+        // A pawn put on its last rank by a spell (Swap, Blink) promotes to a queen,
+        // since it can never move forward again.
+        let size = self.terrain.size;
+        for sq in squares(size) {
+            if let Some(p) = self.pos.get(sq)
+                && p.kind == PieceKind::Pawn
+                && p.side.relative_rank(sq.y, size) == size - 1
+            {
+                self.pos.set(sq, Some(Piece { kind: PieceKind::Queen, ..p }));
+            }
+        }
+
         if !cast.is_quick() {
             // End turn like a move
             self.pos.en_passant = None;
