@@ -1045,8 +1045,11 @@ fn sync_hand_bar(
                 GlobalZIndex(15),
             ))
             .with_children(|sidebar| {
-                // 1. Discard button
-                let (icon_discard_size, _) = integer_scaled_size(&atlas, "icon_discard", 44.0);
+                // 1. Discard button: a real wood button (9-sliced background with
+                // hover/pressed/disabled swapping via `ButtonVisuals`) holding the
+                // small discard icon on the left and the count label on the right.
+                // Auto-sized to its content with padding so the text never
+                // overflows; kept compact so it clears the hand fan on phones.
                 let (btn_initial, text_color) = if can_discard {
                     ("btn_wood", INK_WOOD)
                 } else {
@@ -1061,12 +1064,11 @@ fn sync_hand_bar(
                         ButtonVisuals::WOOD,
                         ButtonDisabled(!can_discard),
                         Node {
-                            width: Val::Px(sidebar_w),
-                            height: Val::Px(if win_w < 600.0 { 70.0 } else { 78.0 }),
-                            flex_direction: FlexDirection::Column,
+                            flex_direction: FlexDirection::Row,
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
-                            row_gap: Val::Px(2.0),
+                            column_gap: Val::Px(6.0),
+                            padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
                             ..default()
                         },
                         ImageNode {
@@ -1078,21 +1080,17 @@ fn sync_hand_bar(
                     ))
                     .with_children(|btn| {
                         btn.spawn((
-                            Node {
-                                width: Val::Px(icon_discard_size.x),
-                                height: Val::Px(icon_discard_size.y),
-                                ..default()
-                            },
+                            Node { width: Val::Px(34.0), height: Val::Px(16.0), ..default() },
                             ImageNode {
                                 image: atlas.image.clone(),
                                 rect: Some(atlas.rect("icon_discard")),
-                                image_mode: NodeImageMode::Auto,
+                                image_mode: NodeImageMode::Stretch,
                                 ..default()
                             },
                         ));
                         btn.spawn((
                             Text::new(format!("Discard {discards_left}/{}", tc_core::MAX_DISCARDS)),
-                            TextFont { font_size: FontSize::Px(24.0), ..default() },
+                            TextFont { font_size: FontSize::Px(16.0), ..default() },
                             TextColor(text_color),
                             TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                         ));
