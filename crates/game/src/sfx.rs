@@ -179,7 +179,9 @@ impl Plugin for SfxPlugin {
             Update,
             (
                 handle_mute_toggle,
-                play_game_events_sfx.after(crate::fx::process_game_events),
+                play_game_events_sfx
+                    .after(crate::fx::process_game_events)
+                    .after(crate::particles::cast_particles),
                 update_pending_splash,
                 handle_run_phase_sfx,
             ),

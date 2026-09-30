@@ -317,7 +317,14 @@ pub struct AnnouncePlugin;
 
 impl Plugin for AnnouncePlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(OnEnter(AppState::Ready), setup_pill)
-            .add_systems(Update, (run_banner, sync_pill).run_if(in_state(AppState::Ready)));
+        app.add_systems(OnEnter(AppState::Ready), setup_pill).add_systems(
+            Update,
+            (
+                // Released events must reach the effects before the sound system drains them.
+                run_banner.before(crate::fx::process_game_events).before(crate::particles::cast_particles),
+                sync_pill,
+            )
+                .run_if(in_state(AppState::Ready)),
+        );
     }
 }

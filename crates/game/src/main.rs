@@ -12,6 +12,7 @@ mod game;
 mod hud;
 mod input;
 mod loading;
+mod particles;
 mod run;
 mod save;
 mod scenery;
@@ -59,6 +60,7 @@ fn main() {
         fx::FxPlugin,
         sfx::SfxPlugin,
         announce::AnnouncePlugin,
+        particles::ParticlesPlugin,
     ));
 
     let handjet = Font::from_bytes(HANDJET_FONT.to_vec());

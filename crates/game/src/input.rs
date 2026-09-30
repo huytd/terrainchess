@@ -58,6 +58,8 @@ pub enum Action {
     CheatSpells,
     /// Dev cheat: the AI casts a random spell on its next turn.
     CheatEnemySpell,
+    /// Dev: toggle 0.2× game speed, for checking effects.
+    SlowMotion,
     /// Dev cheat: win current run match.
     CheatWin,
     /// Dev cheat: lose current run match.
@@ -538,6 +540,9 @@ fn hotkeys(
     }
 
     if dev.0 {
+        if keys.just_pressed(KeyCode::F4) {
+            actions.write(Action::SlowMotion);
+        }
         if keys.just_pressed(KeyCode::F6) {
             actions.write(Action::CheatEnemySpell);
         }
@@ -560,6 +565,7 @@ fn apply_actions(
     mut orbit: ResMut<Orbit>,
     mut arrows: ResMut<ArrowsEnabled>,
     time: Res<Time>,
+    mut virtual_time: ResMut<Time<Virtual>>,
 ) {
     for &action in actions.read() {
         if run.phase != RunPhase::Playing {
@@ -635,15 +641,17 @@ fn apply_actions(
                 state.disarm();
                 state.pieces_dirty = true;
             }
+            Action::SlowMotion => {
+                let speed = if virtual_time.relative_speed() < 1.0 { 1.0 } else { 0.2 };
+                virtual_time.set_relative_speed(speed);
+            }
             Action::CheatEnemySpell => {
-                let spells = [
-                    tc_core::SpellId::RaiseEarth,
-                    tc_core::SpellId::LowerEarth,
-                    tc_core::SpellId::Rewind,
-                    tc_core::SpellId::Sprout,
-                    tc_core::SpellId::Shield,
-                ];
-                let n = (time.elapsed().as_millis() as usize / 97) % spells.len();
+                // Cycles through every spell so each announcement and effect can be checked;
+                // the AI falls back to Lower Earth or Sprout if this one has no target.
+                static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                let n = NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                let spells = tc_core::SpellId::ALL;
+                let n = n % spells.len();
                 let ai = state.ai_side.unwrap_or(Side::Black);
                 let hand = &mut state.game.hands[ai.index()];
                 hand.hand =

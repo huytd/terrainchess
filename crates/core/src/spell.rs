@@ -26,6 +26,25 @@ pub enum SpellId {
 }
 
 impl SpellId {
+    pub const ALL: [SpellId; 16] = [
+        SpellId::RaiseEarth,
+        SpellId::LowerEarth,
+        SpellId::Freeze,
+        SpellId::Bridge,
+        SpellId::DigTunnel,
+        SpellId::Shield,
+        SpellId::Swap,
+        SpellId::Rewind,
+        SpellId::Smite,
+        SpellId::Evaporate,
+        SpellId::Flood,
+        SpellId::Featherfall,
+        SpellId::Curse,
+        SpellId::Sprout,
+        SpellId::Blink,
+        SpellId::Insight,
+    ];
+
     /// Spells that can currently be cast in the game (all spells are castable).
     pub fn is_castable(&self) -> bool {
         true
