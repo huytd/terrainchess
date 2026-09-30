@@ -31,6 +31,28 @@ impl SpellId {
         true
     }
 
+    /// One line on what the spell does, for the cast announcement.
+    pub fn effect_text(self) -> &'static str {
+        match self {
+            SpellId::RaiseEarth => "Raises a square one level",
+            SpellId::LowerEarth => "Lowers a square one level",
+            SpellId::Freeze => "Turns nearby water to ice for a while",
+            SpellId::Bridge => "Builds a bridge over water or a gap",
+            SpellId::DigTunnel => "Links two squares with a tunnel for a while",
+            SpellId::Shield => "A piece can't be captured until its side's next turn",
+            SpellId::Swap => "Two pieces trade places",
+            SpellId::Rewind => "The last two turns are undone",
+            SpellId::Smite => "Destroys a tree or rock",
+            SpellId::Evaporate => "Dries water or ice into sand",
+            SpellId::Flood => "Floods a square with shallow water",
+            SpellId::Featherfall => "A piece ignores height on its next move",
+            SpellId::Curse => "A piece can't move for two turns",
+            SpellId::Sprout => "Grows a tree on a square",
+            SpellId::Blink => "A piece teleports up to two squares",
+            SpellId::Insight => "Draws extra cards",
+        }
+    }
+
     /// Why this spell has no target anywhere on the board.
     pub fn no_target_hint(self) -> &'static str {
         match self {

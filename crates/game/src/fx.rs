@@ -352,7 +352,7 @@ pub fn process_game_events(state: Res<GameState>, mut spawner: FxSpawner) {
                 spawner.spawn_smoke(pos);
                 spawner.spawn_slash(pos, *by_side);
             }
-            GameEvent::Cast { spell, squares } => match spell {
+            GameEvent::Cast { spell, squares, .. } => match spell {
                 SpellId::RaiseEarth | SpellId::LowerEarth => {
                     for &sq in squares {
                         let spot = square_top(sq, state.game.terrain.height(sq));

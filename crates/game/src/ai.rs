@@ -30,7 +30,8 @@ fn think(
     mut thinker: ResMut<Thinker>,
     mut state: ResMut<GameState>,
 ) {
-    if title_menu.open {
+    // Wait for the banner of the AI's last spell to close.
+    if title_menu.open || state.announce.is_some() {
         return;
     }
     let key = (state.seed, state.undo.len());
@@ -45,6 +46,16 @@ fn think(
     thinker.waited += time.delta_secs();
     if thinker.waited < THINK_DELAY_SECS {
         return;
+    }
+    if state.force_ai_cast {
+        state.force_ai_cast = false;
+        let side = state.game.pos.side_to_move;
+        let hand = state.game.hand(side).hand;
+        if let Some(cast) = hand.iter().flatten().find_map(|&s| state.game.cast_targets(s).into_iter().next())
+        {
+            state.cast(cast);
+            return;
+        }
     }
     let limits = Limits { seed: state.seed ^ key.1 as u64, ..Limits::for_floor(state.ai_level) };
     match choose_action(&state.game, limits) {

@@ -9,7 +9,7 @@ use tc_run::MatchSetup;
 pub enum GameEvent {
     Moved { to: Sq, landed_height_change: bool },
     Captured { at: Sq, by_side: Side },
-    Cast { spell: SpellId, squares: Vec<Sq> },
+    Cast { side: Side, spell: SpellId, squares: Vec<Sq> },
     Promoted { at: Sq },
     Check { king: Sq },
     Pickup { at: Sq },
@@ -50,6 +50,22 @@ pub struct GameState {
     pub enemy_items: Vec<String>,
     /// A short message for the HUD to show once, e.g. why a card can't be cast.
     pub toast: Option<String>,
+    /// An AI spell being announced; its events and redraws wait until the banner closes.
+    pub announce: Option<Announcement>,
+    /// The AI's latest spell, for the reminder under the level badge.
+    pub last_enemy_spell: Option<SpellId>,
+    /// Dev: the AI casts a spell on its next turn.
+    pub force_ai_cast: bool,
+}
+
+/// A held-back AI cast: shown as a banner first, then played out on the board.
+#[derive(Clone, Debug)]
+pub struct Announcement {
+    pub spell: SpellId,
+    pub squares: Vec<Sq>,
+    events: Vec<GameEvent>,
+    terrain_dirty: bool,
+    pieces_dirty: bool,
 }
 
 pub const MAX_AI_LEVEL: u8 = 7;
@@ -83,6 +99,9 @@ impl GameState {
             events: Vec::new(),
             enemy_items: setup.enemy_items.clone(),
             toast: None,
+            announce: None,
+            last_enemy_spell: None,
+            force_ai_cast: false,
         }
     }
 
@@ -109,6 +128,9 @@ impl GameState {
             events: Vec::new(),
             enemy_items: Vec::new(),
             toast: None,
+            announce: None,
+            last_enemy_spell: None,
+            force_ai_cast: false,
         }
     }
 
@@ -122,9 +144,21 @@ impl GameState {
         self.outcome.is_none() && self.ai_side == Some(self.game.pos.side_to_move)
     }
 
+    /// Plays out a held-back AI cast: its effects, sounds and board redraw.
+    pub fn finish_announce(&mut self) {
+        if let Some(a) = self.announce.take() {
+            self.events.extend(a.events);
+            self.terrain_dirty |= a.terrain_dirty;
+            self.pieces_dirty |= a.pieces_dirty;
+        }
+    }
+
     pub fn arm_slot(&mut self, slot_idx: usize) {
         if self.armed_slot == Some(slot_idx) {
             self.disarm();
+            return;
+        }
+        if self.announce.is_some() {
             return;
         }
         if self.ai_to_move() {
@@ -378,6 +412,7 @@ impl GameState {
         let hand = before.hand(side);
         let unused_non_empty = (0..3).filter(|&i| hand.hand[i].is_some() && !hand.used[i]).count();
         let will_redraw = unused_non_empty == 1;
+        let first_event = self.events.len();
 
         let mut squares = match cast {
             SpellCast::RaiseEarth(sq)
@@ -414,7 +449,9 @@ impl GameState {
             }
             if spell == SpellId::Rewind {
                 for sq in tc_core::board::squares(self.size) {
-                    if self.game.pos.get(sq).is_some() && self.game.pos.get(sq) != before.pos.get(sq) {
+                    let piece_back =
+                        self.game.pos.get(sq).is_some() && self.game.pos.get(sq) != before.pos.get(sq);
+                    if piece_back || self.game.terrain.get(sq) != before.terrain.get(sq) {
                         squares.push(sq);
                     }
                 }
@@ -446,14 +483,27 @@ impl GameState {
                     self.events.push(GameEvent::Promoted { at: sq });
                 }
             }
-            self.events.push(GameEvent::Cast { spell, squares });
+            self.events.push(GameEvent::Cast { side, spell, squares: squares.clone() });
             if self.game.in_check()
                 && let Some(king) = self.game.pos.king(self.game.pos.side_to_move)
             {
                 self.events.push(GameEvent::Check { king });
             }
+            if self.ai_side == Some(side) {
+                self.last_enemy_spell = Some(spell);
+                self.announce = Some(Announcement {
+                    spell,
+                    squares,
+                    events: self.events.split_off(first_event),
+                    terrain_dirty: std::mem::take(&mut self.terrain_dirty),
+                    pieces_dirty: true,
+                });
+            }
         }
         self.disarm();
+        if self.announce.is_some() {
+            self.pieces_dirty = false;
+        }
     }
 
     pub fn play(&mut self, mv: Move) {
@@ -517,6 +567,7 @@ impl GameState {
                 break;
             }
         }
+        self.announce = None;
         self.disarm();
         self.outcome = None;
         self.selected = None;

@@ -56,6 +56,8 @@ pub enum Action {
     Discard,
     /// Dev cheat: refill hand with 3 random castable spells.
     CheatSpells,
+    /// Dev cheat: the AI casts a random spell on its next turn.
+    CheatEnemySpell,
     /// Dev cheat: win current run match.
     CheatWin,
     /// Dev cheat: lose current run match.
@@ -383,7 +385,7 @@ fn tap_board(
     px_per_unit: f32,
     cursor: Vec2,
 ) {
-    if state.outcome.is_some() || state.ai_to_move() {
+    if state.outcome.is_some() || state.ai_to_move() || state.announce.is_some() {
         return;
     }
     let (cam, gtf) = camera;
@@ -536,6 +538,9 @@ fn hotkeys(
     }
 
     if dev.0 {
+        if keys.just_pressed(KeyCode::F6) {
+            actions.write(Action::CheatEnemySpell);
+        }
         if keys.just_pressed(KeyCode::F7) {
             actions.write(Action::CheatSpells);
         }
@@ -629,6 +634,22 @@ fn apply_actions(
                 hand.used = [false, false, false];
                 state.disarm();
                 state.pieces_dirty = true;
+            }
+            Action::CheatEnemySpell => {
+                let spells = [
+                    tc_core::SpellId::RaiseEarth,
+                    tc_core::SpellId::LowerEarth,
+                    tc_core::SpellId::Rewind,
+                    tc_core::SpellId::Sprout,
+                    tc_core::SpellId::Shield,
+                ];
+                let n = (time.elapsed().as_millis() as usize / 97) % spells.len();
+                let ai = state.ai_side.unwrap_or(Side::Black);
+                let hand = &mut state.game.hands[ai.index()];
+                hand.hand =
+                    [Some(spells[n]), Some(tc_core::SpellId::LowerEarth), Some(tc_core::SpellId::Sprout)];
+                hand.used = [false, false, false];
+                state.force_ai_cast = true;
             }
             Action::CheatWin => {
                 state.outcome = Some(Outcome::Checkmate { winner: Side::White });

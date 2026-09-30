@@ -4,6 +4,7 @@
 #![allow(clippy::type_complexity)]
 
 mod ai;
+mod announce;
 mod atlas;
 mod board_view;
 mod fx;
@@ -57,6 +58,7 @@ fn main() {
         hud::HudPlugin,
         fx::FxPlugin,
         sfx::SfxPlugin,
+        announce::AnnouncePlugin,
     ));
 
     let handjet = Font::from_bytes(HANDJET_FONT.to_vec());

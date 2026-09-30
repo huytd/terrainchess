@@ -43,13 +43,13 @@ fn banner_slicer() -> NodeImageMode {
     })
 }
 
-fn integer_scaled_size(atlas: &Atlas, name: &str, target_h: f32) -> (Vec2, f32) {
+pub fn integer_scaled_size(atlas: &Atlas, name: &str, target_h: f32) -> (Vec2, f32) {
     let px = atlas.px(name);
     let scale = (target_h / px.y).round().max(1.0);
     (px * scale, scale)
 }
 
-fn spell_item_id(spell: tc_core::SpellId) -> &'static str {
+pub fn spell_item_id(spell: tc_core::SpellId) -> &'static str {
     match spell {
         tc_core::SpellId::RaiseEarth => "raise_earth",
         tc_core::SpellId::LowerEarth => "lower_earth",
@@ -70,7 +70,7 @@ fn spell_item_id(spell: tc_core::SpellId) -> &'static str {
     }
 }
 
-fn spell_name(spell: tc_core::SpellId) -> &'static str {
+pub fn spell_name(spell: tc_core::SpellId) -> &'static str {
     match spell {
         tc_core::SpellId::RaiseEarth => "Raise Earth",
         tc_core::SpellId::LowerEarth => "Lower Earth",
