@@ -48,6 +48,8 @@ pub struct GameState {
     pub events: Vec<GameEvent>,
     /// Enemy enhancement item IDs active in this match.
     pub enemy_items: Vec<String>,
+    /// A short message for the HUD to show once, e.g. why a card can't be cast.
+    pub toast: Option<String>,
 }
 
 pub const MAX_AI_LEVEL: u8 = 7;
@@ -80,6 +82,7 @@ impl GameState {
             swap_first: None,
             events: Vec::new(),
             enemy_items: setup.enemy_items.clone(),
+            toast: None,
         }
     }
 
@@ -105,6 +108,7 @@ impl GameState {
             swap_first: None,
             events: Vec::new(),
             enemy_items: Vec::new(),
+            toast: None,
         }
     }
 
@@ -123,12 +127,20 @@ impl GameState {
             self.disarm();
             return;
         }
+        if self.ai_to_move() {
+            self.toast = Some("Wait for your turn".to_string());
+            return;
+        }
         let side = self.game.pos.side_to_move;
         let hand = self.game.hand(side);
         if slot_idx < 3
             && !hand.used[slot_idx]
             && let Some(spell) = hand.hand[slot_idx]
         {
+            // A blocked card still arms, so it can be discarded, but says why it can't be cast.
+            if let Some(block) = self.game.cast_block(spell) {
+                self.toast = Some(block.message().to_string());
+            }
             if spell == SpellId::Rewind || spell == SpellId::Insight {
                 self.cast(match spell {
                     SpellId::Rewind => SpellCast::Rewind,
@@ -176,6 +188,10 @@ impl GameState {
         let Some(slot) = self.armed_slot else { return };
         let hand = self.game.hand(side);
         let Some(spell) = hand.hand[slot] else { return };
+        if self.game.discards_left(side) == 0 {
+            self.toast = Some("No discards left".to_string());
+            return;
+        }
         if self.game.discard(side, slot).is_ok() {
             self.events.push(GameEvent::Discarded { side, slot, spell });
             self.disarm();

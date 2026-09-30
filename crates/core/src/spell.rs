@@ -31,6 +31,45 @@ impl SpellId {
         true
     }
 
+    /// Why this spell has no target anywhere on the board.
+    pub fn no_target_hint(self) -> &'static str {
+        match self {
+            SpellId::RaiseEarth | SpellId::LowerEarth => "No square can be reshaped right now",
+            SpellId::Freeze => "No water to freeze",
+            SpellId::Bridge => "No water or gap next to your pieces",
+            SpellId::DigTunnel => "No room for a tunnel near your pieces",
+            SpellId::Shield | SpellId::Featherfall => "You have no piece to target",
+            SpellId::Swap => "You need two pieces to swap",
+            SpellId::Rewind => "Rewind needs two turns of history",
+            SpellId::Smite => "No trees or rocks to destroy",
+            SpellId::Evaporate => "No free shallow water or ice to dry up",
+            SpellId::Flood => "No free grass or sand in the middle rows",
+            SpellId::Curse => "No enemy piece to curse",
+            SpellId::Sprout => "No free grass in the middle rows",
+            SpellId::Blink => "None of your pieces has room to blink",
+            SpellId::Insight => "Your deck is empty",
+        }
+    }
+
+    /// What this spell can target, shown when the player picks a wrong square.
+    pub fn target_hint(self) -> &'static str {
+        match self {
+            SpellId::RaiseEarth => "Raise Earth needs an open square",
+            SpellId::LowerEarth => "Lower Earth needs an open square",
+            SpellId::Freeze => "Freeze needs water next to the square",
+            SpellId::Bridge => "Bridge needs water or a gap next to your piece",
+            SpellId::DigTunnel => "Tunnels need empty squares near your pieces, 3+ apart",
+            SpellId::Shield | SpellId::Featherfall | SpellId::Swap => "Pick one of your own pieces",
+            SpellId::Blink => "Pick your piece, then an open square within 2",
+            SpellId::Smite => "Smite needs a tree or rock",
+            SpellId::Evaporate => "Evaporate needs free shallow water or ice",
+            SpellId::Flood => "Flood needs free grass or sand in the middle rows",
+            SpellId::Curse => "Pick an enemy piece (not the king)",
+            SpellId::Sprout => "Sprout needs free grass in the middle rows",
+            SpellId::Rewind | SpellId::Insight => "This spell has no target",
+        }
+    }
+
     /// Quick spells do not end the caster's turn.
     pub fn is_quick(&self) -> bool {
         matches!(self, SpellId::Shield | SpellId::Featherfall | SpellId::Insight)
@@ -77,6 +116,25 @@ impl SpellCast {
             SpellCast::Sprout(_) => SpellId::Sprout,
             SpellCast::Blink(_, _) => SpellId::Blink,
             SpellCast::Insight => SpellId::Insight,
+        }
+    }
+
+    /// Board squares this cast names.
+    pub fn squares(&self) -> Vec<Sq> {
+        match *self {
+            SpellCast::RaiseEarth(a)
+            | SpellCast::LowerEarth(a)
+            | SpellCast::Freeze(a)
+            | SpellCast::Bridge(a)
+            | SpellCast::Shield(a)
+            | SpellCast::Smite(a)
+            | SpellCast::Evaporate(a)
+            | SpellCast::Flood(a)
+            | SpellCast::Featherfall(a)
+            | SpellCast::Curse(a)
+            | SpellCast::Sprout(a) => vec![a],
+            SpellCast::DigTunnel(a, b) | SpellCast::Swap(a, b) | SpellCast::Blink(a, b) => vec![a, b],
+            SpellCast::Rewind | SpellCast::Insight => Vec::new(),
         }
     }
 

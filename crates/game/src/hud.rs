@@ -143,6 +143,8 @@ struct HandCard {
     resting_pivot_offset: Vec2,
     lift_px: f32,
     is_used: bool,
+    /// Why the card can't be cast right now, if it can't.
+    blocked: Option<&'static str>,
 }
 
 #[derive(Component)]
@@ -855,7 +857,17 @@ fn sync_hand_bar(
     atlas: Res<Atlas>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut last_key: Local<
-        Option<(bool, [Option<tc_core::SpellId>; 3], [bool; 3], usize, u8, bool, Option<usize>, (u32, u32))>,
+        Option<(
+            bool,
+            [Option<tc_core::SpellId>; 3],
+            [bool; 3],
+            [bool; 3],
+            usize,
+            u8,
+            bool,
+            Option<usize>,
+            (u32, u32),
+        )>,
     >,
     hand_bar_query: Query<Entity, With<HandBar>>,
 ) {
@@ -873,13 +885,27 @@ fn sync_hand_bar(
     let discards_left = state.game.discards_left(side);
     let armed_slot = state.armed_slot;
     let can_discard = armed_slot.is_some_and(|slot| state.game.can_discard(side, slot));
+    let blocks: [Option<&'static str>; 3] = std::array::from_fn(|i| match hand_cards[i] {
+        Some(spell) if !hand_used[i] => state.game.cast_block(spell).map(|b| b.message()),
+        _ => None,
+    });
+    let hand_blocked = blocks.map(|b| b.is_some());
 
     let win = window.iter().next();
     let (win_w, win_h) = win.map(|w| (w.width(), w.height())).unwrap_or((1280.0, 800.0));
     let win_dim = (win_w as u32, win_h as u32);
 
-    let current_key =
-        (show, hand_cards, hand_used, deck_len, discards_left, can_discard, armed_slot, win_dim);
+    let current_key = (
+        show,
+        hand_cards,
+        hand_used,
+        hand_blocked,
+        deck_len,
+        discards_left,
+        can_discard,
+        armed_slot,
+        win_dim,
+    );
 
     if *last_key == Some(current_key) {
         return;
@@ -956,6 +982,7 @@ fn sync_hand_bar(
             for (k, &slot_idx) in present_slots.iter().enumerate() {
                 let Some(spell) = hand_cards[slot_idx] else { continue };
                 let is_used = hand_used[slot_idx];
+                let blocked = blocks[slot_idx];
                 let is_armed = armed_slot == Some(slot_idx);
 
                 let (base_angle_deg, drop_y) = match n {
@@ -991,7 +1018,7 @@ fn sync_hand_bar(
                 root.spawn((
                     Button,
                     Interaction::default(),
-                    HandCard { slot_idx, base_angle_deg, resting_pivot_offset, lift_px, is_used },
+                    HandCard { slot_idx, base_angle_deg, resting_pivot_offset, lift_px, is_used, blocked },
                     UiTransform { translation, rotation, ..default() },
                     z_idx,
                     Node {
@@ -1125,6 +1152,37 @@ fn sync_hand_bar(
                                         ..default()
                                     },
                                 ));
+                            } else if blocked.is_some() {
+                                // Can't be cast now: dim the card and pin a red badge on it.
+                                card.spawn((
+                                    Node {
+                                        position_type: PositionType::Absolute,
+                                        left: Val::Px(0.0),
+                                        top: Val::Px(0.0),
+                                        right: Val::Px(0.0),
+                                        bottom: Val::Px(0.0),
+                                        ..default()
+                                    },
+                                    BackgroundColor(Color::srgba(0.05, 0.03, 0.08, 0.50)),
+                                ));
+                                let badge = 11.0 * scale as f32;
+                                card.spawn((
+                                    Node {
+                                        position_type: PositionType::Absolute,
+                                        right: Val::Percent(9.0),
+                                        top: Val::Percent(6.0),
+                                        width: Val::Px(badge),
+                                        height: Val::Px(badge),
+                                        ..default()
+                                    },
+                                    ImageNode {
+                                        image: atlas.image.clone(),
+                                        rect: Some(atlas.rect("icon_close")),
+                                        color: Color::srgb(1.0, 0.45, 0.40),
+                                        image_mode: NodeImageMode::Stretch,
+                                        ..default()
+                                    },
+                                ));
                             }
                         });
                 });
@@ -1246,6 +1304,8 @@ fn handle_hand_card_interaction(
 
         if is_pressed {
             state.arm_slot(card.slot_idx);
+        } else if is_hovered && let Some(reason) = card.blocked {
+            state.toast = Some(reason.to_string());
         }
 
         let active = !card.is_used && (is_armed || is_hovered || is_pressed);
@@ -1273,10 +1333,22 @@ fn handle_discard_button_interaction(
     mut state: ResMut<GameState>,
 ) {
     for (interaction, disabled) in &button_query {
-        if disabled.is_some_and(|d| d.0) {
+        if *interaction != Interaction::Pressed {
             continue;
         }
-        if *interaction == Interaction::Pressed {
+        if disabled.is_some_and(|d| d.0) {
+            let side = state.game.pos.side_to_move;
+            state.toast = Some(
+                if state.armed_slot.is_none() {
+                    "Pick a card to discard first"
+                } else if state.game.discards_left(side) == 0 {
+                    "No discards left"
+                } else {
+                    "Can't discard that card"
+                }
+                .to_string(),
+            );
+        } else {
             state.discard();
         }
     }
@@ -1580,6 +1652,88 @@ fn update_button_visuals(
     }
 }
 
+/// A one-line message above the hand bar that fades out on its own.
+#[derive(Component)]
+struct Toast {
+    age: f32,
+    pill: Entity,
+    text: Entity,
+}
+
+const TOAST_SECS: f32 = 2.6;
+
+/// Shows `GameState::toast` as a pill above the hand; a new message replaces the old one.
+fn sync_toast(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut state: ResMut<GameState>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    mut toasts: Query<(Entity, &mut Toast)>,
+    mut colors: Query<(Option<&mut BackgroundColor>, Option<&mut TextColor>)>,
+) {
+    if let Some(msg) = state.toast.take() {
+        for (e, _) in &toasts {
+            commands.entity(e).despawn();
+        }
+        let (w, h) = window.iter().next().map(|w| (w.width(), w.height())).unwrap_or((1280.0, 800.0));
+        let font_size = if w < 600.0 { 18.0 } else { 22.0 };
+        let text = commands
+            .spawn((
+                Text::new(msg),
+                TextFont { font_size: FontSize::Px(font_size), ..default() },
+                TextColor(Color::srgba(1.0, 0.93, 0.80, 0.0)),
+                TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
+                Pickable::IGNORE,
+            ))
+            .id();
+        let pill = commands
+            .spawn((
+                Node {
+                    max_width: Val::Vw(90.0),
+                    padding: UiRect::axes(Val::Px(16.0), Val::Px(6.0)),
+                    border_radius: BorderRadius::all(Val::Px(8.0)),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(0.08, 0.05, 0.10, 0.0)),
+                Pickable::IGNORE,
+            ))
+            .add_child(text)
+            .id();
+        commands
+            .spawn((
+                Toast { age: 0.0, pill, text },
+                GlobalZIndex(40),
+                Node {
+                    position_type: PositionType::Absolute,
+                    bottom: Val::Px(h * 0.30),
+                    left: Val::Px(0.0),
+                    right: Val::Px(0.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+                Pickable::IGNORE,
+            ))
+            .add_child(pill);
+        return;
+    }
+    for (e, mut toast) in &mut toasts {
+        toast.age += time.delta_secs();
+        let t = toast.age;
+        if t >= TOAST_SECS {
+            commands.entity(e).despawn();
+            continue;
+        }
+        // Fade in over 0.15 s, hold, fade out over the last 0.4 s.
+        let a = (t / 0.15).min(1.0).min((TOAST_SECS - t) / 0.4);
+        if let Ok((Some(mut bg), _)) = colors.get_mut(toast.pill) {
+            bg.0.set_alpha(0.85 * a);
+        }
+        if let Ok((_, Some(mut color))) = colors.get_mut(toast.text) {
+            color.0.set_alpha(a);
+        }
+    }
+}
+
 pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
@@ -1599,6 +1753,7 @@ impl Plugin for HudPlugin {
                 handle_discard_button_interaction,
                 update_button_visuals,
                 sync_hand_bar,
+                sync_toast,
             )
                 .chain()
                 .run_if(in_state(AppState::Ready)),

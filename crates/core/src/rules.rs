@@ -15,6 +15,57 @@ pub enum Pickup {
     RunItem,
 }
 
+/// Why a spell card can't be cast right now.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CastBlock {
+    GameOver,
+    /// The card in hand is already spent.
+    CardUsed,
+    /// The king is in check and no cast of this spell gets it out.
+    InCheck,
+    /// Every cast would leave the caster's own king in check.
+    ExposesKing,
+    /// Rewind needs two plies of history.
+    TooEarly,
+    /// Nothing on the board the spell can affect.
+    NoTargets(SpellId),
+}
+
+impl CastBlock {
+    pub fn message(self) -> &'static str {
+        match self {
+            CastBlock::GameOver => "The game is over",
+            CastBlock::CardUsed => "That card is already used",
+            CastBlock::InCheck => "Your king is in check — this spell can't save it",
+            CastBlock::ExposesKing => "Any cast would leave your king in check",
+            CastBlock::TooEarly => "Rewind needs two turns of history",
+            CastBlock::NoTargets(spell) => spell.no_target_hint(),
+        }
+    }
+}
+
+/// Why a square isn't a valid target for an armed spell.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TargetBlock {
+    ExposesKing,
+    KingSquare,
+    Obstacle,
+    Void,
+    NotATarget(SpellId),
+}
+
+impl TargetBlock {
+    pub fn message(self) -> &'static str {
+        match self {
+            TargetBlock::ExposesKing => "That would leave your king in check",
+            TargetBlock::KingSquare => "Can't reshape the ground under a king",
+            TargetBlock::Obstacle => "Can't reshape a square with a tree or rock",
+            TargetBlock::Void => "Nothing to work with there",
+            TargetBlock::NotATarget(spell) => spell.target_hint(),
+        }
+    }
+}
+
 /// A timed effect on a terrain tile that reverts after a number of plies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct TimedEffect {
@@ -338,6 +389,11 @@ impl Match {
 
     /// Every legal cast for the side to move, if it has an unused card in hand.
     pub fn cast_targets(&self, spell: SpellId) -> Vec<SpellCast> {
+        self.cast_targets_inner(spell, false)
+    }
+
+    /// Casts that would be legal if leaving your own king in check were allowed.
+    fn cast_targets_inner(&self, spell: SpellId, ignore_check: bool) -> Vec<SpellCast> {
         let side = self.pos.side_to_move;
         let hand = &self.hands[side.index()];
         let has_unused = (0..3).any(|i| hand.hand[i] == Some(spell) && !hand.used[i]);
@@ -361,7 +417,7 @@ impl Match {
                     let mut clone = self.clone();
                     let t = clone.terrain.get_mut(sq);
                     t.height = (t.height + 1).min(MAX_HEIGHT);
-                    if !clone.in_check() {
+                    if ignore_check || !clone.in_check() {
                         out.push(SpellCast::RaiseEarth(sq));
                     }
                 }
@@ -378,7 +434,7 @@ impl Match {
                     let mut clone = self.clone();
                     let t = clone.terrain.get_mut(sq);
                     t.height = t.height.saturating_sub(1);
-                    if !clone.in_check() {
+                    if ignore_check || !clone.in_check() {
                         out.push(SpellCast::LowerEarth(sq));
                     }
                 }
@@ -414,7 +470,7 @@ impl Match {
                             }
                         }
                     }
-                    if !clone.in_check() {
+                    if ignore_check || !clone.in_check() {
                         out.push(SpellCast::Freeze(sq));
                     }
                 }
@@ -438,7 +494,7 @@ impl Match {
                         let p_b = clone.pos.get(b);
                         clone.pos.set(a, p_b);
                         clone.pos.set(b, p_a);
-                        if !clone.in_check() {
+                        if ignore_check || !clone.in_check() {
                             out.push(SpellCast::Swap(a, b));
                         }
                     }
@@ -459,7 +515,7 @@ impl Match {
                     }
                     let mut clone = self.clone();
                     clone.terrain.get_mut(sq).kind = TileKind::Bridge;
-                    if !clone.in_check() {
+                    if ignore_check || !clone.in_check() {
                         out.push(SpellCast::Bridge(sq));
                     }
                 }
@@ -503,7 +559,7 @@ impl Match {
                         let mut clone = self.clone();
                         clone.terrain.get_mut(a).feature = Feature::Cave(link);
                         clone.terrain.get_mut(b).feature = Feature::Cave(link);
-                        if !clone.in_check() {
+                        if ignore_check || !clone.in_check() {
                             out.push(SpellCast::DigTunnel(a, b));
                         }
                     }
@@ -524,7 +580,7 @@ impl Match {
                     }
                     let mut clone = self.clone();
                     clone.terrain.get_mut(sq).feature = Feature::None;
-                    if !clone.in_check() {
+                    if ignore_check || !clone.in_check() {
                         out.push(SpellCast::Smite(sq));
                     }
                 }
@@ -540,7 +596,7 @@ impl Match {
                     }
                     let mut clone = self.clone();
                     clone.terrain.get_mut(sq).kind = TileKind::Sand;
-                    if !clone.in_check() {
+                    if ignore_check || !clone.in_check() {
                         out.push(SpellCast::Evaporate(sq));
                     }
                 }
@@ -560,7 +616,7 @@ impl Match {
                     }
                     let mut clone = self.clone();
                     clone.terrain.get_mut(sq).kind = TileKind::ShallowWater;
-                    if !clone.in_check() {
+                    if ignore_check || !clone.in_check() {
                         out.push(SpellCast::Flood(sq));
                     }
                 }
@@ -596,7 +652,7 @@ impl Match {
                     }
                     let mut clone = self.clone();
                     clone.terrain.get_mut(sq).feature = Feature::Obstacle(Obstacle::Tree);
-                    if !clone.in_check() {
+                    if ignore_check || !clone.in_check() {
                         out.push(SpellCast::Sprout(sq));
                     }
                 }
@@ -628,7 +684,7 @@ impl Match {
                             let mut clone = self.clone();
                             clone.pos.set(from, None);
                             clone.pos.set(to, Some(piece));
-                            if !clone.in_check() {
+                            if ignore_check || !clone.in_check() {
                                 out.push(SpellCast::Blink(from, to));
                             }
                         }
@@ -643,6 +699,52 @@ impl Match {
         }
 
         out
+    }
+
+    /// Why the side to move can't cast `spell` at all, or `None` if it has a legal target.
+    pub fn cast_block(&self, spell: SpellId) -> Option<CastBlock> {
+        if self.outcome().is_some() {
+            return Some(CastBlock::GameOver);
+        }
+        let side = self.pos.side_to_move;
+        let hand = &self.hands[side.index()];
+        if !(0..3).any(|i| hand.hand[i] == Some(spell) && !hand.used[i]) {
+            return Some(CastBlock::CardUsed);
+        }
+        if !self.cast_targets(spell).is_empty() {
+            return None;
+        }
+        if spell == SpellId::Rewind {
+            return Some(CastBlock::TooEarly);
+        }
+        if !self.cast_targets_inner(spell, true).is_empty() {
+            return Some(if self.in_check() { CastBlock::InCheck } else { CastBlock::ExposesKing });
+        }
+        Some(CastBlock::NoTargets(spell))
+    }
+
+    /// Why `sq` isn't a target for `spell` (for two-square spells, as either pick), or `None` if it is.
+    pub fn target_block(&self, spell: SpellId, sq: Sq) -> Option<TargetBlock> {
+        let hits = |casts: Vec<SpellCast>| casts.iter().any(|c| c.squares().contains(&sq));
+        if hits(self.cast_targets(spell)) {
+            return None;
+        }
+        if hits(self.cast_targets_inner(spell, true)) {
+            return Some(TargetBlock::ExposesKing);
+        }
+        let tile = self.terrain.get(sq);
+        if tile.kind == TileKind::Void && spell != SpellId::Bridge {
+            return Some(TargetBlock::Void);
+        }
+        if matches!(spell, SpellId::RaiseEarth | SpellId::LowerEarth) {
+            if self.pos.get(sq).is_some_and(|p| p.kind == PieceKind::King) {
+                return Some(TargetBlock::KingSquare);
+            }
+            if matches!(tile.feature, Feature::Obstacle(_)) {
+                return Some(TargetBlock::Obstacle);
+            }
+        }
+        Some(TargetBlock::NotATarget(spell))
     }
 
     /// Cast a spell: checks legality, spends one card from an unused hand slot,

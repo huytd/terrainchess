@@ -460,8 +460,9 @@ fn tap_board(
                 tc_core::SpellId::Rewind => state.cast(tc_core::SpellCast::Rewind),
                 tc_core::SpellId::Insight => state.cast(tc_core::SpellCast::Insight),
             }
-        } else {
-            state.disarm();
+        } else if let Some(block) = state.game.target_block(spell, sq) {
+            // Keep the spell armed and say why the square doesn't work.
+            state.toast = Some(block.message().to_string());
         }
         return;
     }
@@ -621,7 +622,7 @@ fn apply_actions(
                 let mut seed = time.elapsed().as_nanos() as u64 ^ state.seed;
                 let mut pick = || {
                     seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
-                    ALL_CASTABLE[(seed as usize) % ALL_CASTABLE.len()]
+                    ALL_CASTABLE[(seed >> 33) as usize % ALL_CASTABLE.len()]
                 };
                 let hand = &mut state.game.hands[Side::White.index()];
                 hand.hand = [Some(pick()), Some(pick()), Some(pick())];

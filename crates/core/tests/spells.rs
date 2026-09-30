@@ -1,8 +1,8 @@
 //! Tests for spells and pickups in tc_core (specs/game-design.md §4).
 
 use tc_core::{
-    Feature, Match, Move, MoveKind, Obstacle, Pickup, PieceKind, Position, Rules, Side, SpellCast, SpellId,
-    Sq, Terrain, TileKind,
+    CastBlock, Feature, Match, Move, MoveKind, Obstacle, Pickup, PieceKind, Position, Rules, Side, SpellCast,
+    SpellId, Sq, TargetBlock, Terrain, TileKind,
 };
 
 fn sq(s: &str) -> Sq {
@@ -832,4 +832,24 @@ fn veteran_pushes_piece_toward_back_rank_once() {
     game.play(Move::new(sq("d4"), sq("d3"), MoveKind::Normal)).unwrap();
     assert_eq!(game.pos.get(sq("d3")).unwrap().kind, PieceKind::Rook);
     assert_eq!(game.pos.get(sq("d3")).unwrap().side, Side::Black);
+}
+
+#[test]
+fn cast_block_explains_unusable_cards() {
+    let mut game = game_with_fen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
+    assert_eq!(game.cast_block(SpellId::Freeze), Some(CastBlock::CardUsed));
+    game.set_deck(Side::White, vec![SpellId::Freeze, SpellId::Rewind, SpellId::RaiseEarth]);
+    assert_eq!(game.cast_block(SpellId::Freeze), Some(CastBlock::NoTargets(SpellId::Freeze)));
+    assert_eq!(game.cast_block(SpellId::Rewind), Some(CastBlock::TooEarly));
+    assert_eq!(game.cast_block(SpellId::RaiseEarth), None);
+}
+
+#[test]
+fn target_block_explains_wrong_squares() {
+    let mut game = game_with_fen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
+    game.set_deck(Side::White, vec![SpellId::RaiseEarth, SpellId::Curse, SpellId::Shield]);
+    assert_eq!(game.target_block(SpellId::RaiseEarth, sq("e1")), Some(TargetBlock::KingSquare));
+    assert_eq!(game.target_block(SpellId::RaiseEarth, sq("d4")), None);
+    assert_eq!(game.target_block(SpellId::Shield, sq("d4")), Some(TargetBlock::NotATarget(SpellId::Shield)));
+    assert_eq!(game.cast_block(SpellId::Curse), Some(CastBlock::NoTargets(SpellId::Curse)));
 }
