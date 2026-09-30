@@ -8,12 +8,12 @@ use tc_run::ItemKind;
 use crate::atlas::Atlas;
 use crate::game::GameState;
 use crate::loading::AppState;
-use crate::run::{DeckEdit, DeckSlot, PickCard, Run, RunPhase, StartLevel, TitleMenu};
+use crate::run::{DeckEdit, DeckSlot, PickCard, Run, RunCommand, RunPhase, TitleMenu};
 use crate::theme::{
-    self, BLUE, ButtonDisabled, GOLD, GREEN, GREY, INFO_BG, L, M, ORANGE, OVERLAY_GUTTER, PanelKind, RED, S,
-    SLATE, SLATE_DARK, SLATE_LIGHT, TEXT, TEXT_DARK, TEXT_DIM, XL, XS, button, card_root, ink,
-    integer_scaled_size, label, label_nowrap, number_chip, panel, scrim, spawn_card_face, spell_accent,
-    spell_item_id, spell_name, tag_chip, title_bar,
+    self, ButtonDisabled, GOLD, GREEN, GREY, INFO_BG, L, M, ORANGE, OVERLAY_GUTTER, PanelKind, RED, S, SLATE,
+    SLATE_DARK, SLATE_LIGHT, TEXT, TEXT_DARK, TEXT_DIM, XL, XS, button, card_root, ink, integer_scaled_size,
+    label, label_nowrap, number_chip, panel, scrim, spawn_card_face, spell_accent, spell_item_id, spell_name,
+    tag_chip, title_bar,
 };
 use crate::ui_fx::{CardMotion, PopIn};
 
@@ -40,8 +40,14 @@ struct TitleOverlay;
 #[derive(Component)]
 struct MenuButton;
 
-#[derive(Component)]
-struct LevelButton(u8);
+/// Main menu buttons.
+#[derive(Component, Clone, Copy, PartialEq, Eq)]
+enum MenuChoice {
+    Resume,
+    Continue,
+    NewRun,
+    Abandon,
+}
 
 #[derive(Component)]
 struct DraftOverlay;
@@ -55,10 +61,13 @@ struct DraftCard {
 struct RunOverOverlay;
 
 #[derive(Component)]
-struct RetryButton;
+struct NewRunButton;
 
 #[derive(Component)]
-struct LevelsButton;
+struct MenuOpenButton;
+
+#[derive(Component)]
+struct NextStageButton;
 
 #[derive(Component)]
 struct ClaimButton;
@@ -80,7 +89,7 @@ struct HandTooltip(usize);
 struct DiscardButton;
 
 fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
-    // Level badge and enemy modifier in the top-left corner.
+    // Stage badge and enemy modifier in the top-left corner.
     let skull_size = atlas.px("icon_skull");
     commands
         .spawn(Node {
@@ -163,7 +172,7 @@ fn update_floor_badge(
     >,
     mut q_enemy_box: Query<&mut Node, With<FloorBadgeEnemyBox>>,
 ) {
-    let name = tc_run::level(run.level).map(|l| l.name.to_string()).unwrap_or_else(|| "Level".into());
+    let name = run.stage.name();
     let enemy_label = if state.enemy_items.is_empty() {
         String::new()
     } else {
@@ -177,7 +186,7 @@ fn update_floor_badge(
 
     for (mut text, is_number, is_name, is_enemy) in &mut q_text {
         let want = if is_number {
-            run.level.to_string()
+            run.stage.number.to_string()
         } else if is_name {
             name.clone()
         } else if is_enemy {
@@ -356,73 +365,114 @@ fn sync_overlays(
             } else {
                 ("DEFEAT", SLATE_LIGHT, RED)
             };
-            let btn_h = if compact { 48.0 } else { 56.0 };
+            // A compact strip at the bottom with no scrim, so the final board stays in view.
+            let narrow = win_w < 640.0;
+            let btn_h = if narrow { 44.0 } else { 48.0 };
             let btn_px = theme::size(win_w, M, S);
+            let stage_n = run.stage.number;
+            let detail = if *won {
+                format!("Stage {stage_n} cleared. Next: {}", run.profile.stage().name())
+            } else if is_draw {
+                format!("A draw counts as a loss. Run over at stage {}.", run.ended_at.unwrap_or(stage_n))
+            } else {
+                format!(
+                    "Run over at stage {}. Best: stage {}",
+                    run.ended_at.unwrap_or(stage_n),
+                    run.profile.best_stage
+                )
+            };
+            let edge = if narrow { 8.0 } else { 16.0 };
 
-            commands.spawn((RunOverOverlay, GlobalZIndex(100), scrim())).with_children(|parent| {
-                parent
-                    .spawn((
-                        panel(
-                            PanelKind::Outer,
-                            Node {
-                                flex_direction: FlexDirection::Column,
-                                align_items: AlignItems::Center,
-                                justify_content: JustifyContent::Center,
-                                row_gap: Val::Px(if compact { 10.0 } else { 14.0 }),
-                                padding: UiRect::all(Val::Px(if compact { 20.0 } else { 28.0 })),
-                                min_width: Val::Px(fit_width(380.0, win_w)),
-                                max_width: Val::Percent(100.0),
-                                max_height: Val::Percent(100.0),
-                                overflow: Overflow::scroll_y(),
-                                ..default()
-                            },
-                        ),
-                        PopIn::new(0.0, 0.3),
-                    ))
-                    .with_children(|panel| {
-                        panel.spawn(title_bar(fill, lip)).with_child(label(
-                            title,
-                            theme::size(win_w, XL, L),
-                            TEXT,
-                        ));
-
-                        let reason = outcome_reason(game_state.outcome);
-                        if !reason.is_empty() {
-                            panel.spawn(label(reason, S, TEXT));
-                        }
-                        let level_name = tc_run::level(run.level).map(|l| l.name).unwrap_or("Level");
-                        panel.spawn(label(
-                            if *won { format!("{level_name} cleared!") } else { level_name.to_string() },
-                            S,
-                            TEXT_DIM,
-                        ));
-
-                        // A win with a reward waiting: one button to claim it.
-                        if *won && run.pending_draft.is_some() {
+            commands
+                .spawn((
+                    RunOverOverlay,
+                    GlobalZIndex(100),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        right: Val::Px(0.0),
+                        bottom: Val::Px(edge),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
+                .with_children(|parent| {
+                    parent
+                        .spawn((
+                            panel(
+                                PanelKind::Outer,
+                                Node {
+                                    width: Val::Px(fit_width(720.0, win_w).min(win_w - 2.0 * edge)),
+                                    flex_direction: if narrow {
+                                        FlexDirection::Column
+                                    } else {
+                                        FlexDirection::Row
+                                    },
+                                    align_items: if narrow {
+                                        AlignItems::FlexStart
+                                    } else {
+                                        AlignItems::Center
+                                    },
+                                    column_gap: Val::Px(16.0),
+                                    row_gap: Val::Px(8.0),
+                                    padding: if narrow {
+                                        UiRect::all(Val::Px(10.0))
+                                    } else {
+                                        UiRect::axes(Val::Px(16.0), Val::Px(12.0))
+                                    },
+                                    ..default()
+                                },
+                            ),
+                            PopIn::new(0.6, 0.25),
+                        ))
+                        .with_children(|panel| {
                             panel
-                                .spawn((ClaimButton, button(ORANGE, Val::Px(240.0), btn_h)))
-                                .with_child(label_nowrap("Claim reward", btn_px, TEXT));
-                            return;
-                        }
-
-                        panel
-                            .spawn(Node {
-                                flex_direction: FlexDirection::Row,
-                                flex_wrap: FlexWrap::Wrap,
-                                column_gap: Val::Px(16.0),
-                                row_gap: Val::Px(10.0),
-                                justify_content: JustifyContent::Center,
-                                margin: UiRect::top(Val::Px(6.0)),
-                                ..default()
-                            })
-                            .with_children(|row| {
-                                row.spawn((RetryButton, button(ORANGE, Val::Px(150.0), btn_h)))
-                                    .with_child(label_nowrap("Retry", btn_px, TEXT));
-                                row.spawn((LevelsButton, button(SLATE_LIGHT, Val::Px(150.0), btn_h)))
-                                    .with_child(label_nowrap("Levels", btn_px, TEXT));
-                            });
-                    });
-            });
+                                .spawn(title_bar(fill, lip))
+                                .insert(Node { flex_shrink: 0.0, ..default() })
+                                .with_child(label_nowrap(title, theme::size(win_w, M, S), TEXT));
+                            panel
+                                .spawn(Node {
+                                    flex_direction: FlexDirection::Column,
+                                    flex_grow: 1.0,
+                                    flex_shrink: 1.0,
+                                    row_gap: Val::Px(2.0),
+                                    ..default()
+                                })
+                                .with_children(|col| {
+                                    let reason = outcome_reason(game_state.outcome);
+                                    if !reason.is_empty() {
+                                        col.spawn(label(reason, S, TEXT));
+                                    }
+                                    col.spawn(label(detail, XS, TEXT_DIM));
+                                });
+                            panel
+                                .spawn(Node {
+                                    flex_direction: FlexDirection::Row,
+                                    column_gap: Val::Px(12.0),
+                                    flex_shrink: 0.0,
+                                    align_self: if narrow { AlignSelf::Center } else { AlignSelf::Auto },
+                                    ..default()
+                                })
+                                .with_children(|row| {
+                                    if *won && run.pending_draft.is_some() {
+                                        row.spawn((ClaimButton, button(ORANGE, Val::Px(200.0), btn_h)))
+                                            .with_child(label_nowrap("Claim reward", btn_px, TEXT));
+                                    } else if *won {
+                                        row.spawn((NextStageButton, button(ORANGE, Val::Px(180.0), btn_h)))
+                                            .with_child(label_nowrap("Next stage", btn_px, TEXT));
+                                    } else {
+                                        row.spawn((NewRunButton, button(ORANGE, Val::Px(150.0), btn_h)))
+                                            .with_child(label_nowrap("New run", btn_px, TEXT));
+                                        row.spawn((
+                                            MenuOpenButton,
+                                            button(SLATE_LIGHT, Val::Px(120.0), btn_h),
+                                        ))
+                                        .with_child(label_nowrap("Menu", btn_px, TEXT));
+                                    }
+                                });
+                        });
+                });
         }
     }
 }
@@ -914,15 +964,7 @@ struct PrepareReset;
 struct PrepareStart;
 
 /// What the title panel was last built from; any change rebuilds it.
-type TitleKey = (bool, Option<u8>, Option<DeckSlot>, Vec<SpellId>, (u32, u32));
-
-/// Pieces per side on a level: its army, or the standard set for its board size.
-fn level_piece_count(level: &tc_run::Level) -> usize {
-    level.army.map(|a| a.len()).unwrap_or(match level.size {
-        16 => 32,
-        _ => 16,
-    })
-}
+type TitleKey = (bool, bool, Option<DeckSlot>, Vec<SpellId>, (u32, u32), bool, bool, Option<u32>);
 
 /// The held card on the Prepare screen, if any.
 fn held_spell(held: Option<DeckSlot>, deck: &[SpellId], reserve: &[SpellId]) -> Option<SpellId> {
@@ -963,9 +1005,17 @@ fn sync_title_menu(
     overlay_query: Query<Entity, With<TitleOverlay>>,
 ) {
     let (win_w, win_h) = window.iter().next().map(|w| (w.width(), w.height())).unwrap_or((800.0, 600.0));
-    let deck = if title_menu.prepare.is_some() { run.profile.deck() } else { Vec::new() };
-    let key: TitleKey =
-        (title_menu.open, title_menu.prepare, title_menu.held, deck, (win_w as u32, win_h as u32));
+    let deck = if title_menu.prepare { run.profile.deck() } else { Vec::new() };
+    let key: TitleKey = (
+        title_menu.open,
+        title_menu.prepare,
+        title_menu.held,
+        deck,
+        (win_w as u32, win_h as u32),
+        title_menu.confirm,
+        run.in_match,
+        run.profile.run.map(|r| r.stage),
+    );
     if last.as_ref() == Some(&key) {
         return;
     }
@@ -999,94 +1049,100 @@ fn sync_title_menu(
         if pop {
             panel_cmd.insert(PopIn::new(0.0, 0.22));
         }
-        panel_cmd.with_children(|parent| match title_menu.prepare.and_then(tc_run::level) {
-            Some(level) => spawn_prepare(parent, level, &run, title_menu.held, &atlas, win_w),
-            None => spawn_level_select(parent, &run, win_w, pop),
+        panel_cmd.with_children(|parent| {
+            if title_menu.prepare {
+                spawn_prepare(parent, &run.profile.stage(), &run, title_menu.held, &atlas, win_w);
+            } else {
+                spawn_main_menu(parent, &run, title_menu.confirm, win_w, pop);
+            }
         });
     });
 }
 
-fn spawn_level_select(parent: &mut ChildSpawnerCommands, run: &Run, win_w: f32, pop: bool) {
+fn spawn_main_menu(parent: &mut ChildSpawnerCommands, run: &Run, confirm: bool, win_w: f32, pop: bool) {
     let compact = win_w < 500.0;
-    let btn_w = if compact { ((win_w - 60.0) / 2.0).clamp(140.0, 180.0) } else { 260.0 };
+    let btn_w = if compact { fit_width(300.0, win_w) - 24.0 } else { 300.0 };
+    let btn_h = if compact { 56.0 } else { 64.0 };
+    let btn_px = theme::size(win_w, M, S);
 
     parent.spawn(title_bar(RED, RED.darker(0.18))).with_child(label_nowrap(
         "TERRAIN CHESS",
         theme::size(win_w, XL, L),
         TEXT,
     ));
-    parent.spawn(label_nowrap(format!("Items: {}", run.profile.owned.len()), S, TEXT_DIM));
+    let items = run.profile.owned.len();
+    let stats = if run.profile.best_stage > 0 {
+        format!("Best: stage {}   Items: {items}", run.profile.best_stage)
+    } else {
+        format!("Items: {items}")
+    };
+    parent.spawn(label_nowrap(stats, S, TEXT_DIM));
+
+    let stage = run.profile.stage();
+    let mut buttons: Vec<(MenuChoice, Color, String)> = Vec::new();
+    if run.in_match {
+        buttons.push((MenuChoice::Resume, ORANGE, "Resume".into()));
+        let abandon = if confirm { "Tap again to abandon" } else { "Abandon run" };
+        buttons.push((MenuChoice::Abandon, if confirm { RED } else { SLATE_LIGHT }, abandon.into()));
+    } else if run.profile.run.is_some() {
+        buttons.push((MenuChoice::Continue, ORANGE, String::new()));
+        let new_run = if confirm { "Tap again: new run" } else { "New run" };
+        buttons.push((MenuChoice::NewRun, if confirm { RED } else { SLATE_LIGHT }, new_run.into()));
+    } else {
+        buttons.push((MenuChoice::NewRun, ORANGE, "Start run".into()));
+    }
 
     parent
         .spawn(Node {
-            flex_direction: FlexDirection::Row,
-            column_gap: Val::Px(12.0),
-            align_items: AlignItems::FlexStart,
-            justify_content: JustifyContent::Center,
-            margin: UiRect::top(Val::Px(4.0)),
+            flex_direction: FlexDirection::Column,
+            row_gap: Val::Px(12.0),
+            align_items: AlignItems::Center,
+            margin: UiRect::top(Val::Px(6.0)),
             ..default()
         })
-        .with_children(|grid| {
-            for (c, col_levels) in tc_run::LEVELS.chunks(5).enumerate() {
-                grid.spawn(Node {
-                    flex_direction: FlexDirection::Column,
-                    row_gap: Val::Px(10.0),
-                    align_items: AlignItems::Center,
-                    ..default()
-                })
-                .with_children(|col| {
-                    for (r, level_def) in col_levels.iter().enumerate() {
-                        let tone = if run.profile.cleared.contains(&level_def.id) { GREEN } else { BLUE };
-                        let mut btn = col.spawn((
-                            LevelButton(level_def.id),
-                            button(tone, Val::Px(btn_w), if compact { 56.0 } else { 64.0 }),
+        .with_children(|col| {
+            for (i, (choice, tone, text)) in buttons.into_iter().enumerate() {
+                let mut btn = col.spawn((choice, button(tone, Val::Px(btn_w), btn_h)));
+                if pop {
+                    btn.insert(PopIn::new(0.03 * i as f32, 0.22));
+                }
+                if choice != MenuChoice::Continue {
+                    btn.with_child(label_nowrap(text, btn_px, TEXT));
+                    continue;
+                }
+                // Continue: the stage number chip, its name and board size.
+                btn.entry::<Node>().and_modify(|mut n| {
+                    n.justify_content = JustifyContent::FlexStart;
+                    n.padding = UiRect::horizontal(Val::Px(8.0));
+                });
+                btn.with_children(|b| {
+                    b.spawn(number_chip(ORANGE.darker(0.25), if compact { 30.0 } else { 36.0 }))
+                        .with_child(label_nowrap(stage.number.to_string(), theme::size(win_w, M, S), TEXT));
+                    b.spawn((
+                        Node {
+                            flex_direction: FlexDirection::Column,
+                            align_items: AlignItems::FlexStart,
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                    ))
+                    .with_children(|t| {
+                        t.spawn(label_nowrap(
+                            format!("Continue: {}", stage.name()),
+                            if compact { XS } else { S },
+                            TEXT,
                         ));
-                        btn.entry::<Node>().and_modify(|mut n| {
-                            n.justify_content = JustifyContent::FlexStart;
-                            n.padding = UiRect::horizontal(Val::Px(8.0));
-                        });
-                        if pop {
-                            btn.insert(PopIn::new(0.03 * (r + 5 * c) as f32, 0.22));
-                        }
-                        btn.with_children(|b| {
-                            b.spawn(number_chip(tone.darker(0.25), if compact { 30.0 } else { 36.0 }))
-                                .with_child(label_nowrap(
-                                    level_def.id.to_string(),
-                                    theme::size(win_w, M, S),
-                                    TEXT,
-                                ));
-                            b.spawn((
-                                Node {
-                                    flex_direction: FlexDirection::Column,
-                                    align_items: AlignItems::FlexStart,
-                                    ..default()
-                                },
-                                Pickable::IGNORE,
-                            ))
-                            .with_children(|t| {
-                                t.spawn(label_nowrap(level_def.name, if compact { XS } else { S }, TEXT));
-                                t.spawn(label_nowrap(
-                                    format!(
-                                        "{}×{}, {} pcs",
-                                        level_def.size,
-                                        level_def.size,
-                                        level_piece_count(level_def)
-                                    ),
-                                    XS,
-                                    TEXT_DIM,
-                                ));
-                            });
-                        });
-                    }
+                        t.spawn(label_nowrap(format!("{}×{}", stage.size(), stage.size()), XS, TEXT));
+                    });
                 });
             }
         });
 }
 
-/// The Prepare screen: level info, the 15-card deck in draw order, the reserve, and Start.
+/// The Prepare screen: stage info, the 15-card deck, the reserve, and Start.
 fn spawn_prepare(
     parent: &mut ChildSpawnerCommands,
-    level: &tc_run::Level,
+    stage: &tc_run::Stage,
     run: &Run,
     held: Option<DeckSlot>,
     atlas: &Atlas,
@@ -1104,23 +1160,29 @@ fn spawn_prepare(
 
     parent.spawn(title_bar(RED, RED.darker(0.18))).with_children(|bar| {
         bar.spawn(number_chip(RED.darker(0.25), if compact { 26.0 } else { 36.0 })).with_child(label_nowrap(
-            level.id.to_string(),
+            stage.number.to_string(),
             theme::size(win_w, M, S),
             TEXT,
         ));
-        bar.spawn(label(level.name, theme::size(win_w, M, S), TEXT));
+        bar.spawn(label(stage.name(), theme::size(win_w, M, S), TEXT));
     });
-    let mut header = format!(
-        "{}×{}, {} pcs. Deck: {} cards",
-        level.size,
-        level.size,
-        level_piece_count(level),
-        deck.len()
-    );
+    let [you, enemy] = stage.piece_counts();
+    let size = stage.size();
+    let mut header = format!("{size}×{size}, {you} vs {enemy} pcs. Deck: {} cards", deck.len());
     if !reserve.is_empty() {
         header += &format!(", {} in reserve", reserve.len());
     }
     parent.spawn(label(header, small, TEXT));
+    let seed = run.profile.run.map_or(0, |r| r.match_seed());
+    let items = run.profile.stage_setup(stage, seed).enemy_items.len();
+    let mut threat = format!("Enemy: AI {}/7", stage.ai_level());
+    if items > 0 {
+        threat += &format!(", {items} items");
+    }
+    if stage.reinforcements() > 0 {
+        threat += &format!(", +{} reinforcements", stage.reinforcements());
+    }
+    parent.spawn(label(threat, XS, RED.lighter(0.1)));
 
     let grid = Node {
         width: Val::Px(grid_w),
@@ -1323,14 +1385,27 @@ fn spawn_bolt(parent: &mut ChildSpawnerCommands, atlas: &Atlas) {
     ));
 }
 
-fn handle_level_buttons(
-    button_query: Query<(&Interaction, &LevelButton), (Changed<Interaction>, With<Button>)>,
+fn handle_main_menu_buttons(
+    button_query: Query<(&Interaction, &MenuChoice), (Changed<Interaction>, With<Button>)>,
+    run: Res<Run>,
     mut title_menu: ResMut<TitleMenu>,
+    mut commands: MessageWriter<RunCommand>,
 ) {
-    for (interaction, btn) in &button_query {
-        if *interaction == Interaction::Pressed {
-            title_menu.prepare = Some(btn.0);
-            title_menu.held = None;
+    for (interaction, choice) in &button_query {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        match choice {
+            MenuChoice::Resume => title_menu.close(),
+            MenuChoice::Continue => title_menu.show(true),
+            // Starting the first run, or confirming on the second press.
+            MenuChoice::NewRun if run.profile.run.is_none() || title_menu.confirm => {
+                commands.write(RunCommand::New);
+            }
+            MenuChoice::Abandon if title_menu.confirm => {
+                commands.write(RunCommand::Abandon);
+            }
+            MenuChoice::NewRun | MenuChoice::Abandon => title_menu.confirm = true,
         }
     }
 }
@@ -1372,65 +1447,69 @@ fn handle_prepare_buttons(
     start: Query<&Interaction, (Changed<Interaction>, With<PrepareStart>)>,
     mut title_menu: ResMut<TitleMenu>,
     mut edits: MessageWriter<DeckEdit>,
-    mut start_writer: MessageWriter<StartLevel>,
+    mut commands: MessageWriter<RunCommand>,
 ) {
     if back.iter().any(|i| *i == Interaction::Pressed) {
-        title_menu.prepare = None;
-        title_menu.held = None;
+        title_menu.show(false);
     }
     if reset.iter().any(|(i, d)| *i == Interaction::Pressed && !d.0) {
         edits.write(DeckEdit::Reset);
     }
-    if start.iter().any(|i| *i == Interaction::Pressed)
-        && let Some(level) = title_menu.prepare
-    {
-        start_writer.write(StartLevel(level));
-        title_menu.open = false;
-        title_menu.prepare = None;
-        title_menu.held = None;
+    if start.iter().any(|i| *i == Interaction::Pressed) && title_menu.prepare {
+        commands.write(RunCommand::Start);
     }
 }
 
 fn handle_menu_button(
     button_query: Query<&Interaction, (Changed<Interaction>, With<MenuButton>)>,
+    run: Res<Run>,
     mut title_menu: ResMut<TitleMenu>,
 ) {
     for interaction in &button_query {
         if *interaction == Interaction::Pressed {
-            title_menu.open = !title_menu.open;
-            title_menu.prepare = None;
-            title_menu.held = None;
+            if !title_menu.open {
+                title_menu.show(false);
+            } else if run.menu_closable() {
+                title_menu.close();
+            }
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_result_buttons(
     claim_query: Query<&Interaction, (Changed<Interaction>, With<ClaimButton>)>,
-    retry_query: Query<&Interaction, (Changed<Interaction>, With<RetryButton>)>,
-    levels_query: Query<&Interaction, (Changed<Interaction>, With<LevelsButton>)>,
+    next_query: Query<&Interaction, (Changed<Interaction>, With<NextStageButton>)>,
+    new_query: Query<&Interaction, (Changed<Interaction>, With<NewRunButton>)>,
+    menu_query: Query<&Interaction, (Changed<Interaction>, With<MenuOpenButton>)>,
+    keys: Res<ButtonInput<KeyCode>>,
     mut run: ResMut<Run>,
     mut title_menu: ResMut<TitleMenu>,
-    mut start_writer: MessageWriter<StartLevel>,
+    mut commands: MessageWriter<RunCommand>,
 ) {
-    for interaction in &claim_query {
-        if *interaction == Interaction::Pressed
-            && let Some(draft) = run.pending_draft.take()
-        {
-            run.phase = RunPhase::Draft(draft);
+    let RunPhase::Result { won } = run.phase else {
+        return;
+    };
+    // Enter presses the strip's orange button.
+    let enter = !title_menu.open && keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter]);
+    if won
+        && (claim_query.iter().any(|i| *i == Interaction::Pressed)
+            || next_query.iter().any(|i| *i == Interaction::Pressed)
+            || enter)
+    {
+        match run.pending_draft.take() {
+            Some(draft) => run.phase = RunPhase::Draft(draft),
+            None => {
+                run.phase = RunPhase::Playing;
+                title_menu.show(true);
+            }
         }
     }
-    for interaction in &retry_query {
-        if *interaction == Interaction::Pressed {
-            start_writer.write(StartLevel(run.level));
-        }
+    if !won && (new_query.iter().any(|i| *i == Interaction::Pressed) || enter) {
+        commands.write(RunCommand::New);
     }
-    for interaction in &levels_query {
-        if *interaction == Interaction::Pressed {
-            run.phase = RunPhase::Playing;
-            title_menu.open = true;
-            title_menu.prepare = None;
-            title_menu.held = None;
-        }
+    if menu_query.iter().any(|i| *i == Interaction::Pressed) {
+        title_menu.show(false);
     }
 }
 
@@ -1530,7 +1609,7 @@ impl Plugin for HudPlugin {
                 update_draft_card_sizes,
                 handle_card_interaction,
                 handle_result_buttons,
-                handle_level_buttons,
+                handle_main_menu_buttons,
                 handle_prepare_cards,
                 handle_prepare_buttons,
                 handle_menu_button,

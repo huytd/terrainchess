@@ -1,8 +1,8 @@
-//! Level select mode, match progression, and drafting (specs/game-design.md §4).
+//! The endless run: stage progression, menus and drafting (specs/game-design.md §4).
 
 use bevy::prelude::*;
 use tc_core::{Outcome, Side};
-use tc_run::Profile;
+use tc_run::{Profile, Stage};
 
 use crate::game::GameState;
 use crate::loading::AppState;
@@ -23,15 +23,34 @@ pub enum RunPhase {
 #[derive(Resource, Debug, Clone)]
 pub struct TitleMenu {
     pub open: bool,
-    /// Level whose Prepare screen (deck review) is showing instead of the level select.
-    pub prepare: Option<u8>,
+    /// The Prepare (deck) screen for the current stage is showing instead of the main menu.
+    pub prepare: bool,
     /// Card picked up on the Prepare screen; the next card tapped swaps with it.
     pub held: Option<DeckSlot>,
+    /// "Abandon run" / "New run" was pressed once; the next press confirms.
+    pub confirm: bool,
 }
 
 impl Default for TitleMenu {
     fn default() -> Self {
-        Self { open: true, prepare: None, held: None }
+        Self { open: true, prepare: false, held: None, confirm: false }
+    }
+}
+
+impl TitleMenu {
+    /// Show the main menu (`prepare = false`) or the Prepare screen.
+    pub fn show(&mut self, prepare: bool) {
+        self.open = true;
+        self.prepare = prepare;
+        self.held = None;
+        self.confirm = false;
+    }
+
+    pub fn close(&mut self) {
+        self.open = false;
+        self.prepare = false;
+        self.held = None;
+        self.confirm = false;
     }
 }
 
@@ -49,23 +68,49 @@ pub enum DeckEdit {
     Reset,
 }
 
-/// Active profile state and current level.
+/// Active profile state and the stage on the board.
 #[derive(Resource)]
 pub struct Run {
     pub profile: Profile,
-    pub level: u8,
+    /// The stage on the board (the backdrop stage while no match is in progress).
+    pub stage: Stage,
     pub phase: RunPhase,
-    /// Reward cards earned by the last win, claimed from the victory screen.
+    /// Reward cards earned by the last win, claimed from the result strip.
     pub pending_draft: Option<Vec<String>>,
+    /// A real match is being played (not the idle backdrop board behind the menu).
+    pub in_match: bool,
+    /// Stage the last run ended on, for the defeat strip.
+    pub ended_at: Option<u32>,
+}
+
+impl Run {
+    /// Whether the menu can close: there's a match or a result strip behind it.
+    pub fn menu_closable(&self) -> bool {
+        self.in_match || matches!(self.phase, RunPhase::Result { .. })
+    }
+}
+
+impl RunPhase {
+    /// The camera can orbit and zoom (during play and while reviewing the final board).
+    pub fn camera_free(&self) -> bool {
+        matches!(self, RunPhase::Playing | RunPhase::Result { .. })
+    }
 }
 
 /// Message to select a reward card from the active draft.
 #[derive(Message, Clone, Debug)]
 pub struct PickCard(pub String);
 
-/// Message to start a level with the given level id.
-#[derive(Message, Clone, Copy, Debug)]
-pub struct StartLevel(pub u8);
+/// Run-level commands from the menus and the result strip.
+#[derive(Message, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RunCommand {
+    /// Play the profile's current stage (from Prepare).
+    Start,
+    /// Begin a new run at stage 1 and open its Prepare screen (ends any current run).
+    New,
+    /// Give up the current run (it ends like a loss).
+    Abandon,
+}
 
 /// Derive a seed from system time / clock without panicking on WASM.
 pub fn time_seed() -> u64 {
@@ -103,20 +148,29 @@ pub fn time_seed() -> u64 {
     }
 }
 
-/// Starts the specified level, building the match.
-pub fn start_level(level_id: u8, run: &mut Run, game_state: &mut GameState, seed: u64) {
-    let Some(level_def) = tc_run::level(level_id) else {
-        bevy::log::warn!("unknown level id {level_id}");
-        return;
-    };
-    run.level = level_id;
+/// Starts the profile's current stage on its fixed board.
+pub fn start_stage(run: &mut Run, game_state: &mut GameState) {
+    let stage = run.profile.stage();
+    let seed = run.profile.run.map_or_else(time_seed, |r| r.match_seed());
+    *game_state = GameState::from_setup(&run.profile.stage_setup(&stage, seed));
+    run.stage = stage;
     run.phase = RunPhase::Playing;
     run.pending_draft = None;
-    let setup = run.profile.match_setup(level_def, seed);
-    *game_state = GameState::from_setup(&setup);
+    run.in_match = true;
+    run.ended_at = None;
 }
 
-/// Picks a drafted item, saving the profile and returning to the level select.
+/// Puts an idle board for the profile's current stage behind the menu.
+fn show_backdrop(run: &mut Run, game_state: &mut GameState) {
+    let stage = run.profile.stage();
+    *game_state = GameState::from_setup(&run.profile.stage_setup(&stage, time_seed()));
+    run.stage = stage;
+    run.phase = RunPhase::Playing;
+    run.pending_draft = None;
+    run.in_match = false;
+}
+
+/// Picks a drafted item, saving the profile and opening the next stage's Prepare screen.
 pub fn apply_pick(item_id: &str, run: &mut Run, title_menu: &mut TitleMenu) {
     if let RunPhase::Draft(_) = &run.phase {
         if let Err(e) = run.profile.pick(item_id) {
@@ -125,9 +179,7 @@ pub fn apply_pick(item_id: &str, run: &mut Run, title_menu: &mut TitleMenu) {
         }
         save::store(&run.profile);
         run.phase = RunPhase::Playing;
-        title_menu.open = true;
-        title_menu.prepare = None;
-        title_menu.held = None;
+        title_menu.show(true);
     }
 }
 
@@ -157,32 +209,28 @@ pub fn apply_deck_edit(edit: DeckEdit, run: &mut Run, title_menu: &mut TitleMenu
 }
 
 fn check_run_match_outcome(mut run: ResMut<Run>, game_state: Res<GameState>) {
-    if run.phase != RunPhase::Playing {
+    if run.phase != RunPhase::Playing || !run.in_match {
         return;
     }
-
-    if let Some(outcome) = game_state.outcome {
-        // Draws are losses; checkmate with White as winner is victory
-        let won = matches!(outcome, Outcome::Checkmate { winner: Side::White });
-        if won {
-            if let Some(level_def) = tc_run::level(run.level) {
-                let draft = run.profile.record_win(level_def);
-                save::store(&run.profile);
-                // The victory screen comes first; its button opens the reward draft.
-                run.pending_draft = (!draft.is_empty()).then_some(draft);
-                run.phase = RunPhase::Result { won: true };
-            } else {
-                run.phase = RunPhase::Result { won: true };
-            }
-        } else {
-            run.phase = RunPhase::Result { won: false };
-        }
+    let Some(outcome) = game_state.outcome else {
+        return;
+    };
+    run.in_match = false;
+    // Draws are losses; the player is White.
+    let won = matches!(outcome, Outcome::Checkmate { winner: Side::White });
+    if won {
+        let draft = run.profile.win_stage();
+        run.pending_draft = (!draft.is_empty()).then_some(draft);
+    } else {
+        run.ended_at = Some(run.profile.end_run());
     }
+    save::store(&run.profile);
+    run.phase = RunPhase::Result { won };
 }
 
 fn handle_run_messages(
     mut pick_events: MessageReader<PickCard>,
-    mut start_events: MessageReader<StartLevel>,
+    mut commands: MessageReader<RunCommand>,
     mut deck_edits: MessageReader<DeckEdit>,
     mut run: ResMut<Run>,
     mut game_state: ResMut<GameState>,
@@ -196,22 +244,47 @@ fn handle_run_messages(
         apply_deck_edit(edit, &mut run, &mut title_menu);
     }
 
-    for start in start_events.read() {
-        // Fresh entropy per match: `Time::elapsed` is frame-quantized on web,
-        // so it adds almost no entropy over `time_seed()` itself.
-        let seed = time_seed();
-        start_level(start.0, &mut run, &mut game_state, seed);
+    for &cmd in commands.read() {
+        match cmd {
+            RunCommand::Start => {
+                if run.profile.run.is_none() {
+                    run.profile.new_run(time_seed());
+                    save::store(&run.profile);
+                }
+                start_stage(&mut run, &mut game_state);
+                title_menu.close();
+            }
+            RunCommand::New => {
+                run.profile.new_run(time_seed());
+                save::store(&run.profile);
+                run.ended_at = None;
+                show_backdrop(&mut run, &mut game_state);
+                title_menu.show(true);
+            }
+            RunCommand::Abandon => {
+                if run.profile.run.is_some() {
+                    run.ended_at = Some(run.profile.end_run());
+                    save::store(&run.profile);
+                }
+                show_backdrop(&mut run, &mut game_state);
+                title_menu.show(false);
+            }
+        }
     }
 }
 
 fn initial_run_and_game() -> (Run, GameState) {
     let profile = save::load().unwrap_or_else(|| Profile::new(time_seed()));
-    let level_id = 1;
-    let level_def = tc_run::level(level_id).unwrap_or(&tc_run::LEVELS[0]);
-    let seed = time_seed();
-    let setup = profile.match_setup(level_def, seed);
-    let game_state = GameState::from_setup(&setup);
-    let run = Run { profile, level: level_id, phase: RunPhase::Playing, pending_draft: None };
+    let stage = profile.stage();
+    let game_state = GameState::from_setup(&profile.stage_setup(&stage, time_seed()));
+    let run = Run {
+        profile,
+        stage,
+        phase: RunPhase::Playing,
+        pending_draft: None,
+        in_match: false,
+        ended_at: None,
+    };
     (run, game_state)
 }
 
@@ -224,7 +297,7 @@ impl Plugin for RunPlugin {
             .insert_resource(game_state)
             .init_resource::<TitleMenu>()
             .add_message::<PickCard>()
-            .add_message::<StartLevel>()
+            .add_message::<RunCommand>()
             .add_message::<DeckEdit>()
             .add_systems(
                 Update,

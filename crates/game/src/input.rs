@@ -19,7 +19,7 @@ use tc_core::{Outcome, PieceKind, Side};
 
 use crate::game::{GameEvent, GameState, MAX_AI_LEVEL};
 use crate::loading::AppState;
-use crate::run::{Run, RunPhase, StartLevel, TitleMenu};
+use crate::run::{Run, RunCommand, RunPhase, TitleMenu};
 
 /// Camera distance from the point it looks at, the zoom.
 const MIN_DISTANCE: f32 = 3.0;
@@ -159,9 +159,10 @@ impl Orbit {
     }
 }
 
-/// Window size and board (seed, size) the camera was last fitted to.
+/// Window size, board (seed, size) and whether the result strip was up when the camera was
+/// last fitted.
 #[derive(Resource, Default)]
-struct FitCamera(Option<(Vec2, u64, u8)>);
+struct FitCamera(Option<(Vec2, u64, u8, bool)>);
 
 fn setup_camera(mut commands: Commands) {
     // Tonemapping off keeps the pixel-art colours exact; no MSAA keeps edges crisp.
@@ -183,26 +184,36 @@ fn fit_camera(
     mut fit: ResMut<FitCamera>,
     mut orbit: ResMut<Orbit>,
     state: Res<GameState>,
+    run: Res<Run>,
     window: Single<&Window, With<PrimaryWindow>>,
 ) {
     let win = window.size();
-    let key = (win, state.seed, state.size);
+    let result = matches!(run.phase, RunPhase::Result { .. });
+    let key = (win, state.seed, state.size, result);
     if fit.0 == Some(key) || win.x < 1.0 {
         return;
     }
     fit.0 = Some(key);
     // Size the board for its widest view (a diagonal), with room for tall pieces.
+    // The result strip sits where the hand bar was, but it's taller.
+    let bottom = if !result {
+        HUD_BOTTOM
+    } else if win.x < 640.0 {
+        180.0
+    } else {
+        100.0
+    };
     let n = state.size as f32;
     let span = n * std::f32::consts::SQRT_2;
     let px_per_unit =
-        (win.x / (span + 1.0)).min((win.y - HUD_TOP - HUD_BOTTOM) / (span * orbit.pitch.sin() + 3.0));
+        (win.x / (span + 1.0)).min((win.y - HUD_TOP - bottom) / (span * orbit.pitch.sin() + 3.0));
     // The near side of the board looks bigger in perspective; leave it some room.
     orbit.view_h = win.y;
     orbit.distance =
         (1.1 * win.y / (2.0 * px_per_unit * (FOV / 2.0).tan())).clamp(MIN_DISTANCE, MAX_DISTANCE);
     orbit.focus = board_center(state.size);
     // Centre the board in the space between the HUD bars.
-    orbit.pan(Vec2::new(0.0, (HUD_BOTTOM - HUD_TOP) / 2.0));
+    orbit.pan(Vec2::new(0.0, (bottom - HUD_TOP) / 2.0));
 }
 
 fn apply_orbit(
@@ -240,7 +251,7 @@ fn mouse_camera(
     ui_query: Query<&Interaction>,
     mut orbit: ResMut<Orbit>,
 ) {
-    if title_menu.open || run.phase != RunPhase::Playing {
+    if title_menu.open || !run.phase.camera_free() {
         return;
     }
     if ui_query.iter().any(|&i| i != Interaction::None)
@@ -301,7 +312,7 @@ fn touch_gestures(
     ui_query: Query<&Interaction>,
     camera: Single<(&Camera, &GlobalTransform), With<MainCamera>>,
 ) {
-    if title_menu.open || run.phase != RunPhase::Playing {
+    if title_menu.open || !run.phase.camera_free() {
         if gesture.active {
             *gesture = Gesture::default();
         }
@@ -491,32 +502,30 @@ fn hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     state: Res<GameState>,
     dev: Res<DevMode>,
+    run: Res<Run>,
     mut title_menu: ResMut<TitleMenu>,
     mut actions: MessageWriter<Action>,
-    mut start: MessageWriter<StartLevel>,
+    mut commands: MessageWriter<RunCommand>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         if title_menu.open && title_menu.held.is_some() {
             title_menu.held = None;
-        } else if title_menu.open && title_menu.prepare.is_some() {
-            title_menu.prepare = None;
+        } else if title_menu.open && title_menu.prepare {
+            title_menu.show(false);
         } else if title_menu.open {
-            title_menu.open = false;
+            if run.menu_closable() {
+                title_menu.close();
+            }
         } else if state.armed_spell.is_some() || state.selected.is_some() {
             actions.write(Action::Deselect);
         } else {
-            title_menu.open = true;
+            title_menu.show(false);
         }
     }
 
-    if title_menu.open
-        && let Some(level) = title_menu.prepare
-        && keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter])
+    if title_menu.open && title_menu.prepare && keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter])
     {
-        start.write(StartLevel(level));
-        title_menu.open = false;
-        title_menu.prepare = None;
-        title_menu.held = None;
+        commands.write(RunCommand::Start);
     }
 
     if title_menu.open {

@@ -1,7 +1,7 @@
 # Terrain Chess — notes for Claude
 
 Pixel-art chess on 3D terrain (hills, cliffs, water, caves change how pieces move), with spell
-cards and a 10-level ladder. Rust workspace, Bevy 0.19, shipped as WASM.
+cards and an endless run over 10 themes. Rust workspace, Bevy 0.19, shipped as WASM.
 Live: https://terrainchess.vercel.app — every push to `main` deploys (GitHub Actions →
 Vercel, `.github/workflows/deploy.yml`). Specs in `specs/` (game-design.md is the rules source).
 
@@ -11,7 +11,7 @@ Vercel, `.github/workflows/deploy.yml`). Specs in `specs/` (game-design.md is th
 |---|---|---|
 | `tc_core` | `crates/core` | Rules, no Bevy. `Match` (rules.rs) = terrain + `Position` + hands + timed effects; `play`, `cast`, `cast_targets`, `cast_block`/`target_block` (why a card/square is refused), `outcome` (repetition hashes position **and** terrain). `spell.rs`: `SpellId` (16 spells, `ALL`, `is_quick`, `effect_text`, `no_target_hint`, `target_hint`), `SpellCast`. `position.rs`: `start(size)` (4,5,6,7,8,12,16), `from_army`. `worldgen/`: terrain generator. |
 | `tc_ai` | `crates/ai` | Alpha-beta search + `choose_action` (move or spell; casts must beat the move by +60). `Limits::for_floor(n)`. |
-| `tc_run` | `crates/run` | `level.rs`: `LEVELS` (10 levels: size, `army`, optional `enemy_army`, difficulty). `profile.rs`: `Profile` (owned items, cleared levels, `match_setup(level, seed)`, `record_win` → draft, `pick`, chosen `deck` + `swap_with_reserve`; always shuffled in `match_setup`). `deck.rs`: `card_pool`, `reconcile`, `reserve`, `shuffle`. `run.rs`: `RunState`/`MatchSetup` (terrain, armies, decks, AI level). `item.rs` + `assets/items/*.ron`. |
+| `tc_run` | `crates/run` | `level.rs`: `THEMES` (10 themes × piece-named variants, 29 stages per tier), `Stage::new(n)` (`name`, `difficulty`, `ai_level`, `armies`, `reinforce`). `profile.rs`: `Profile` (owned items kept forever, `run: Option<Endless{seed, stage}>`, `best_stage`, `new_run`, `stage_setup(stage, seed)`, `win_stage` → draft, `end_run`, `pick`, chosen `deck` + `swap_with_reserve`; always shuffled in `stage_setup`). `deck.rs`: `card_pool`, `reconcile`, `reserve`, `shuffle`. `run.rs`: `RunState`/`MatchSetup` (terrain, armies, decks, AI level). `item.rs` + `assets/items/*.ron`. |
 | `terrainchess` | `crates/game` | The Bevy app (below). |
 
 ### Game crate (`crates/game/src`)
@@ -31,16 +31,18 @@ Vercel, `.github/workflows/deploy.yml`). Specs in `specs/` (game-design.md is th
   Vec<GameEvent>`, dirty flags (`terrain_dirty`, `pieces_dirty`), `toast: Option<String>`
   (HUD shows and clears it), `announce` (held-back AI cast), `last_enemy_spell`,
   `force_ai_cast` (dev). `cast()`/`play()` push events.
-- `run.rs` — `Run { profile, level, phase: Playing | Draft(items) | Result{won}, pending_draft }`.
-  Win → Result screen with "Claim reward" → Draft → pick → back to level select (title menu).
-  `TitleMenu { open, prepare, held }`: clicking a level opens its Prepare (deck) screen;
-  `DeckEdit` messages (tap/reset; taps only swap deck ↔ reserve) go through `apply_deck_edit`. Retry skips Prepare.
+- `run.rs` — `Run { profile, stage, phase: Playing | Draft(items) | Result{won}, pending_draft,
+  in_match, ended_at }`. `RunCommand::{Start, New, Abandon}`. Menu → Prepare → match → result strip;
+  win → Claim reward → Draft → pick → Prepare (next stage); loss ends the run (New run / Menu).
+  `TitleMenu { open, prepare: bool, held, confirm }` (`show(prepare)`, `close()`); the menu only
+  closes when `run.menu_closable()`. `DeckEdit` messages go through `apply_deck_edit`.
 - `ai.rs` — runs `tc_ai` in time slices; waits while a banner is up (`state.announce`).
 - `input.rs` — camera orbit/zoom, click/tap → `tap_board`, hotkeys → `Action` messages →
   `apply_actions`.
-- `hud.rs` — all UI: level badge, title menu/level select, Prepare screen (`spawn_prepare`:
+- `hud.rs` — all UI: stage badge, main menu (`spawn_main_menu`: Start run / Continue / New run /
+  Resume / Abandon run, two-tap confirm), Prepare screen (`spawn_prepare`:
   5×3 deck grid, reserve chips, Back/Reset/Start), hand bar (tooltip above the hovered/armed card; blocked cards dimmed with a
-  red !), draft + result overlays, toasts. Big file; grep for the `fn sync_*` you need.
+  red !), draft overlay, result strip at the bottom (no scrim; the camera stays free and `fit_camera` reserves room for it), toasts. Big file; grep for the `fn sync_*` you need.
 - `announce.rs` — enemy spell banner + "Enemy: <spell>" pill. AI casts are stashed in
   `GameState.announce` (events + dirty flags) and released by `finish_announce()` when the
   banner closes.
@@ -89,9 +91,11 @@ with a pattern matching your own shell). Scripts use `playwright-core` with
 --enable-unsafe-swiftshader`, URL `http://localhost:8765/?dev`, wait ~13 s for load (phone
 viewport 390×844: ~30 s). Count console messages matching `/ERROR|panic/`.
 
-- Level select at 1280×800: left column x=503, right x=775, rows y=331/405/479/553/627
-  (levels 1–5 left, 6–10 right). Phone: left column x≈105, rows y≈358, step 66.
-- A level button opens its Prepare (deck) screen; Enter starts. 1280×800 with no reserve:
+- Main menu at 1280×800: Start run / Continue (640, 470-482), New run below it. Phone: (195, 500).
+  Test a later stage by setting localStorage `terrainchess.profile` to e.g.
+  `(rng: 1, owned: [], run: Some((seed: 7, stage: 30)), best_stage: 29)` and reloading.
+- Prepare (deck) screen: Enter starts. Result strip: Enter presses its orange button. Draft
+  cards on a phone: y≈300. 1280×800 with no reserve:
   deck tiles x=400/520/640/760/880. With a full reserve: tile rows y=215/320/425, reserve chips
   from y=589, Start (882, 720).
 - Gear/menu button (1242, 38). Mouse wheel zooms the camera.

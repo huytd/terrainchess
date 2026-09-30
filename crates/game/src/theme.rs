@@ -160,8 +160,9 @@ pub fn title_bar(fill: Color, lip_color: Color) -> impl Bundle {
 pub fn number_chip(fill: Color, side: f32) -> impl Bundle {
     (
         Node {
-            width: Val::Px(side),
+            min_width: Val::Px(side),
             height: Val::Px(side),
+            padding: UiRect::horizontal(Val::Px(4.0)),
             flex_shrink: 0.0,
             justify_content: JustifyContent::Center,
             align_items: AlignItems::Center,

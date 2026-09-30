@@ -3,7 +3,7 @@
 
 use tc_core::SpellId;
 use tc_core::rules::{CastBlock, TargetBlock};
-use tc_run::{LEVELS, catalog};
+use tc_run::{STAGES_PER_TIER, Stage, THEMES, catalog};
 
 fn check(bad: &mut Vec<String>, s: &str) {
     if let Some(c) = s.chars().find(|&c| !(c == ' ' || c.is_ascii_graphic() || c == '×')) {
@@ -37,8 +37,12 @@ fn ui_strings_fit_pixel_font() {
         check(&mut bad, &item.name);
         check(&mut bad, &item.description);
     }
-    for level in LEVELS.iter() {
-        check(&mut bad, level.name);
+    for theme in THEMES.iter() {
+        check(&mut bad, theme.name);
+        for v in theme.variants {
+            check(&mut bad, v.name);
+        }
     }
+    check(&mut bad, &Stage::new(STAGES_PER_TIER + 1).name());
     assert!(bad.is_empty(), "strings the pixel font can't draw:\n{}", bad.join("\n"));
 }

@@ -13,7 +13,7 @@ Specs live in [`specs/`](specs/README.md): [game design](specs/game-design.md), 
 | `specs/` | Specifications: game design, project plan, sprite specs |
 | `crates/core` (`tc_core`) | Rules, terrain, move generation, board generator. No Bevy. |
 | `crates/ai` (`tc_ai`) | Alpha-beta AI over `tc_core`, resumable in time slices. No Bevy. |
-| `crates/run` (`tc_run`) | Levels, profile, items, draft rewards, saves. No Bevy. |
+| `crates/run` (`tc_run`) | Endless-run stages, profile, items, draft rewards, saves. No Bevy. |
 | `crates/game` | Bevy 0.19 app: rendering, input, HUD (native + web) |
 | `tools/process_sprites.py` | Turns `assets/spritesheet.jpg` into `assets/atlas.png` + `atlas.ron` |
 | `web/` | Trunk page for the browser build |
@@ -34,9 +34,9 @@ cd web && trunk build --release      # optimised browser build in web/dist (abou
 You play the Ashen Sun against the AI by default. Controls: click to select and move · right-drag
 or Q/E to turn the board · right-drag up/down or Z/X to tilt · middle-drag / WASD to pan · wheel
 to zoom · U undo · F swaps sides with the AI ·
-- /= changes AI level (0–7) · A toggles threat markers · M mute · Menu button or Esc opens the level select menu ·
+- /= changes AI level (0–7) · A toggles threat markers · M mute · Menu button or Esc opens the menu ·
 spells: 15-card deck with 3-card hand; click a card or 1–3 to arm, then a highlighted square (Esc cancels); spends the card and auto-draws up to 3 when empty; D discards the selected card (5 per match).
-Picking a level opens its deck screen: tap a deck card and a reserve card to swap one out for the other (the reserve holds owned cards beyond 15). The deck is shuffled every match. Enter starts.
+Each stage of the endless run opens with its deck screen: tap a deck card and a reserve card to swap one out for the other (the reserve holds owned cards beyond 15). The deck is shuffled every match. Enter starts.
 Pawns promote to a queen automatically. Red frame + sword = your piece can be captured, amber frame = the piece that threatens it.
 
 On phones and tablets (web build): tap to select and move · drag to pan · pinch to zoom · twist two

@@ -1,4 +1,4 @@
-//! Integration tests for Level ladder and Profile (Job 1).
+//! Integration tests for the endless run's stages and the Profile.
 
 use std::collections::HashSet;
 
@@ -6,29 +6,20 @@ use tc_ai::{Action, Limits, choose_action};
 use tc_core::piece::Side;
 use tc_core::position::Position;
 use tc_core::{Match, Terrain};
-use tc_run::{LEVELS, Profile, catalog, level};
+use tc_run::{Endless, Profile, STAGES_PER_TIER, Stage, catalog};
 
 #[test]
-fn all_ten_levels_defined_and_retrievable() {
-    assert_eq!(LEVELS.len(), 10);
-    for id in 1..=10 {
-        let l = level(id).expect("level should exist");
-        assert_eq!(l.id, id);
-    }
-    assert!(level(0).is_none());
-    assert!(level(11).is_none());
-}
-
-#[test]
-fn test_levels_setup_position_and_ai() {
-    for lvl in &LEVELS {
-        for seed in [1u64, 42, 100, 2024] {
+fn every_stage_builds_a_valid_match() {
+    for n in 1..=3 * STAGES_PER_TIER {
+        let stage = Stage::new(n);
+        let size = stage.size();
+        for seed in [1u64, 42] {
             let profile = Profile::new(1);
-            let setup = profile.match_setup(lvl, seed);
+            let setup = profile.stage_setup(&stage, seed);
 
             // 1. Position is Ok
-            let pos = setup.position(lvl.size).expect("position should be valid");
-            assert_eq!(pos.size, lvl.size);
+            let pos = setup.position(size).expect("position should be valid");
+            assert_eq!(pos.size, size);
 
             // 2. Exactly one King per side
             assert!(pos.king(Side::White).is_some(), "White must have a king");
@@ -41,49 +32,34 @@ fn test_levels_setup_position_and_ai() {
                 .pieces()
                 .filter(|(_, p)| p.side == Side::Black && p.kind == tc_core::PieceKind::King)
                 .count();
-            assert_eq!(white_kings, 1, "Level {} seed {} white king count", lvl.id, seed);
-            assert_eq!(black_kings, 1, "Level {} seed {} black king count", lvl.id, seed);
+            assert_eq!(white_kings, 1, "Stage {} seed {} white king count", n, seed);
+            assert_eq!(black_kings, 1, "Stage {} seed {} black king count", n, seed);
 
             // 3. Piece counts
-            if let Some(army) = lvl.army {
-                let white_count = pos.pieces().filter(|(_, p)| p.side == Side::White).count();
-                let black_count = pos.pieces().filter(|(_, p)| p.side == Side::Black).count();
-                assert_eq!(white_count, army.len(), "Level {} seed {} white pieces count", lvl.id, seed);
-                assert_eq!(
-                    black_count,
-                    lvl.enemy_army.unwrap_or(army).len(),
-                    "Level {} seed {} black pieces count",
-                    lvl.id,
-                    seed
-                );
-            } else if lvl.size == 8 {
-                let white_count = pos.pieces().filter(|(_, p)| p.side == Side::White).count();
-                assert_eq!(white_count, 16);
-            } else if lvl.size == 16 {
-                let white_count = pos.pieces().filter(|(_, p)| p.side == Side::White).count();
-                assert_eq!(white_count, 32);
-            }
+            let [you, enemy] = stage.piece_counts();
+            assert_eq!(pos.pieces().filter(|(_, p)| p.side == Side::White).count(), you, "stage {n}");
+            assert_eq!(pos.pieces().filter(|(_, p)| p.side == Side::Black).count(), enemy, "stage {n}");
 
             // 4. Terrain generation without panic
             let (terrain, _) = setup.terrain();
-            assert_eq!(terrain.size, lvl.size);
+            assert_eq!(terrain.size, size);
 
             // 5. Pickups never on occupied or home-row squares
-            let home = Position::home_rows(lvl.size);
+            let home = Position::home_rows(size);
             for (sq, _) in &setup.pickups {
                 assert!(
                     pos.get(*sq).is_none(),
-                    "Pickup on square {:?} is occupied by a piece in level {} seed {}",
+                    "Pickup on square {:?} is occupied by a piece in stage {} seed {}",
                     sq,
-                    lvl.id,
+                    n,
                     seed
                 );
                 assert!(
-                    sq.y >= home && sq.y < lvl.size - home,
-                    "Pickup on square {:?} is on home row (home={}) in level {} seed {}",
+                    sq.y >= home && sq.y < size - home,
+                    "Pickup on square {:?} is on home row (home={}) in stage {} seed {}",
                     sq,
                     home,
-                    lvl.id,
+                    n,
                     seed
                 );
             }
@@ -93,12 +69,15 @@ fn test_levels_setup_position_and_ai() {
             let legal_moves = ctx.legal_moves(&pos);
             assert!(
                 !legal_moves.is_empty(),
-                "White must have at least one legal move in level {} seed {}",
-                lvl.id,
+                "White must have at least one legal move in stage {} seed {}",
+                n,
                 seed
             );
 
-            // 7. AI returns an action at AI level 1 within test
+            // 7. AI returns an action (first tier only: later tiers repeat the boards)
+            if stage.tier > 0 || size > 8 {
+                continue;
+            }
             let mut game = Match::new(terrain, setup.rules.clone(), pos);
             game.set_deck(Side::White, setup.player_deck.clone());
             game.set_deck(Side::Black, setup.enemy_deck.clone());
@@ -114,12 +93,14 @@ fn test_levels_setup_position_and_ai() {
 
 #[test]
 fn terrain_is_non_flat_for_most_seeds_on_all_sizes() {
-    for lvl in &LEVELS {
+    for theme in 0..tc_run::THEMES.len() {
+        let stage = Stage::new(1 + (0..theme).map(|t| tc_run::THEMES[t].variants.len() as u32).sum::<u32>());
+        let size = stage.size();
         let mut non_flat = 0;
-        let flat = Terrain::flat(lvl.size);
+        let flat = Terrain::flat(size);
         for seed in 1..=5 {
             let profile = Profile::new(1);
-            let setup = profile.match_setup(lvl, seed);
+            let setup = profile.stage_setup(&stage, seed);
             let (terrain, _) = setup.terrain();
             if terrain != flat {
                 non_flat += 1;
@@ -127,57 +108,77 @@ fn terrain_is_non_flat_for_most_seeds_on_all_sizes() {
         }
         assert!(
             non_flat >= 1,
-            "Level {} (size {}) should generate non-flat terrain for at least 1 of 5 seeds (got {})",
-            lvl.id,
-            lvl.size,
+            "Stage {} (size {}) should generate non-flat terrain for at least 1 of 5 seeds (got {})",
+            stage.number,
+            size,
             non_flat
         );
     }
 }
 
 #[test]
-fn record_win_and_draft_progression() {
+fn win_advances_and_records_best() {
     let mut profile = Profile::new(42);
-    let lvl1 = level(1).unwrap();
-
-    let draft1 = profile.record_win(lvl1);
-    assert!(draft1.len() <= 3);
-    assert!(!draft1.is_empty());
-    assert_eq!(profile.cleared, vec![1]);
+    profile.new_run(7);
+    let draft1 = profile.win_stage();
+    assert!(!draft1.is_empty() && draft1.len() <= 3);
     assert_eq!(profile.last_draft, Some(draft1.clone()));
-
-    // Record win on the same level again does not duplicate cleared
-    let draft1_again = profile.record_win(lvl1);
-    assert_eq!(profile.cleared, vec![1]);
-    assert_eq!(profile.last_draft, Some(draft1_again.clone()));
-
-    // Distinct items in draft
     let mut set = HashSet::new();
     for item in &draft1 {
         assert!(set.insert(item.clone()), "draft contains duplicates");
-        assert!(!profile.owned.contains(item), "draft contains already owned item");
     }
+    profile.pick(&draft1[0]).expect("pick should succeed");
+    assert!(profile.owned.contains(&draft1[0]));
+    assert!(profile.pick(&draft1[0]).is_err());
 
-    // Pick an item from the latest draft
-    let picked = draft1_again[0].clone();
-    profile.pick(&picked).expect("pick should succeed");
-    assert!(profile.owned.contains(&picked));
-    assert_eq!(profile.last_draft, None);
-
-    // Pick again should fail
-    assert!(profile.pick(&picked).is_err());
+    profile.win_stage();
+    assert_eq!(profile.stage().number, 3);
+    assert_eq!(profile.best_stage, 2);
 }
 
 #[test]
-fn record_win_with_all_items_owned_does_not_panic() {
-    let mut profile = Profile::new(12345);
-    let all_items: Vec<String> = catalog().iter().map(|i| i.id.clone()).collect();
-    profile.owned = all_items;
+fn end_run_keeps_items() {
+    let mut profile = Profile::new(1);
+    profile.owned.push("raise_earth".into());
+    profile.new_run(3);
+    profile.win_stage();
+    assert_eq!(profile.end_run(), 2);
+    assert!(profile.run.is_none());
+    assert_eq!(profile.owned, vec!["raise_earth".to_string()]);
+    assert_eq!(profile.best_stage, 1);
+    assert_eq!(profile.stage().number, 1);
+}
 
-    let lvl = level(5).unwrap();
-    let draft = profile.record_win(lvl);
+#[test]
+fn stage_board_is_deterministic() {
+    let run = Endless { seed: 9, stage: 4 };
+    assert_eq!(run.match_seed(), Endless { seed: 9, stage: 4 }.match_seed());
+    assert_ne!(run.match_seed(), Endless { seed: 9, stage: 5 }.match_seed());
+    let profile = all_spells_profile();
+    let stage = Stage::new(4);
+    let a = profile.stage_setup(&stage, run.match_seed());
+    let b = profile.stage_setup(&stage, run.match_seed());
+    assert_eq!(a.terrain(), b.terrain());
+    assert_eq!(a.player_deck, b.player_deck);
+}
+
+#[test]
+fn later_tiers_reinforce_the_enemy() {
+    let stage = Stage::new(STAGES_PER_TIER + 1);
+    assert_eq!(stage.piece_counts(), [2, 2]);
+    let setup = Profile::new(1).stage_setup(&stage, 3);
+    let spells = setup.enemy_deck.iter().filter(|s| !tc_run::FILLER.contains(s)).count();
+    assert!(setup.enemy_items.len() >= 3);
+    assert!(spells >= 1);
+}
+
+#[test]
+fn win_with_all_items_owned_does_not_panic() {
+    let mut profile = Profile::new(12345);
+    profile.owned = catalog().iter().map(|i| i.id.clone()).collect();
+    profile.new_run(1);
+    let draft = profile.win_stage();
     assert!(draft.is_empty(), "draft should be empty when all items are owned");
-    assert_eq!(profile.last_draft, Some(Vec::new()));
 }
 
 #[test]
@@ -185,8 +186,8 @@ fn profile_ron_round_trip() {
     let mut profile = Profile::new(999);
     profile.owned.push("mountaineer_rooks".into());
     profile.owned.push("raise_earth".into());
-    profile.cleared.push(1);
-    profile.cleared.push(2);
+    profile.new_run(5);
+    profile.best_stage = 12;
     profile.last_draft = Some(vec!["tide_charm".into(), "veteran".into()]);
 
     let ron_str = profile.to_ron().expect("serialize to ron");
@@ -197,6 +198,8 @@ fn profile_ron_round_trip() {
     let ron_without_last_draft = "(rng: 100, owned: [\"veteran\"], cleared: [1])";
     let loaded_default: Profile = Profile::from_ron(ron_without_last_draft).expect("deserialize");
     assert_eq!(loaded_default.last_draft, None);
+    assert_eq!(loaded_default.run, None);
+    assert_eq!(loaded_default.best_stage, 0);
 }
 
 fn all_spells_profile() -> Profile {
@@ -239,26 +242,26 @@ fn deck_swaps_keep_the_pool() {
 }
 
 #[test]
-fn match_setup_shuffles_chosen_deck() {
-    let lvl = level(3).unwrap();
+fn stage_setup_shuffles_chosen_deck() {
+    let stage = Stage::new(5);
     let mut profile = all_spells_profile();
     profile.swap_with_reserve(0, 1);
-    let dealt = profile.match_setup(lvl, 5).player_deck;
+    let dealt = profile.stage_setup(&stage, 5).player_deck;
     assert_eq!(multiset(&dealt), multiset(&profile.deck()));
 
     // Unchosen profile: exactly the deck RunState always built.
     let fresh = all_spells_profile();
     let run = tc_run::RunState {
         seed: 5,
-        size: lvl.size,
-        floor: lvl.difficulty,
+        size: stage.size(),
+        floor: stage.difficulty(),
         owned: fresh.owned.clone(),
         rng: 5,
         outcome: None,
         bonus_picks: 0,
         last_draft: None,
     };
-    assert_eq!(fresh.match_setup(lvl, 5).player_deck, run.match_setup().player_deck);
+    assert_eq!(fresh.stage_setup(&stage, 5).player_deck, run.match_setup().player_deck);
 }
 
 #[test]

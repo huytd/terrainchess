@@ -62,13 +62,24 @@ The board size can be set in the menu for a new run. Inside a run, the size can 
 
 ## 4. Roguelike layer
 
-### Run structure
+### Run structure (endless)
 
-- A run is a series of **matches** (e.g. 7 "floors" + 1 boss match).
-- Each floor raises the difficulty through AI depth/time, rougher terrain, and **enemy modifiers** (the enemy also gets items).
-- Between matches you get a **reward draft**: pick 1 of 3, rolled by rarity.
-- **Win** → keep everything and move to the next floor. **Lose** (checkmate, or resign) → the run ends and everything resets. Draws count as a loss, or as a retry at a cost, still to be decided.
-- The run is saved after every match, so closing the browser doesn't lose it. The save is deleted when you lose. No "save-scumming": the save updates when a match starts.
+- A run is an endless series of **stages**. The 10 base **themes** (Hunt 4×4, Twins 5×5, Field 6×6,
+  Five Pieces 6×6, Gardner 5×5, Half Army 7×7, Almost Full 8×8, Full Chess 8×8, Big Board 12×12,
+  Grand Battle 16×16) each have piece-named **variants** (Queen's Hunt, Rook's Hunt, Bishop's Hunt,
+  Knight's Hunt, ...): 29 stages per pass (`crates/run/src/level.rs` `THEMES`).
+- After the last variant the run loops back to the first theme at **tier +1** ("Queen's Hunt +1").
+- Difficulty (`Stage::difficulty`) never drops: 0..7 across the first tier, +8 per tier. It sets the
+  AI level (capped at 7), terrain roughness, enemy items and draft rarity. From tier 1 on, the enemy
+  also gets 2 reinforcement notches per tier (add a pawn, or promote its weakest piece) and 2 extra
+  real spells in its deck per tier.
+- **One life.** A loss (checkmate, or a draw) ends the run; the next run starts at stage 1. The best
+  stage is recorded. Won items are **kept forever** across runs.
+- Before every stage the Prepare screen shows the deck and the enemy's strength. After a win you
+  claim a reward draft (pick 1 of 3; none once every item is owned).
+- Each stage's board and deck order come from (run seed, stage), so a reload gives the same board.
+- After every match a small result strip sits at the bottom of the screen (no full-screen popup), so
+  the player can orbit the camera and review the final position.
 
 ### Kinds of rewards (all last until the run ends)
 
@@ -91,7 +102,7 @@ The board size can be set in the menu for a new run. Inside a run, the size can 
    - *Swap*: switch two of your own pieces
    - *Rewind* (rare): undo the last full move
 
-   Each side plays with a 15-card spell deck and a hand of up to 3 cards. Casting a spell removes that card from the hand; once the hand is empty, it draws up to 3 cards from the deck. A player may also discard a chosen card without spending a turn (up to 5 times per match) as long as the deck is not empty, immediately drawing a replacement card into that same slot. Before each level the player picks which 15 of their owned spell cards make the deck (basic filler cards pad it when they own fewer than 15) by swapping cards between the deck and a reserve. The deck is always shuffled at the start of a match; the player can't set the draw order.
+   Each side plays with a 15-card spell deck and a hand of up to 3 cards. Casting a spell removes that card from the hand; once the hand is empty, it draws up to 3 cards from the deck. A player may also discard a chosen card without spending a turn (up to 5 times per match) as long as the deck is not empty, immediately drawing a replacement card into that same slot. Before each stage the player picks which 15 of their owned spell cards make the deck (basic filler cards pad it when they own fewer than 15) by swapping cards between the deck and a reserve. The deck is always shuffled at the start of a match; the player can't set the draw order.
 
 ### In-match pickups
 

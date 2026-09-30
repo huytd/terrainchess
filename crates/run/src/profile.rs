@@ -6,36 +6,68 @@ use tc_core::spell::SpellId;
 
 use crate::deck;
 use crate::item::{ItemId, RelicEffect};
-use crate::level::Level;
-use crate::run::{MatchSetup, RunError, RunState, place_pickups, roll_draft};
+use crate::level::Stage;
+use crate::run::{MatchSetup, RunError, RunState, place_pickups, roll_draft, roll_enemy_deck};
+
+/// The run in progress. Everything else about a stage comes from `Stage::new(stage)`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Endless {
+    pub seed: u64,
+    /// The stage to play next (1-based).
+    pub stage: u32,
+}
+
+impl Endless {
+    /// The board seed for the current stage: a reload gives the same board.
+    pub fn match_seed(&self) -> u64 {
+        tc_core::rng::mix(self.seed ^ (self.stage as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15))
+    }
+}
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Profile {
     pub rng: u64,
     pub owned: Vec<ItemId>,
-    pub cleared: Vec<u8>,
     #[serde(default)]
     pub last_draft: Option<Vec<ItemId>>,
     /// The chosen deck cards; empty until the player changes it. Reconciled with owned cards on
     /// use and shuffled every match, so the order carries no meaning.
     #[serde(default)]
     pub deck: Vec<SpellId>,
+    /// The endless run in progress, if any.
+    #[serde(default)]
+    pub run: Option<Endless>,
+    /// Highest stage ever cleared.
+    #[serde(default)]
+    pub best_stage: u32,
 }
 
 impl Profile {
     pub fn new(seed: u64) -> Self {
-        Profile { rng: seed, owned: Vec::new(), cleared: Vec::new(), last_draft: None, deck: Vec::new() }
+        Profile { rng: seed, owned: Vec::new(), last_draft: None, deck: Vec::new(), run: None, best_stage: 0 }
     }
 
-    /// Everything needed to play `level`: builds a temporary RunState { seed: match_seed, size: level.size,
-    /// floor: level.difficulty, owned: self.owned.clone(), .. } and calls its match_setup() (so relics,
-    /// enhancements, spells, enemy items, AI level and pickups all work as before), then sets
-    /// `armies` from the level (the enemy's own army if it has one).
-    pub fn match_setup(&self, level: &Level, match_seed: u64) -> MatchSetup {
+    /// Start a new endless run at stage 1. Owned items and the deck carry over.
+    pub fn new_run(&mut self, seed: u64) {
+        self.run = Some(Endless { seed, stage: 1 });
+        self.last_draft = None;
+    }
+
+    /// The stage to play next (stage 1 when no run is going).
+    pub fn stage(&self) -> Stage {
+        Stage::new(self.run.map_or(1, |r| r.stage))
+    }
+
+    /// Everything needed to play `stage`: a temporary RunState at `floor = stage.difficulty()`
+    /// supplies relics, enhancements, enemy items, AI level and terrain; then the stage's armies,
+    /// the player's shuffled deck and the stage's extra enemy spells go on top.
+    pub fn stage_setup(&self, stage: &Stage, match_seed: u64) -> MatchSetup {
+        let size = stage.size();
+        let floor = stage.difficulty();
         let temp_run = RunState {
             seed: match_seed,
-            size: level.size,
-            floor: level.difficulty,
+            size,
+            floor,
             owned: self.owned.clone(),
             rng: match_seed,
             outcome: None,
@@ -45,20 +77,14 @@ impl Profile {
         let mut setup = temp_run.match_setup();
         setup.player_deck = self.deck();
         deck::shuffle(&mut setup.player_deck, setup.seed);
-        setup.armies = level.army.map(|a| [a.to_vec(), level.enemy_army.unwrap_or(a).to_vec()]);
+        setup.enemy_deck = roll_enemy_deck(setup.seed, setup.enemy_items.len() + stage.extra_enemy_spells());
+        setup.armies = stage.armies();
         if setup.armies.is_some() {
             let (terrain, actual_seed) = setup.terrain();
-            let pos = setup.position(level.size).unwrap_or_else(|_| Position::start(level.size));
+            let pos = setup.position(size).unwrap_or_else(|_| Position::start(size));
             let cartographer = setup.relics.contains(&RelicEffect::Cartographer);
-            setup.pickups = place_pickups(
-                actual_seed,
-                level.difficulty,
-                level.size,
-                &terrain,
-                setup.player,
-                cartographer,
-                &pos,
-            );
+            setup.pickups =
+                place_pickups(actual_seed, floor, size, &terrain, setup.player, cartographer, &pos);
         }
         setup
     }
@@ -94,16 +120,25 @@ impl Profile {
         self.deck.clear();
     }
 
-    /// Mark cleared (no duplicates) and roll a draft: up to 3 distinct unowned items (same rarity rules as
-    /// RunState::draft with floor = level.difficulty). Must NOT panic when fewer than 3 unowned items remain —
-    /// return fewer (possibly empty). Stores it in last_draft.
-    pub fn record_win(&mut self, level: &Level) -> Vec<ItemId> {
-        if !self.cleared.contains(&level.id) {
-            self.cleared.push(level.id);
+    /// The current stage was won: record it, move the run on, and roll a draft of up to 3
+    /// unowned items (empty once everything is owned).
+    pub fn win_stage(&mut self) -> Vec<ItemId> {
+        let stage = self.stage();
+        self.best_stage = self.best_stage.max(stage.number);
+        if let Some(run) = &mut self.run {
+            run.stage += 1;
         }
-        let draft = roll_draft(&mut self.rng, &self.owned, level.difficulty, 3);
+        let draft = roll_draft(&mut self.rng, &self.owned, stage.difficulty(), 3);
         self.last_draft = Some(draft.clone());
         draft
+    }
+
+    /// The run is over; returns the stage it ended on. Items and the deck are kept.
+    pub fn end_run(&mut self) -> u32 {
+        let stage = self.stage().number;
+        self.run = None;
+        self.last_draft = None;
+        stage
     }
 
     /// Add a chosen item to owned items if it was part of the last draft.
@@ -149,20 +184,20 @@ mod tests {
 
     #[test]
     fn match_setup_shuffles_player_deck_per_seed() {
-        let level = crate::level(1).unwrap();
+        let level = Stage::new(1);
         let profile = spell_profile();
 
         // Same seed => same order (deterministic).
-        let first = profile.match_setup(level, 42).player_deck;
-        let second = profile.match_setup(level, 42).player_deck;
+        let first = profile.stage_setup(&level, 42).player_deck;
+        let second = profile.stage_setup(&level, 42).player_deck;
         assert_eq!(first, second);
         assert_eq!(first.len(), 15);
 
         // Different seeds => different orders for most seed pairs.
         let mut differed = 0;
         for i in 0..20u64 {
-            let a = profile.match_setup(level, i).player_deck;
-            let b = profile.match_setup(level, 1000 + i).player_deck;
+            let a = profile.stage_setup(&level, i).player_deck;
+            let b = profile.stage_setup(&level, 1000 + i).player_deck;
             if a != b {
                 differed += 1;
             }

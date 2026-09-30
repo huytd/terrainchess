@@ -247,41 +247,7 @@ impl RunState {
         let mut player_deck = deck::card_pool(&self.owned)[..DECK_SIZE].to_vec();
         deck::shuffle(&mut player_deck, seed);
 
-        const ALL_CASTABLE: [SpellId; 16] = [
-            SpellId::RaiseEarth,
-            SpellId::LowerEarth,
-            SpellId::Freeze,
-            SpellId::Bridge,
-            SpellId::DigTunnel,
-            SpellId::Shield,
-            SpellId::Swap,
-            SpellId::Rewind,
-            SpellId::Smite,
-            SpellId::Evaporate,
-            SpellId::Flood,
-            SpellId::Featherfall,
-            SpellId::Curse,
-            SpellId::Sprout,
-            SpellId::Blink,
-            SpellId::Insight,
-        ];
-        let mut enemy_deck_rng = Rng::new(seed ^ 0x454E_454D_595F_4445);
-        let mut enemy_deck = Vec::with_capacity(15);
-        for _ in 0..enemy_items.len() {
-            if enemy_deck.len() < 15 {
-                let spell = ALL_CASTABLE[enemy_deck_rng.below(ALL_CASTABLE.len() as u32) as usize];
-                enemy_deck.push(spell);
-            }
-        }
-        let mut enemy_filler_idx = 0;
-        while enemy_deck.len() < 15 {
-            enemy_deck.push(deck::FILLER[enemy_filler_idx % deck::FILLER.len()]);
-            enemy_filler_idx += 1;
-        }
-        for i in (1..enemy_deck.len()).rev() {
-            let j = enemy_deck_rng.below((i + 1) as u32) as usize;
-            enemy_deck.swap(i, j);
-        }
+        let enemy_deck = roll_enemy_deck(seed, enemy_items.len());
 
         let ai_level = (self.floor + 1).min(7);
 
@@ -350,6 +316,46 @@ impl RunState {
     pub fn from_ron(s: &str) -> Result<Self, ron::error::SpannedError> {
         ron::from_str(s)
     }
+}
+
+/// A 15-card enemy deck: `spells` random castable spells, the rest filler, shuffled.
+pub(crate) fn roll_enemy_deck(seed: u64, spells: usize) -> Vec<SpellId> {
+    const ALL_CASTABLE: [SpellId; 16] = [
+        SpellId::RaiseEarth,
+        SpellId::LowerEarth,
+        SpellId::Freeze,
+        SpellId::Bridge,
+        SpellId::DigTunnel,
+        SpellId::Shield,
+        SpellId::Swap,
+        SpellId::Rewind,
+        SpellId::Smite,
+        SpellId::Evaporate,
+        SpellId::Flood,
+        SpellId::Featherfall,
+        SpellId::Curse,
+        SpellId::Sprout,
+        SpellId::Blink,
+        SpellId::Insight,
+    ];
+    let mut enemy_deck_rng = Rng::new(seed ^ 0x454E_454D_595F_4445);
+    let mut enemy_deck = Vec::with_capacity(15);
+    for _ in 0..spells {
+        if enemy_deck.len() < 15 {
+            let spell = ALL_CASTABLE[enemy_deck_rng.below(ALL_CASTABLE.len() as u32) as usize];
+            enemy_deck.push(spell);
+        }
+    }
+    let mut enemy_filler_idx = 0;
+    while enemy_deck.len() < 15 {
+        enemy_deck.push(deck::FILLER[enemy_filler_idx % deck::FILLER.len()]);
+        enemy_filler_idx += 1;
+    }
+    for i in (1..enemy_deck.len()).rev() {
+        let j = enemy_deck_rng.below((i + 1) as u32) as usize;
+        enemy_deck.swap(i, j);
+    }
+    enemy_deck
 }
 
 /// Roll up to `count` distinct unowned items matching rarity tier rules.

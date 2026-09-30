@@ -14,7 +14,7 @@ pub use item::{
     Item, ItemId, ItemKind, ProfileDelta, Rarity, RelicEffect, SpellId, catalog, find_item, load_all_items,
     parse_items_from_ron,
 };
-pub use level::{LEVELS, Level, level};
-pub use profile::Profile;
+pub use level::{STAGES_PER_TIER, Stage, THEMES, Theme, Variant, reinforce};
+pub use profile::{Endless, Profile};
 pub use run::{BOSS_FLOOR, FLOORS, MatchSetup, RunError, RunOutcome, RunState, TOTAL_FLOORS};
 pub use tc_core::{Pickup, SpellCast};
