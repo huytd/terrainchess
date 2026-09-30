@@ -136,6 +136,9 @@ pub struct Match {
     pub pos: Position,
     /// Hashes of every position so far, for repetition.
     history: Vec<u64>,
+    /// Position plus terrain hashes, for the repetition draw: a spell that reshapes the
+    /// board makes a new position even if no piece moved.
+    states: Vec<u64>,
     pub moves: Vec<Move>,
     pub hands: [SpellHand; 2],
     pub timed_effects: Vec<TimedEffect>,
@@ -150,11 +153,12 @@ impl Match {
     pub fn new(terrain: Terrain, rules: Rules, pos: Position) -> Self {
         assert_eq!(terrain.size, pos.size);
         let history = vec![pos.hash()];
-        Match {
+        let mut m = Match {
             terrain,
             rules,
             pos,
             history,
+            states: Vec::new(),
             moves: Vec::new(),
             hands: [SpellHand::default(), SpellHand::default()],
             timed_effects: Vec::new(),
@@ -163,7 +167,9 @@ impl Match {
             run_items_collected: [0, 0],
             veteran: [false, false],
             snapshots: Vec::new(),
-        }
+        };
+        m.states.push(m.state_hash());
+        m
     }
 
     pub fn set_veteran(&mut self, side: Side, active: bool) {
@@ -239,6 +245,15 @@ impl Match {
     }
 
     /// Hashes of every position so far, oldest first (the current one last).
+    /// Hash of the position together with the terrain.
+    fn state_hash(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        let mut h = std::collections::hash_map::DefaultHasher::new();
+        self.pos.hash().hash(&mut h);
+        self.terrain.tiles.hash(&mut h);
+        h.finish()
+    }
+
     pub fn history(&self) -> &[u64] {
         &self.history
     }
@@ -383,6 +398,7 @@ impl Match {
 
         self.tick_timed_effects();
         self.history.push(self.pos.hash());
+        self.states.push(self.state_hash());
         self.moves.push(mv);
         Ok(())
     }
@@ -1008,6 +1024,7 @@ impl Match {
             self.pos.curses.retain(|c| c.remaining_plies > 0);
 
             self.history.push(self.pos.hash());
+            self.states.push(self.state_hash());
         }
 
         Ok(())
@@ -1024,8 +1041,8 @@ impl Match {
         if self.pos.halfmove_clock >= 100 {
             return Some(Outcome::Draw(DrawReason::FiftyMoves));
         }
-        let now = self.pos.hash();
-        if self.history.iter().filter(|&&h| h == now).count() >= 3 {
+        let now = self.state_hash();
+        if self.states.iter().filter(|&&h| h == now).count() >= 3 {
             return Some(Outcome::Draw(DrawReason::Repetition));
         }
         if insufficient_material(&self.pos) {

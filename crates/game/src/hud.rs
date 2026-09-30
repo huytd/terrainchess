@@ -134,6 +134,9 @@ struct RetryButton;
 struct LevelsButton;
 
 #[derive(Component)]
+struct ClaimButton;
+
+#[derive(Component)]
 struct HandBar;
 
 #[derive(Component)]
@@ -748,6 +751,39 @@ fn sync_overlays(
                                 TextColor(INK_PARCHMENT),
                                 TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
                             ));
+
+                            // A win with a reward waiting: one button to claim it.
+                            if *won && run.pending_draft.is_some() {
+                                panel
+                                    .spawn((
+                                        Button,
+                                        Interaction::default(),
+                                        ClaimButton,
+                                        ButtonVisuals::GOLD,
+                                        Node {
+                                            min_width: Val::Px(220.0),
+                                            min_height: Val::Px(52.0),
+                                            justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
+                                            padding: UiRect::axes(Val::Px(16.0), Val::Px(4.0)),
+                                            margin: UiRect::top(Val::Px(8.0)),
+                                            ..default()
+                                        },
+                                        ImageNode {
+                                            image: atlas.image.clone(),
+                                            rect: Some(atlas.rect("btn_gold")),
+                                            image_mode: button_slicer(),
+                                            ..default()
+                                        },
+                                    ))
+                                    .with_child((
+                                        Text::new("Claim reward"),
+                                        TextFont { font_size: FontSize::Px(26.0), ..default() },
+                                        TextColor(INK_WOOD),
+                                        TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
+                                    ));
+                                return;
+                            }
 
                             // Action buttons row: Retry and Levels
                             panel
@@ -1611,12 +1647,20 @@ fn handle_menu_button(
 }
 
 fn handle_result_buttons(
+    claim_query: Query<&Interaction, (Changed<Interaction>, With<ClaimButton>)>,
     retry_query: Query<&Interaction, (Changed<Interaction>, With<RetryButton>)>,
     levels_query: Query<&Interaction, (Changed<Interaction>, With<LevelsButton>)>,
     mut run: ResMut<Run>,
     mut title_menu: ResMut<TitleMenu>,
     mut start_writer: MessageWriter<StartLevel>,
 ) {
+    for interaction in &claim_query {
+        if *interaction == Interaction::Pressed
+            && let Some(draft) = run.pending_draft.take()
+        {
+            run.phase = RunPhase::Draft(draft);
+        }
+    }
     for interaction in &retry_query {
         if *interaction == Interaction::Pressed {
             start_writer.write(StartLevel(run.level));

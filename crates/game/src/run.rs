@@ -37,6 +37,8 @@ pub struct Run {
     pub profile: Profile,
     pub level: u8,
     pub phase: RunPhase,
+    /// Reward cards earned by the last win, claimed from the victory screen.
+    pub pending_draft: Option<Vec<String>>,
 }
 
 /// Message to select a reward card from the active draft.
@@ -91,19 +93,21 @@ pub fn start_level(level_id: u8, run: &mut Run, game_state: &mut GameState, seed
     };
     run.level = level_id;
     run.phase = RunPhase::Playing;
+    run.pending_draft = None;
     let setup = run.profile.match_setup(level_def, seed);
     *game_state = GameState::from_setup(&setup);
 }
 
-/// Picks a drafted item, saving the profile and moving to the result screen.
-pub fn apply_pick(item_id: &str, run: &mut Run) {
+/// Picks a drafted item, saving the profile and returning to the level select.
+pub fn apply_pick(item_id: &str, run: &mut Run, title_menu: &mut TitleMenu) {
     if let RunPhase::Draft(_) = &run.phase {
         if let Err(e) = run.profile.pick(item_id) {
             bevy::log::warn!("failed to pick item '{item_id}': {e}");
             return;
         }
         save::store(&run.profile);
-        run.phase = RunPhase::Result { won: true };
+        run.phase = RunPhase::Playing;
+        title_menu.open = true;
     }
 }
 
@@ -119,11 +123,9 @@ fn check_run_match_outcome(mut run: ResMut<Run>, game_state: Res<GameState>) {
             if let Some(level_def) = tc_run::level(run.level) {
                 let draft = run.profile.record_win(level_def);
                 save::store(&run.profile);
-                if draft.is_empty() {
-                    run.phase = RunPhase::Result { won: true };
-                } else {
-                    run.phase = RunPhase::Draft(draft);
-                }
+                // The victory screen comes first; its button opens the reward draft.
+                run.pending_draft = (!draft.is_empty()).then_some(draft);
+                run.phase = RunPhase::Result { won: true };
             } else {
                 run.phase = RunPhase::Result { won: true };
             }
@@ -138,9 +140,10 @@ fn handle_run_messages(
     mut start_events: MessageReader<StartLevel>,
     mut run: ResMut<Run>,
     mut game_state: ResMut<GameState>,
+    mut title_menu: ResMut<TitleMenu>,
 ) {
     for pick in pick_events.read() {
-        apply_pick(&pick.0, &mut run);
+        apply_pick(&pick.0, &mut run, &mut title_menu);
     }
 
     for start in start_events.read() {
@@ -158,7 +161,7 @@ fn initial_run_and_game() -> (Run, GameState) {
     let seed = time_seed();
     let setup = profile.match_setup(level_def, seed);
     let game_state = GameState::from_setup(&setup);
-    let run = Run { profile, level: level_id, phase: RunPhase::Playing };
+    let run = Run { profile, level: level_id, phase: RunPhase::Playing, pending_draft: None };
     (run, game_state)
 }
 

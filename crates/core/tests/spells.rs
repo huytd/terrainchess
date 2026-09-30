@@ -862,3 +862,16 @@ fn swap_onto_last_rank_promotes_pawn() {
     assert_eq!(game.pos.get(sq("b8")).unwrap().kind, PieceKind::Queen);
     assert_eq!(game.pos.get(sq("b2")).unwrap().kind, PieceKind::Rook);
 }
+
+#[test]
+fn reshaping_the_board_is_not_a_repetition() {
+    let mut game = game_with_fen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
+    let deck = vec![SpellId::RaiseEarth; 12];
+    game.set_deck(Side::White, deck.clone());
+    game.set_deck(Side::Black, deck);
+    // Both sides only raise earth; the pieces never move, but the board keeps changing.
+    for sq_name in ["c3", "f6", "d3", "e6", "c4", "f5"] {
+        game.cast(SpellCast::RaiseEarth(sq(sq_name))).unwrap();
+    }
+    assert_eq!(game.outcome(), None);
+}
