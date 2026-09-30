@@ -547,6 +547,37 @@ fn update_draft_card_sizes(
     }
 }
 
+/// A card flying from the deck pile to its hand slot.
+#[derive(Component)]
+struct DrawFly {
+    t: f32,
+    delay: f32,
+    from: Vec2,
+}
+
+fn fly_drawn_cards(
+    time: Res<Time>,
+    mut commands: Commands,
+    mut q: Query<(Entity, &mut DrawFly, &mut CardMotion)>,
+) {
+    let dt = time.delta_secs();
+    for (e, mut f, mut motion) in &mut q {
+        f.t += dt;
+        let x = ((f.t - f.delay) / 0.45).clamp(0.0, 1.0);
+        let e_ease = 1.0 - (1.0 - x).powi(3);
+        motion.extra =
+            f.from * (1.0 - e_ease) + Vec2::new(0.0, -70.0 * (std::f32::consts::PI * e_ease).sin());
+        motion.extra_scale = 0.5 + 0.5 * e_ease;
+        motion.extra_rot_deg = 25.0 * (1.0 - e_ease);
+        if x >= 1.0 {
+            motion.extra = Vec2::ZERO;
+            motion.extra_scale = 1.0;
+            motion.extra_rot_deg = 0.0;
+            commands.entity(e).remove::<DrawFly>();
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn sync_hand_bar(
     mut commands: Commands,
@@ -568,6 +599,7 @@ fn sync_hand_bar(
             (u32, u32),
         )>,
     >,
+    mut last_hand: Local<Option<(u64, [Option<tc_core::SpellId>; 3])>>,
     hand_bar_query: Query<Entity, With<HandBar>>,
 ) {
     let side = state.game.pos.side_to_move;
@@ -617,6 +649,13 @@ fn sync_hand_bar(
         return;
     }
 
+    let curr_hand: [Option<tc_core::SpellId>; 3] =
+        std::array::from_fn(|i| hand_cards[i].filter(|_| !hand_used[i]));
+    let prev = last_hand.filter(|(seed, _)| *seed == state.seed).map(|(_, h)| h).unwrap_or([None; 3]);
+    let drawn_slots: Vec<usize> =
+        (0..3).filter(|&i| curr_hand[i].is_some() && prev[i] != curr_hand[i]).collect();
+    *last_hand = Some((state.seed, curr_hand));
+
     // Integer scaling keeps the card art crisp: 3 cards fit a phone's width, and on desktop a card
     // is about 30% of the window height.
     let max_scale_w = ((win_w * 0.90) / (2.7 * 59.0)).floor() as u32;
@@ -649,6 +688,12 @@ fn sync_hand_bar(
     let center_x = if is_compact { (win_w - (sidebar_w + 14.0)) * 0.5 } else { win_w * 0.5 };
     let tip_w = if is_compact { (win_w - 24.0).min(260.0) } else { (1.7 * card_w).max(260.0) };
 
+    let (pile_w, pile_h) = if is_compact { (38.0, 52.0) } else { (46.0, 62.0) };
+    let pile_right = if is_compact { 6.0 } else { 24.0 };
+    let pile_center_x = win_w - pile_right - pile_w * 0.5;
+    let pile_center_y = win_h - 16.0 - pile_h * 0.5;
+    let pile_center = Vec2::new(pile_center_x, pile_center_y);
+
     commands
         .spawn((
             HandBar,
@@ -680,11 +725,21 @@ fn sync_hand_bar(
                 };
                 let card_center_x = center_x + (k as f32 - (n as f32 - 1.0) * 0.5) * dx;
                 let card_left = card_center_x - 0.5 * card_w;
+                let card_center_y = win_h - (resting_bottom - drop_y) - card_h * 0.5;
+                let card_center = Vec2::new(card_center_x, card_center_y);
+                let from = pile_center - card_center;
+
+                let drawn_k = drawn_slots.iter().position(|&s| s == slot_idx);
 
                 let mut motion =
                     CardMotion::new(lift_px, 1.08, true, slot_idx as f32 * 1.7).settled(is_armed && !is_used);
                 motion.base_rot_deg = base_angle_deg;
                 motion.pivot = Vec2::new(0.0, 0.5 * card_h);
+                if drawn_k.is_some() {
+                    motion.extra = from;
+                    motion.extra_scale = 0.5;
+                    motion.extra_rot_deg = 25.0;
+                }
 
                 let mut tags: Vec<(&str, Color)> = Vec::new();
                 let key = ["1", "2", "3"][slot_idx];
@@ -701,7 +756,7 @@ fn sync_hand_bar(
                 let tip_left =
                     (card_left + (card_w - tip_w) * 0.5).clamp(8.0, (win_w - tip_w - 8.0).max(8.0));
 
-                root.spawn((
+                let mut card_builder = root.spawn((
                     Button,
                     Interaction::default(),
                     HandCard { slot_idx, is_used },
@@ -720,146 +775,154 @@ fn sync_hand_bar(
                         },
                         5.0 * scale as f32,
                     ),
-                ))
-                .insert(Outline {
-                    width: Val::Px(3.0),
-                    offset: Val::Px(2.0),
-                    color: if is_armed { GOLD } else { Color::NONE },
-                })
-                .with_children(|card| {
-                    let art = format!("art_{}", spell_item_id(spell));
-                    spawn_card_face(
-                        card,
-                        &atlas,
-                        &art,
-                        spell_name(spell),
-                        spell_accent(spell),
-                        &tags,
-                        card_w,
-                        name_px,
-                    );
+                ));
+                if let Some(drawn_idx) = drawn_k {
+                    card_builder.insert(DrawFly { t: 0.0, delay: 0.12 * drawn_idx as f32, from });
+                }
+                card_builder
+                    .insert(Outline {
+                        width: Val::Px(3.0),
+                        offset: Val::Px(2.0),
+                        color: if is_armed { GOLD } else { Color::NONE },
+                    })
+                    .with_children(|card| {
+                        let art = format!("art_{}", spell_item_id(spell));
+                        spawn_card_face(
+                            card,
+                            &atlas,
+                            &art,
+                            spell_name(spell),
+                            spell_accent(spell),
+                            &tags,
+                            card_w,
+                            name_px,
+                        );
 
-                    let cover = Node {
-                        position_type: PositionType::Absolute,
-                        left: Val::Px(0.0),
-                        top: Val::Px(0.0),
-                        right: Val::Px(0.0),
-                        bottom: Val::Px(0.0),
-                        justify_content: JustifyContent::Center,
-                        align_items: AlignItems::Center,
-                        border_radius: BorderRadius::all(Val::Px(4.0 * scale as f32)),
-                        ..default()
-                    };
-                    if is_used {
-                        card.spawn((cover, BackgroundColor(SLATE.with_alpha(0.65)), Pickable::IGNORE))
-                            .with_children(|c| {
-                                c.spawn((
-                                    Node {
-                                        padding: UiRect::axes(Val::Px(12.0), Val::Px(2.0)),
-                                        border_radius: BorderRadius::all(Val::Px(6.0)),
-                                        ..default()
-                                    },
-                                    BackgroundColor(RED),
-                                    BoxShadow(vec![theme::lip(RED, 3.0)]),
-                                    UiTransform { rotation: Rot2::degrees(-12.0), ..default() },
-                                    Pickable::IGNORE,
-                                ))
-                                .with_child(label_nowrap("USED", name_px, TEXT));
-                            });
-                    } else if blocked.is_some() {
-                        // Can't be cast now: dim the card and pin a red "!" on it.
-                        card.spawn((cover, BackgroundColor(SLATE_DARK.with_alpha(0.45)), Pickable::IGNORE));
-                        let badge = 8.0 * scale as f32;
-                        card.spawn((
-                            Node {
-                                position_type: PositionType::Absolute,
-                                right: Val::Px(-badge * 0.3),
-                                top: Val::Px(-badge * 0.3),
-                                width: Val::Px(badge),
-                                height: Val::Px(badge),
-                                justify_content: JustifyContent::Center,
-                                align_items: AlignItems::Center,
-                                border_radius: BorderRadius::MAX,
-                                ..default()
-                            },
-                            BackgroundColor(RED),
-                            Pickable::IGNORE,
-                        ))
-                        .with_child(label_nowrap("!", S, TEXT));
-                    }
-
-                    // Info box above the card.
-                    card.spawn((
-                        HandTooltip(slot_idx),
-                        panel(
-                            PanelKind::Outer,
-                            Node {
-                                display: if is_armed && !is_used { Display::Flex } else { Display::None },
-                                position_type: PositionType::Absolute,
-                                bottom: Val::Percent(104.0),
-                                left: Val::Px(tip_left - card_left),
-                                width: Val::Px(tip_w),
-                                flex_direction: FlexDirection::Column,
-                                align_items: AlignItems::Center,
-                                row_gap: Val::Px(6.0),
-                                padding: UiRect::all(Val::Px(8.0)),
-                                ..default()
-                            },
-                        ),
-                        Pickable::IGNORE,
-                    ))
-                    .with_children(|tip| {
-                        tip.spawn(label(spell_name(spell), theme::size(win_w, M, S), TEXT));
-                        tip.spawn((
-                            Node {
-                                width: Val::Percent(100.0),
-                                padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
-                                justify_content: JustifyContent::Center,
-                                border_radius: BorderRadius::all(Val::Px(6.0)),
-                                ..default()
-                            },
-                            BackgroundColor(INFO_BG),
-                            Pickable::IGNORE,
-                        ))
-                        .with_child(ink(
-                            spell.effect_text(),
-                            theme::size(win_w, S, XS),
-                            TEXT_DARK,
-                        ));
-                        if spell.is_quick() || blocked.is_some() {
-                            tip.spawn((
+                        let cover = Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(0.0),
+                            top: Val::Px(0.0),
+                            right: Val::Px(0.0),
+                            bottom: Val::Px(0.0),
+                            justify_content: JustifyContent::Center,
+                            align_items: AlignItems::Center,
+                            border_radius: BorderRadius::all(Val::Px(4.0 * scale as f32)),
+                            ..default()
+                        };
+                        if is_used {
+                            card.spawn((cover, BackgroundColor(SLATE.with_alpha(0.65)), Pickable::IGNORE))
+                                .with_children(|c| {
+                                    c.spawn((
+                                        Node {
+                                            padding: UiRect::axes(Val::Px(12.0), Val::Px(2.0)),
+                                            border_radius: BorderRadius::all(Val::Px(6.0)),
+                                            ..default()
+                                        },
+                                        BackgroundColor(RED),
+                                        BoxShadow(vec![theme::lip(RED, 3.0)]),
+                                        UiTransform { rotation: Rot2::degrees(-12.0), ..default() },
+                                        Pickable::IGNORE,
+                                    ))
+                                    .with_child(label_nowrap("USED", name_px, TEXT));
+                                });
+                        } else if blocked.is_some() {
+                            // Can't be cast now: dim the card and pin a red "!" on it.
+                            card.spawn((
+                                cover,
+                                BackgroundColor(SLATE_DARK.with_alpha(0.45)),
+                                Pickable::IGNORE,
+                            ));
+                            let badge = 8.0 * scale as f32;
+                            card.spawn((
                                 Node {
-                                    flex_direction: FlexDirection::Row,
-                                    flex_wrap: FlexWrap::Wrap,
+                                    position_type: PositionType::Absolute,
+                                    right: Val::Px(-badge * 0.3),
+                                    top: Val::Px(-badge * 0.3),
+                                    width: Val::Px(badge),
+                                    height: Val::Px(badge),
                                     justify_content: JustifyContent::Center,
-                                    column_gap: Val::Px(6.0),
-                                    row_gap: Val::Px(4.0),
+                                    align_items: AlignItems::Center,
+                                    border_radius: BorderRadius::MAX,
                                     ..default()
                                 },
+                                BackgroundColor(RED),
                                 Pickable::IGNORE,
                             ))
-                            .with_children(|chips| {
-                                if spell.is_quick() {
-                                    chips.spawn(tag_chip(GOLD)).with_child(label(
-                                        "Quick: free action",
-                                        XS,
-                                        TEXT,
-                                    ));
-                                }
-                                if let Some(reason) = blocked {
-                                    chips.spawn(tag_chip(RED)).with_child(label(reason, XS, TEXT));
-                                }
-                            });
+                            .with_child(label_nowrap("!", S, TEXT));
                         }
+
+                        // Info box above the card.
+                        card.spawn((
+                            HandTooltip(slot_idx),
+                            panel(
+                                PanelKind::Outer,
+                                Node {
+                                    display: if is_armed && !is_used { Display::Flex } else { Display::None },
+                                    position_type: PositionType::Absolute,
+                                    bottom: Val::Percent(104.0),
+                                    left: Val::Px(tip_left - card_left),
+                                    width: Val::Px(tip_w),
+                                    flex_direction: FlexDirection::Column,
+                                    align_items: AlignItems::Center,
+                                    row_gap: Val::Px(6.0),
+                                    padding: UiRect::all(Val::Px(8.0)),
+                                    ..default()
+                                },
+                            ),
+                            Pickable::IGNORE,
+                        ))
+                        .with_children(|tip| {
+                            tip.spawn(label(spell_name(spell), theme::size(win_w, M, S), TEXT));
+                            tip.spawn((
+                                Node {
+                                    width: Val::Percent(100.0),
+                                    padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                                    justify_content: JustifyContent::Center,
+                                    border_radius: BorderRadius::all(Val::Px(6.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(INFO_BG),
+                                Pickable::IGNORE,
+                            ))
+                            .with_child(ink(
+                                spell.effect_text(),
+                                theme::size(win_w, S, XS),
+                                TEXT_DARK,
+                            ));
+                            if spell.is_quick() || blocked.is_some() {
+                                tip.spawn((
+                                    Node {
+                                        flex_direction: FlexDirection::Row,
+                                        flex_wrap: FlexWrap::Wrap,
+                                        justify_content: JustifyContent::Center,
+                                        column_gap: Val::Px(6.0),
+                                        row_gap: Val::Px(4.0),
+                                        ..default()
+                                    },
+                                    Pickable::IGNORE,
+                                ))
+                                .with_children(|chips| {
+                                    if spell.is_quick() {
+                                        chips.spawn(tag_chip(GOLD)).with_child(label(
+                                            "Quick: free action",
+                                            XS,
+                                            TEXT,
+                                        ));
+                                    }
+                                    if let Some(reason) = blocked {
+                                        chips.spawn(tag_chip(RED)).with_child(label(reason, XS, TEXT));
+                                    }
+                                });
+                            }
+                        });
                     });
-                });
             }
 
             // To the right: Discard button above, deck pile below.
             root.spawn((
                 Node {
                     position_type: PositionType::Absolute,
-                    right: Val::Px(if is_compact { 6.0 } else { 24.0 }),
+                    right: Val::Px(pile_right),
                     bottom: Val::Px(16.0),
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::FlexEnd,
@@ -901,7 +964,6 @@ fn sync_hand_bar(
                     });
 
                 // Deck pile: two stacked card backs with the count on top.
-                let (pile_w, pile_h) = if is_compact { (38.0, 52.0) } else { (46.0, 62.0) };
                 let back = |z: i32, dx: f32, rot: f32| {
                     (
                         Node {
@@ -1676,6 +1738,7 @@ impl Plugin for HudPlugin {
                 handle_discard_button_interaction,
                 theme::update_button_visuals,
                 sync_hand_bar,
+                fly_drawn_cards,
                 sync_toast,
             )
                 .chain()

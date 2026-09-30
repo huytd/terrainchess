@@ -23,6 +23,8 @@ pub struct CardMotion {
     pub active: bool,
     /// Extra offset added on top (the banner's slide-in).
     pub extra: Vec2,
+    pub extra_rot_deg: f32,
+    pub extra_scale: f32,
     /// -1..1 from the cursor's x over the card.
     pub tilt: f32,
     h: f32,
@@ -39,6 +41,8 @@ impl CardMotion {
             phase,
             active: false,
             extra: Vec2::ZERO,
+            extra_rot_deg: 0.0,
+            extra_scale: 1.0,
             tilt: 0.0,
             h: 0.0,
         }
@@ -59,13 +63,13 @@ impl CardMotion {
         } else {
             (0.0, 0.0)
         };
-        let rot_deg = self.base_rot_deg * rest + sway - self.tilt * 5.0 * self.h;
+        let rot_deg = self.base_rot_deg * rest + sway - self.tilt * 5.0 * self.h + self.extra_rot_deg;
         let rot = Rot2::degrees(rot_deg);
         let offset = self.pivot - rot * self.pivot + Vec2::new(0.0, bob - self.lift_px * self.h) + self.extra;
         UiTransform {
             translation: Val2::px(offset.x, offset.y),
             rotation: rot,
-            scale: Vec2::splat((1.0 + (self.hover_scale - 1.0) * self.h) * pop),
+            scale: Vec2::splat((1.0 + (self.hover_scale - 1.0) * self.h) * pop * self.extra_scale),
         }
     }
 }
