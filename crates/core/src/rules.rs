@@ -792,16 +792,14 @@ impl Match {
             self.snapshots.push(snap);
         }
 
-        // Mark that slot used (the card is spent)
+        // The cast card leaves the hand.
         let hand = &mut self.hands[side.index()];
         let slot_idx =
             (0..3).find(|&i| hand.hand[i] == Some(spell) && !hand.used[i]).expect("slot was verified above");
-        hand.used[slot_idx] = true;
+        hand.hand[slot_idx] = None;
 
-        // Drawing: as soon as every non-empty slot of the hand is used, the hand is cleared
-        // and up to 3 new cards are drawn from the front of the deck.
-        let all_used = (0..3).all(|i| hand.hand[i].is_none() || hand.used[i]);
-        if all_used {
+        // Drawing: once the hand is empty, up to 3 new cards are drawn from the front of the deck.
+        if hand.hand.iter().all(Option::is_none) {
             hand.draw();
         }
 

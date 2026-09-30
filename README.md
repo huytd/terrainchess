@@ -36,7 +36,7 @@ or Q/E to turn the board · right-drag up/down or Z/X to tilt · middle-drag / W
 to zoom · U undo · F swaps sides with the AI ·
 - /= changes AI level (0–7) · A toggles threat markers · M mute · Menu button or Esc opens the level select menu ·
 spells: 15-card deck with 3-card hand; click a card or 1–3 to arm, then a highlighted square (Esc cancels); spends the card and auto-draws up to 3 when empty; D discards the selected card (5 per match).
-Picking a level opens its deck screen: tap two cards to swap them (the reserve holds owned cards beyond 15), toggle Shuffle to fix the draw order, Enter starts.
+Picking a level opens its deck screen: tap a deck card and a reserve card to swap one out for the other (the reserve holds owned cards beyond 15). The deck is shuffled every match. Enter starts.
 Pawns promote to a queen automatically. Red frame + sword = your piece can be captured, amber frame = the piece that threatens it.
 
 On phones and tablets (web build): tap to select and move · drag to pan · pinch to zoom · twist two

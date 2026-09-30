@@ -908,16 +908,13 @@ struct PrepareDetail;
 struct PrepareBack;
 
 #[derive(Component)]
-struct PrepareShuffle;
-
-#[derive(Component)]
 struct PrepareReset;
 
 #[derive(Component)]
 struct PrepareStart;
 
 /// What the title panel was last built from; any change rebuilds it.
-type TitleKey = (bool, Option<u8>, Option<DeckSlot>, Vec<SpellId>, bool, (u32, u32));
+type TitleKey = (bool, Option<u8>, Option<DeckSlot>, Vec<SpellId>, (u32, u32));
 
 /// Pieces per side on a level: its army, or the standard set for its board size.
 fn level_piece_count(level: &tc_run::Level) -> usize {
@@ -942,11 +939,16 @@ fn card_detail(spell: SpellId) -> String {
 }
 
 /// The Prepare screen's detail line when no card is hovered.
-fn prepare_hint(held: Option<SpellId>, shuffle: bool) -> String {
+fn prepare_hint(held: Option<SpellId>, has_reserve: bool, held_in_deck: bool) -> String {
     match held {
-        Some(spell) => format!("Tap another card to swap it with {}.", spell_name(spell)),
-        None if shuffle => "Shuffled at the start of each match. Tap two cards to swap them.".into(),
-        None => "Drawn in this order. Cards 1-3 are your opening hand.".into(),
+        Some(spell) if held_in_deck => {
+            format!("Tap a reserve card to put it in place of {}.", spell_name(spell))
+        }
+        Some(spell) => format!("Tap a deck card to swap it out for {}.", spell_name(spell)),
+        None if has_reserve => {
+            "Shuffled each match. Tap a deck card, then a reserve card, to swap them.".into()
+        }
+        None => "Shuffled each match. Win spell cards to add them to your reserve.".into(),
     }
 }
 
@@ -962,14 +964,8 @@ fn sync_title_menu(
 ) {
     let (win_w, win_h) = window.iter().next().map(|w| (w.width(), w.height())).unwrap_or((800.0, 600.0));
     let deck = if title_menu.prepare.is_some() { run.profile.deck() } else { Vec::new() };
-    let key: TitleKey = (
-        title_menu.open,
-        title_menu.prepare,
-        title_menu.held,
-        deck,
-        run.profile.shuffle_deck,
-        (win_w as u32, win_h as u32),
-    );
+    let key: TitleKey =
+        (title_menu.open, title_menu.prepare, title_menu.held, deck, (win_w as u32, win_h as u32));
     if last.as_ref() == Some(&key) {
         return;
     }
@@ -1102,7 +1098,6 @@ fn spawn_prepare(
     let gap = if compact { 4.0 } else { 8.0 };
     let tile_w = ((avail - 4.0 * gap) / 5.0).floor().clamp(62.0, 112.0);
     let grid_w = 5.0 * tile_w + 4.0 * gap;
-    let shuffle = run.profile.shuffle_deck;
     let deck = run.profile.deck();
     let reserve = run.profile.deck_reserve();
     let small = if compact { XS } else { S };
@@ -1201,24 +1196,6 @@ fn spawn_prepare(
                     Pickable::IGNORE,
                 ))
                 .with_child(label(spell_name(spell), XS, TEXT));
-                if !shuffle {
-                    // Cards 1-3 are the opening hand.
-                    tile.spawn((
-                        BackgroundColor(if i < 3 { GOLD } else { SLATE_DARK }),
-                        Pickable::IGNORE,
-                        Node {
-                            position_type: PositionType::Absolute,
-                            left: Val::Px(-4.0),
-                            top: Val::Px(-4.0),
-                            min_width: Val::Px(20.0),
-                            padding: UiRect::axes(Val::Px(4.0), Val::Px(0.0)),
-                            justify_content: JustifyContent::Center,
-                            border_radius: BorderRadius::MAX,
-                            ..default()
-                        },
-                    ))
-                    .with_child(label_nowrap((i + 1).to_string(), XS, TEXT));
-                }
                 if spell.is_quick() {
                     spawn_bolt(tile, atlas);
                 }
@@ -1240,7 +1217,15 @@ fn spawn_prepare(
         ))
         .with_child((
             PrepareDetail,
-            label(prepare_hint(held_spell(held, &deck, &reserve), shuffle), small, TEXT),
+            label(
+                prepare_hint(
+                    held_spell(held, &deck, &reserve),
+                    !reserve.is_empty(),
+                    matches!(held, Some(DeckSlot::Deck(_))),
+                ),
+                small,
+                TEXT,
+            ),
         ));
 
     if !reserve.is_empty() {
@@ -1293,10 +1278,10 @@ fn spawn_prepare(
     }
 
     // The panel's 1 px border eats into `avail`.
-    let btn_w = if compact { ((avail - 16.0) / 2.0).floor() } else { 150.0 };
+    let btn_w = if compact { ((avail - 28.0) / 3.0).floor() } else { 150.0 };
     let btn_h = if compact { 44.0 } else { 48.0 };
     let btn_px = theme::size(win_w, M, S);
-    let reset_disabled = run.profile.deck.is_empty() && shuffle;
+    let reset_disabled = run.profile.deck.is_empty();
     parent
         .spawn(Node {
             flex_direction: FlexDirection::Row,
@@ -1310,11 +1295,6 @@ fn spawn_prepare(
         .with_children(|row| {
             row.spawn((PrepareBack, button(SLATE_LIGHT, Val::Px(btn_w), btn_h)))
                 .with_child(label_nowrap("Back", btn_px, TEXT));
-            row.spawn((PrepareShuffle, button(SLATE_LIGHT, Val::Px(btn_w), btn_h))).with_child(label_nowrap(
-                if shuffle { "Shuffle: On" } else { "Shuffle: Off" },
-                btn_px,
-                TEXT,
-            ));
             row.spawn((
                 PrepareReset,
                 ButtonDisabled(reset_disabled),
@@ -1373,7 +1353,11 @@ fn handle_prepare_cards(
             Interaction::Hovered => card_detail(card.spell),
             Interaction::None => {
                 let held = held_spell(title_menu.held, &run.profile.deck(), &run.profile.deck_reserve());
-                prepare_hint(held, run.profile.shuffle_deck)
+                prepare_hint(
+                    held,
+                    !run.profile.deck_reserve().is_empty(),
+                    matches!(title_menu.held, Some(DeckSlot::Deck(_))),
+                )
             }
         };
         for mut t in &mut detail {
@@ -1384,7 +1368,6 @@ fn handle_prepare_cards(
 
 fn handle_prepare_buttons(
     back: Query<&Interaction, (Changed<Interaction>, With<PrepareBack>)>,
-    shuffle: Query<&Interaction, (Changed<Interaction>, With<PrepareShuffle>)>,
     reset: Query<(&Interaction, &ButtonDisabled), (Changed<Interaction>, With<PrepareReset>)>,
     start: Query<&Interaction, (Changed<Interaction>, With<PrepareStart>)>,
     mut title_menu: ResMut<TitleMenu>,
@@ -1394,9 +1377,6 @@ fn handle_prepare_buttons(
     if back.iter().any(|i| *i == Interaction::Pressed) {
         title_menu.prepare = None;
         title_menu.held = None;
-    }
-    if shuffle.iter().any(|i| *i == Interaction::Pressed) {
-        edits.write(DeckEdit::ToggleShuffle);
     }
     if reset.iter().any(|(i, d)| *i == Interaction::Pressed && !d.0) {
         edits.write(DeckEdit::Reset);

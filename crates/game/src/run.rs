@@ -46,7 +46,6 @@ pub enum DeckSlot {
 #[derive(Message, Clone, Copy, Debug)]
 pub enum DeckEdit {
     Tap(DeckSlot),
-    ToggleShuffle,
     Reset,
 }
 
@@ -132,16 +131,13 @@ pub fn apply_pick(item_id: &str, run: &mut Run, title_menu: &mut TitleMenu) {
     }
 }
 
-/// Applies a Prepare screen edit: tapping picks a card up, tapping a second card swaps the two.
+/// Applies a Prepare screen edit: tapping picks a card up; tapping a card on the other side
+/// (deck vs reserve) swaps the two, so a card leaves the deck and another joins it.
 pub fn apply_deck_edit(edit: DeckEdit, run: &mut Run, title_menu: &mut TitleMenu) {
     use DeckSlot::{Deck, Reserve};
     match edit {
         DeckEdit::Tap(slot) => match (title_menu.held, slot) {
             (Some(h), s) if h == s => title_menu.held = None,
-            (Some(Deck(a)), Deck(b)) => {
-                run.profile.swap_deck_cards(a, b);
-                title_menu.held = None;
-            }
             (Some(Deck(i)), Reserve(r)) | (Some(Reserve(r)), Deck(i)) => {
                 run.profile.swap_with_reserve(i, r);
                 title_menu.held = None;
@@ -152,7 +148,6 @@ pub fn apply_deck_edit(edit: DeckEdit, run: &mut Run, title_menu: &mut TitleMenu
                 return;
             }
         },
-        DeckEdit::ToggleShuffle => run.profile.shuffle_deck = !run.profile.shuffle_deck,
         DeckEdit::Reset => {
             run.profile.reset_deck();
             title_menu.held = None;

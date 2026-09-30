@@ -16,28 +16,15 @@ pub struct Profile {
     pub cleared: Vec<u8>,
     #[serde(default)]
     pub last_draft: Option<Vec<ItemId>>,
-    /// The arranged deck; empty until the player arranges it. Reconciled with owned cards on use.
+    /// The chosen deck cards; empty until the player changes it. Reconciled with owned cards on
+    /// use and shuffled every match, so the order carries no meaning.
     #[serde(default)]
     pub deck: Vec<SpellId>,
-    /// Shuffle the deck each match (default) or draw it in the arranged order.
-    #[serde(default = "default_true")]
-    pub shuffle_deck: bool,
-}
-
-fn default_true() -> bool {
-    true
 }
 
 impl Profile {
     pub fn new(seed: u64) -> Self {
-        Profile {
-            rng: seed,
-            owned: Vec::new(),
-            cleared: Vec::new(),
-            last_draft: None,
-            deck: Vec::new(),
-            shuffle_deck: true,
-        }
+        Profile { rng: seed, owned: Vec::new(), cleared: Vec::new(), last_draft: None, deck: Vec::new() }
     }
 
     /// Everything needed to play `level`: builds a temporary RunState { seed: match_seed, size: level.size,
@@ -57,9 +44,7 @@ impl Profile {
         };
         let mut setup = temp_run.match_setup();
         setup.player_deck = self.deck();
-        if self.shuffle_deck {
-            deck::shuffle(&mut setup.player_deck, setup.seed);
-        }
+        deck::shuffle(&mut setup.player_deck, setup.seed);
         setup.armies = level.army.map(|a| [a.to_vec(), level.enemy_army.unwrap_or(a).to_vec()]);
         if setup.armies.is_some() {
             let (terrain, actual_seed) = setup.terrain();
@@ -93,17 +78,6 @@ impl Profile {
         deck::reserve(&self.deck(), &self.deck_pool())
     }
 
-    /// Swap two deck positions. Choosing an order turns shuffling off.
-    pub fn swap_deck_cards(&mut self, a: usize, b: usize) {
-        let mut cards = self.deck();
-        if a >= cards.len() || b >= cards.len() {
-            return;
-        }
-        cards.swap(a, b);
-        self.deck = cards;
-        self.shuffle_deck = false;
-    }
-
     /// Put reserve card `r` at deck position `i`; the card that was there joins the reserve.
     pub fn swap_with_reserve(&mut self, i: usize, r: usize) {
         let mut cards = self.deck();
@@ -115,10 +89,9 @@ impl Profile {
         self.deck = cards;
     }
 
-    /// Back to the default deck, shuffled.
+    /// Back to the default deck.
     pub fn reset_deck(&mut self) {
         self.deck.clear();
-        self.shuffle_deck = true;
     }
 
     /// Mark cleared (no duplicates) and roll a draft: up to 3 distinct unowned items (same rarity rules as

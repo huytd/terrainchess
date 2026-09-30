@@ -66,7 +66,7 @@ fn raise_earth_legality_effect_and_turn_ending() {
 
     game.cast(SpellCast::RaiseEarth(sq("d4"))).expect("cast should succeed");
     assert_eq!(game.terrain.height(sq("d4")), 1);
-    assert!(game.hand(Side::White).used[0], "card slot 0 is marked used");
+    assert!(game.hand(Side::White).hand[0].is_none(), "the cast card left the hand");
     assert_eq!(game.pos.side_to_move, Side::Black, "turn-ending spell flips side");
 
     // Clamping: raising height 3 stays at 3
@@ -619,14 +619,14 @@ fn rewind_undoes_move_pair_and_spends_charge() {
     assert_eq!(game.pos.get(sq("h8")).unwrap().kind, PieceKind::King);
     assert!(game.pos.get(sq("g8")).is_none());
 
-    // Rewind slot is used
-    assert!(game.hand(Side::White).used[0]);
+    // The Rewind card left the hand
+    assert!(game.hand(Side::White).hand[0].is_none());
     // Does NOT end turn: it is White's turn again
     assert_eq!(game.pos.side_to_move, Side::White);
 }
 
 #[test]
-fn drawing_happens_as_soon_as_every_non_empty_slot_is_used() {
+fn drawing_happens_once_the_hand_is_empty() {
     let fen = "7k/8/8/8/8/8/8/7K w - - 0 1";
     let mut game = game_with_fen(fen);
 
@@ -644,16 +644,15 @@ fn drawing_happens_as_soon_as_every_non_empty_slot_is_used() {
     // Cast 1st Shield on h1 (quick spell, does not end turn)
     game.cast(SpellCast::Shield(sq("h1"))).unwrap();
     let hand = game.hand(Side::White);
-    assert_eq!(hand.used, [true, false, false], "slot 0 used");
+    assert_eq!(hand.hand, [None, Some(SpellId::Shield), Some(SpellId::Shield)], "slot 0 emptied");
     assert_eq!(game.deck_len(Side::White), 2, "deck still has 2 cards");
 
     // Cast 2nd Shield on h1
     game.cast(SpellCast::Shield(sq("h1"))).unwrap();
     let hand = game.hand(Side::White);
-    assert_eq!(hand.used, [true, true, false], "slot 0 and 1 used");
+    assert_eq!(hand.hand, [None, None, Some(SpellId::Shield)], "slots 0 and 1 emptied");
 
-    // Cast 3rd Shield on h1: all non-empty slots are now used!
-    // As soon as every non-empty slot is used, hand is cleared and up to 3 cards are drawn.
+    // Cast 3rd Shield on h1: the hand is now empty, so up to 3 cards are drawn.
     game.cast(SpellCast::Shield(sq("h1"))).unwrap();
     let hand = game.hand(Side::White);
     assert_eq!(
@@ -721,14 +720,14 @@ fn discard_rules() {
     assert_eq!(game.pos.side_to_move, turn_before);
     assert_eq!(game.pos.hash(), hash_before);
 
-    // 2. Used cards cannot be discarded (while other unused slots still can)
+    // 2. A cast card leaves the hand, so its empty slot can't be discarded
     // Cast quick spell Shield (slot 2)
     game.cast(SpellCast::Shield(sq("h1"))).unwrap();
-    assert!(game.hand(Side::White).used[2], "slot 2 is now marked used");
-    assert!(!game.can_discard(Side::White, 2), "used card cannot be discarded");
-    assert!(game.discard(Side::White, 2).is_err(), "used card discard returns error");
+    assert!(game.hand(Side::White).hand[2].is_none(), "slot 2 is now empty");
+    assert!(!game.can_discard(Side::White, 2), "empty slot cannot be discarded");
+    assert!(game.discard(Side::White, 2).is_err(), "empty slot discard returns error");
 
-    // Other unused slots can still be discarded even if another slot was used:
+    // The other cards can still be discarded:
     assert!(game.can_discard(Side::White, 0));
     assert!(game.can_discard(Side::White, 1));
 

@@ -199,6 +199,8 @@ fn default_discards_left() -> u8 {
 pub struct SpellHand {
     pub deck: Vec<SpellId>,
     pub hand: [Option<SpellId>; 3],
+    /// Legacy: cast cards used to stay in the hand marked used; they now leave the hand, so
+    /// this stays all false. Kept so the rest of the rules and saved states still line up.
     pub used: [bool; 3],
     pub discarded: Vec<SpellId>,
     #[serde(default = "default_discards_left")]
