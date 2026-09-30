@@ -1,5 +1,7 @@
 //! Piece placement and game state, plus starting armies and FEN (8×8 only).
 
+use serde::{Deserialize, Serialize};
+
 use crate::board::Sq;
 use crate::movegen::{Move, MoveKind};
 use crate::piece::{Piece, PieceKind, Side};
@@ -8,6 +10,13 @@ use crate::rng::mix;
 /// Castling wings, indexing `Position::castling`.
 pub const KINGSIDE: usize = 0;
 pub const QUEENSIDE: usize = 1;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct TimedCurse {
+    pub sq: Sq,
+    pub side: Side,
+    pub remaining_plies: u8,
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Position {
@@ -22,6 +31,9 @@ pub struct Position {
     pub halfmove_clock: u16,
     pub fullmove: u16,
     pub shield: Option<(Sq, Side)>,
+    /// A piece ignoring climb and drop limits on its side's next move (Featherfall).
+    pub featherfall: Option<TimedCurse>,
+    pub curses: Vec<TimedCurse>,
     pub cleared: Vec<Sq>,
 }
 
@@ -36,6 +48,8 @@ impl Position {
             halfmove_clock: 0,
             fullmove: 1,
             shield: None,
+            featherfall: None,
+            curses: Vec::new(),
             cleared: Vec::new(),
         }
     }
@@ -334,6 +348,10 @@ impl Position {
 
         if mv.kind == MoveKind::Clear {
             self.en_passant = None;
+            if self.featherfall.is_some_and(|f| f.side == side) {
+                self.featherfall = None;
+            }
+            self.curses.retain(|c| c.sq != mv.from);
             self.set(mv.from, None);
             if !self.cleared.contains(&mv.to) {
                 self.cleared.push(mv.to);
@@ -353,6 +371,16 @@ impl Position {
         let captured = self.get(mv.to);
 
         self.en_passant = None;
+        if self.featherfall.is_some_and(|f| f.side == side) {
+            self.featherfall = None;
+        }
+        // A curse tracks its victim's square: it lifts when that piece moves or is
+        // captured (en-passant victims sit beside the destination square).
+        let victim_sq = match mv.kind {
+            MoveKind::EnPassant => Sq::new(mv.to.x, mv.from.y),
+            _ => mv.to,
+        };
+        self.curses.retain(|c| c.sq != victim_sq && c.sq != mv.from);
         self.set(mv.from, None);
         match mv.kind {
             MoveKind::EnPassant => self.set(Sq::new(mv.to.x, mv.from.y), None),
@@ -422,6 +450,18 @@ impl Position {
         }
         for sq in &self.cleared {
             h ^= mix(60_000 + sq.index(self.size) as u64);
+        }
+        if let Some(f) = self.featherfall {
+            h ^= mix(70_000
+                + f.side.index() as u64 * 2048
+                + f.sq.index(self.size) as u64
+                + f.remaining_plies as u64 * 10_000);
+        }
+        for c in &self.curses {
+            h ^= mix(80_000
+                + c.side.index() as u64 * 2048
+                + c.sq.index(self.size) as u64
+                + c.remaining_plies as u64 * 10_000);
         }
         h
     }

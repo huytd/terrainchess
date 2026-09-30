@@ -19,9 +19,19 @@ pub enum Action {
 /// Common = 1, Uncommon = 2, Rare = 3.
 pub fn spell_cost(id: SpellId) -> u8 {
     match id {
-        SpellId::RaiseEarth | SpellId::LowerEarth | SpellId::Bridge => 1,
-        SpellId::Freeze | SpellId::DigTunnel | SpellId::Shield => 2,
-        SpellId::Swap | SpellId::Rewind => 3,
+        SpellId::RaiseEarth
+        | SpellId::LowerEarth
+        | SpellId::Bridge
+        | SpellId::Smite
+        | SpellId::Evaporate
+        | SpellId::Sprout => 1,
+        SpellId::Freeze
+        | SpellId::DigTunnel
+        | SpellId::Shield
+        | SpellId::Flood
+        | SpellId::Featherfall
+        | SpellId::Insight => 2,
+        SpellId::Swap | SpellId::Rewind | SpellId::Curse | SpellId::Blink => 3,
     }
 }
 

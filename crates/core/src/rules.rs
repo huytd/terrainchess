@@ -5,9 +5,9 @@ use serde::{Deserialize, Serialize};
 use crate::board::{Sq, squares};
 use crate::movegen::{Ctx, Move, MoveKind};
 use crate::piece::{MoveProfile, Piece, PieceKind, Side};
-use crate::position::Position;
+use crate::position::{Position, TimedCurse};
 use crate::spell::{SpellCast, SpellHand, SpellId};
-use crate::terrain::{Feature, MAX_HEIGHT, Terrain, TileKind};
+use crate::terrain::{Feature, MAX_HEIGHT, Obstacle, Terrain, TileKind};
 
 /// Pickups that appear on the board and can be collected by moving pieces.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -31,6 +31,11 @@ pub struct TimedCave {
     pub link: u8,
     pub remaining_plies: u8,
 }
+
+/// Plies a Curse lasts: the victim side's next 2 turns (one ply per move).
+pub const CURSE_PLIES: u8 = 4;
+/// Fallback ply timer for Featherfall (also expires on its side's next move).
+pub const FEATHERFALL_PLIES: u8 = 2;
 
 /// Per-side movement profiles. Run upgrades edit these numbers.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -244,6 +249,17 @@ impl Match {
             }
         }
         self.timed_caves.retain(|c| c.remaining_plies > 0);
+
+        if let Some(f) = &mut self.pos.featherfall {
+            f.remaining_plies = f.remaining_plies.saturating_sub(1);
+            if f.remaining_plies == 0 {
+                self.pos.featherfall = None;
+            }
+        }
+        for curse in &mut self.pos.curses {
+            curse.remaining_plies = curse.remaining_plies.saturating_sub(1);
+        }
+        self.pos.curses.retain(|c| c.remaining_plies > 0);
     }
 
     /// Play a move if it is legal.
@@ -498,6 +514,132 @@ impl Match {
                     out.push(SpellCast::Rewind);
                 }
             }
+            SpellId::Smite => {
+                for sq in squares(size) {
+                    if !matches!(
+                        self.terrain.get(sq).feature,
+                        Feature::Obstacle(Obstacle::Rock) | Feature::Obstacle(Obstacle::Tree)
+                    ) {
+                        continue;
+                    }
+                    let mut clone = self.clone();
+                    clone.terrain.get_mut(sq).feature = Feature::None;
+                    if !clone.in_check() {
+                        out.push(SpellCast::Smite(sq));
+                    }
+                }
+            }
+            SpellId::Evaporate => {
+                for sq in squares(size) {
+                    let tile = self.terrain.get(sq);
+                    if !matches!(tile.kind, TileKind::ShallowWater | TileKind::Ice) {
+                        continue;
+                    }
+                    if tile.feature != Feature::None || self.pos.get(sq).is_some() {
+                        continue;
+                    }
+                    let mut clone = self.clone();
+                    clone.terrain.get_mut(sq).kind = TileKind::Sand;
+                    if !clone.in_check() {
+                        out.push(SpellCast::Evaporate(sq));
+                    }
+                }
+            }
+            SpellId::Flood => {
+                let home = Position::home_rows(size);
+                for sq in squares(size) {
+                    let tile = self.terrain.get(sq);
+                    if !matches!(tile.kind, TileKind::Grass | TileKind::Sand) {
+                        continue;
+                    }
+                    if tile.feature != Feature::None || self.pos.get(sq).is_some() {
+                        continue;
+                    }
+                    if sq.y < home || sq.y >= size - home {
+                        continue;
+                    }
+                    let mut clone = self.clone();
+                    clone.terrain.get_mut(sq).kind = TileKind::ShallowWater;
+                    if !clone.in_check() {
+                        out.push(SpellCast::Flood(sq));
+                    }
+                }
+            }
+            SpellId::Featherfall => {
+                for sq in squares(size) {
+                    if self.pos.get(sq).is_some_and(|p| p.side == side) {
+                        out.push(SpellCast::Featherfall(sq));
+                    }
+                }
+            }
+            SpellId::Curse => {
+                for sq in squares(size) {
+                    if self.pos.get(sq).is_some_and(|p| p.side != side && p.kind != PieceKind::King)
+                        && !self.pos.curses.iter().any(|c| c.sq == sq)
+                    {
+                        out.push(SpellCast::Curse(sq));
+                    }
+                }
+            }
+            SpellId::Sprout => {
+                let home = Position::home_rows(size);
+                for sq in squares(size) {
+                    let tile = self.terrain.get(sq);
+                    if tile.kind != TileKind::Grass || tile.feature != Feature::None {
+                        continue;
+                    }
+                    if self.pos.get(sq).is_some() {
+                        continue;
+                    }
+                    if sq.y < home || sq.y >= size - home {
+                        continue;
+                    }
+                    let mut clone = self.clone();
+                    clone.terrain.get_mut(sq).feature = Feature::Obstacle(Obstacle::Tree);
+                    if !clone.in_check() {
+                        out.push(SpellCast::Sprout(sq));
+                    }
+                }
+            }
+            SpellId::Blink => {
+                for (from, piece) in
+                    self.pos.pieces().filter(|(_, p)| p.side == side && p.kind != PieceKind::King)
+                {
+                    let prof = self.rules.profile(piece);
+                    for dy in -2..=2i8 {
+                        for dx in -2..=2i8 {
+                            if dx == 0 && dy == 0 {
+                                continue;
+                            }
+                            let Some(to) = from.offset(dx, dy, size) else { continue };
+                            if self.pos.get(to).is_some() {
+                                continue;
+                            }
+                            let tile = self.terrain.get(to);
+                            if tile.is_blocked() {
+                                continue;
+                            }
+                            if !prof.deep_water && tile.kind == TileKind::DeepWater {
+                                continue;
+                            }
+                            if self.pos.shield.is_some_and(|(s, sd)| s == to && sd != side) {
+                                continue;
+                            }
+                            let mut clone = self.clone();
+                            clone.pos.set(from, None);
+                            clone.pos.set(to, Some(piece));
+                            if !clone.in_check() {
+                                out.push(SpellCast::Blink(from, to));
+                            }
+                        }
+                    }
+                }
+            }
+            SpellId::Insight => {
+                if !self.hands[side.index()].deck.is_empty() {
+                    out.push(SpellCast::Insight);
+                }
+            }
         }
 
         out
@@ -596,6 +738,22 @@ impl Match {
                 let p_b = self.pos.get(b);
                 self.pos.set(a, p_b);
                 self.pos.set(b, p_a);
+                // Piece-bound effects follow the swapped pieces.
+                for c in &mut self.pos.curses {
+                    if c.sq == a {
+                        c.sq = b;
+                    } else if c.sq == b {
+                        c.sq = a;
+                    }
+                }
+                if let Some(mut f) = self.pos.featherfall {
+                    if f.sq == a {
+                        f.sq = b;
+                    } else if f.sq == b {
+                        f.sq = a;
+                    }
+                    self.pos.featherfall = Some(f);
+                }
                 if p_a.is_some_and(|p| p.kind == PieceKind::King)
                     || p_b.is_some_and(|p| p.kind == PieceKind::King)
                 {
@@ -620,6 +778,66 @@ impl Match {
                 let updated_hand = self.hands[side.index()].clone();
                 target.hands[side.index()] = updated_hand;
                 *self = target;
+            }
+            SpellCast::Smite(sq) => {
+                self.terrain.get_mut(sq).feature = Feature::None;
+            }
+            SpellCast::Evaporate(sq) => {
+                self.terrain.get_mut(sq).kind = TileKind::Sand;
+            }
+            SpellCast::Flood(sq) => {
+                self.terrain.get_mut(sq).kind = TileKind::ShallowWater;
+            }
+            SpellCast::Featherfall(sq) => {
+                self.pos.featherfall = Some(TimedCurse { sq, side, remaining_plies: FEATHERFALL_PLIES });
+            }
+            SpellCast::Curse(sq) => {
+                // Refresh any existing curse on that square.
+                self.pos.curses.retain(|c| c.sq != sq);
+                self.pos.curses.push(TimedCurse { sq, side: side.opposite(), remaining_plies: CURSE_PLIES });
+            }
+            SpellCast::Sprout(sq) => {
+                self.terrain.get_mut(sq).feature = Feature::Obstacle(Obstacle::Tree);
+            }
+            SpellCast::Blink(from, to) => {
+                let piece = self.pos.get(from);
+                self.pos.set(from, None);
+                self.pos.set(to, piece);
+                for rights in &mut self.pos.castling {
+                    for r in rights.iter_mut() {
+                        if *r == Some(from) {
+                            *r = None;
+                        }
+                    }
+                }
+                // Piece-bound effects follow the teleported piece.
+                for c in &mut self.pos.curses {
+                    if c.sq == from {
+                        c.sq = to;
+                    }
+                }
+                if let Some(mut f) = self.pos.featherfall
+                    && f.sq == from
+                {
+                    f.sq = to;
+                    self.pos.featherfall = Some(f);
+                }
+            }
+            SpellCast::Insight => {
+                // Refill spent or empty hand slots (including the just-cast Insight),
+                // up to 2 cards and up to the 3-card hand limit.
+                let hand = &mut self.hands[side.index()];
+                for _ in 0..2 {
+                    if hand.deck.is_empty() {
+                        break;
+                    }
+                    let Some(idx) = (0..3).find(|&i| hand.hand[i].is_none() || hand.used[i]) else {
+                        break;
+                    };
+                    let card = hand.deck.remove(0);
+                    hand.hand[idx] = Some(card);
+                    hand.used[idx] = false;
+                }
             }
         }
 
@@ -659,6 +877,21 @@ impl Match {
                 }
             }
             self.timed_caves.retain(|c| c.remaining_plies > 0);
+
+            // Piece-bound timers tick down once per ply; a freshly cast Curse
+            // keeps its full duration like a freshly cast Freeze.
+            if let Some(f) = &mut self.pos.featherfall {
+                f.remaining_plies = f.remaining_plies.saturating_sub(1);
+                if f.remaining_plies == 0 {
+                    self.pos.featherfall = None;
+                }
+            }
+            for curse in &mut self.pos.curses {
+                if !matches!(cast, SpellCast::Curse(_)) || curse.remaining_plies < CURSE_PLIES {
+                    curse.remaining_plies = curse.remaining_plies.saturating_sub(1);
+                }
+            }
+            self.pos.curses.retain(|c| c.remaining_plies > 0);
 
             self.history.push(self.pos.hash());
         }

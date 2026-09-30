@@ -73,14 +73,20 @@ impl Ctx<'_> {
     }
 
     /// A single step between neighbouring tiles: climbing is limited, drops are free.
-    fn can_step(&self, prof: &MoveProfile, from: Sq, to: Sq) -> bool {
-        self.can_stand(prof, to) && self.up(from, to) <= prof.max_climb as i16
+    fn can_step(&self, prof: &MoveProfile, from: Sq, to: Sq, is_ff: bool) -> bool {
+        self.can_stand(prof, to) && (is_ff || self.up(from, to) <= prof.max_climb as i16)
     }
 
     /// A slide that just stepped `from` → `to` cannot continue past `to`.
-    fn slide_ends(&self, prof: &MoveProfile, from: Sq, to: Sq) -> bool {
-        let up = self.up(from, to);
-        (prof.uphill_ends_slide && up >= 1) || -up > prof.max_slide_drop as i16 || self.in_shallow_water(to)
+    fn slide_ends(&self, prof: &MoveProfile, from: Sq, to: Sq, is_ff: bool) -> bool {
+        if is_ff {
+            self.in_shallow_water(to)
+        } else {
+            let up = self.up(from, to);
+            (prof.uphill_ends_slide && up >= 1)
+                || -up > prof.max_slide_drop as i16
+                || self.in_shallow_water(to)
+        }
     }
 
     /// Captures can't go uphill: `from` must be at least as high as the victim's square.
@@ -88,8 +94,8 @@ impl Ctx<'_> {
         self.terrain.height(victim) <= self.terrain.height(from)
     }
 
-    fn can_land_jump(&self, prof: &MoveProfile, from: Sq, to: Sq) -> bool {
-        self.can_stand(prof, to) && self.up(from, to).unsigned_abs() <= prof.jump_max_dh as u16
+    fn can_land_jump(&self, prof: &MoveProfile, from: Sq, to: Sq, is_ff: bool) -> bool {
+        self.can_stand(prof, to) && (is_ff || self.up(from, to).unsigned_abs() <= prof.jump_max_dh as u16)
     }
 
     /// Walk a ray, calling `f` for each reachable square. The ray stops at the first
@@ -100,6 +106,7 @@ impl Ctx<'_> {
         prof: &MoveProfile,
         from: Sq,
         dir: (i8, i8),
+        is_ff: bool,
         f: &mut impl FnMut(Sq, bool) -> bool,
     ) -> bool {
         // A piece standing in shallow water can't move 2+ squares.
@@ -107,7 +114,7 @@ impl Ctx<'_> {
         let mut cur = from;
         for _ in 0..max_steps {
             let Some(next) = cur.offset(dir.0, dir.1, self.size()) else { break };
-            if !self.can_step(prof, cur, next) {
+            if !self.can_step(prof, cur, next, is_ff) {
                 break;
             }
             if f(next, false) {
@@ -120,7 +127,7 @@ impl Ctx<'_> {
                     }
                 }
             }
-            if pos.get(next).is_some() || self.slide_ends(prof, cur, next) {
+            if pos.get(next).is_some() || self.slide_ends(prof, cur, next, is_ff) {
                 break;
             }
             cur = next;
@@ -138,11 +145,12 @@ impl Ctx<'_> {
     ) -> bool {
         let size = self.size();
         let prof = self.rules.profile(piece);
+        let is_ff = pos.featherfall.is_some_and(|f| f.sq == from && f.side == piece.side);
         let slide_dirs: &[(i8, i8)] = match piece.kind {
             PieceKind::Pawn => {
                 for dx in [-1, 1] {
                     if let Some(to) = from.offset(dx, piece.side.forward(), size)
-                        && self.can_step(prof, from, to)
+                        && self.can_step(prof, from, to, is_ff)
                         && f(to, false)
                     {
                         return true;
@@ -154,7 +162,7 @@ impl Ctx<'_> {
                 if !self.in_shallow_water(from) {
                     for (dx, dy) in KNIGHT {
                         if let Some(to) = from.offset(dx, dy, size)
-                            && self.can_land_jump(prof, from, to)
+                            && self.can_land_jump(prof, from, to, is_ff)
                             && f(to, false)
                         {
                             return true;
@@ -166,7 +174,7 @@ impl Ctx<'_> {
             PieceKind::King => {
                 for (dx, dy) in KING {
                     if let Some(to) = from.offset(dx, dy, size)
-                        && self.can_step(prof, from, to)
+                        && self.can_step(prof, from, to, is_ff)
                         && f(to, false)
                     {
                         return true;
@@ -179,7 +187,7 @@ impl Ctx<'_> {
             PieceKind::Queen => &KING,
         };
         for &dir in slide_dirs {
-            if self.ray(pos, prof, from, dir, f) {
+            if self.ray(pos, prof, from, dir, is_ff, f) {
                 return true;
             }
         }
@@ -222,6 +230,9 @@ impl Ctx<'_> {
     pub fn pseudo_legal(&self, pos: &Position, out: &mut Vec<Move>) {
         let side = pos.side_to_move;
         for (from, piece) in pos.pieces().filter(|(_, p)| p.side == side) {
+            if pos.curses.iter().any(|c| c.sq == from && c.side == piece.side) {
+                continue;
+            }
             if piece.kind == PieceKind::Pawn {
                 self.pawn_moves(pos, from, piece, out);
                 continue;
@@ -258,6 +269,7 @@ impl Ctx<'_> {
         let size = self.size();
         let side = piece.side;
         let prof = self.rules.profile(piece);
+        let is_ff = pos.featherfall.is_some_and(|f| f.sq == from && f.side == side);
         let fwd = side.forward();
         let push = |mv: Move, out: &mut Vec<Move>| {
             if side.relative_rank(mv.to.y, size) == size - 1 {
@@ -280,7 +292,7 @@ impl Ctx<'_> {
 
         if let Some(one) = from.offset(0, fwd, size)
             && pos.get(one).is_none()
-            && self.can_step(prof, from, one)
+            && self.can_step(prof, from, one, is_ff)
         {
             push(Move::new(from, one, MoveKind::Normal), out);
             // The double step can't climb: neither tile may be higher than the start.
@@ -290,17 +302,17 @@ impl Ctx<'_> {
                 && rank >= 1
                 && rank <= self.rules.double_step_max_rank
                 && !self.in_shallow_water(from)
-                && !self.slide_ends(prof, from, one)
+                && !self.slide_ends(prof, from, one, is_ff)
                 && pos.get(two).is_none()
-                && self.can_step(prof, one, two)
-                && self.terrain.height(two) <= h
+                && self.can_step(prof, one, two, is_ff)
+                && (is_ff || self.terrain.height(two) <= h)
             {
                 push(Move::new(from, two, MoveKind::DoublePush), out);
             }
         }
         for dx in [-1, 1] {
             let Some(to) = from.offset(dx, fwd, size) else { continue };
-            if !self.can_step(prof, from, to) {
+            if !self.can_step(prof, from, to, is_ff) {
                 continue;
             }
             if pos.get(to).is_some_and(|p| p.side != side) {

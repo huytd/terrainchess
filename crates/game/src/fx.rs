@@ -395,6 +395,54 @@ pub fn process_game_events(state: Res<GameState>, mut spawner: FxSpawner) {
                         spawner.spawn_sparkle(spot + Vec3::Y * 0.35);
                     }
                 }
+                SpellId::Smite => {
+                    for &sq in squares {
+                        let spot = square_top(sq, state.game.terrain.height(sq));
+                        spawner.spawn_slash(spot + Vec3::Y * 0.35, state.game.pos.side_to_move);
+                    }
+                }
+                SpellId::Evaporate => {
+                    for &sq in squares {
+                        let spot = square_top(sq, state.game.terrain.height(sq));
+                        spawner.spawn_smoke(spot + Vec3::Y * 0.25);
+                    }
+                }
+                SpellId::Flood => {
+                    for &sq in squares {
+                        let spot = square_top(sq, state.game.terrain.height(sq));
+                        spawner.spawn_dust(spot + Vec3::Y * 0.2);
+                    }
+                }
+                SpellId::Featherfall => {
+                    for &sq in squares {
+                        let spot = square_top(sq, state.game.terrain.height(sq));
+                        spawner.spawn_bubble(spot + Vec3::Y * 0.35);
+                    }
+                }
+                SpellId::Curse => {
+                    for &sq in squares {
+                        let spot = square_top(sq, state.game.terrain.height(sq));
+                        spawner.spawn_smoke(spot + Vec3::Y * 0.35);
+                    }
+                }
+                SpellId::Sprout => {
+                    for &sq in squares {
+                        let spot = square_top(sq, state.game.terrain.height(sq));
+                        spawner.spawn_dirt(spot + Vec3::Y * 0.2);
+                    }
+                }
+                SpellId::Blink => {
+                    for &sq in squares {
+                        let spot = square_top(sq, state.game.terrain.height(sq));
+                        spawner.spawn_tornado(spot + Vec3::Y * 0.35);
+                    }
+                }
+                SpellId::Insight => {
+                    for &sq in squares {
+                        let spot = square_top(sq, state.game.terrain.height(sq));
+                        spawner.spawn_sparkle(spot + Vec3::Y * 0.35);
+                    }
+                }
             },
             GameEvent::Promoted { at } => {
                 let spot = square_top(*at, state.game.terrain.height(*at));

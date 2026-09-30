@@ -523,12 +523,17 @@ fn spell_item_descriptions_and_deck_generation() {
 
     for item in catalog() {
         if let ItemKind::Spell { charges, .. } = item.kind {
-            let expected = if charges == 1 {
-                "Adds 1 card to your spell deck."
+            // Older spells use generic deck text; newer spells describe their effect.
+            if item.description.starts_with("Adds") {
+                let expected = if charges == 1 {
+                    "Adds 1 card to your spell deck."
+                } else {
+                    "Adds 2 cards to your spell deck."
+                };
+                assert_eq!(item.description, expected, "description mismatch for {}", item.id);
             } else {
-                "Adds 2 cards to your spell deck."
-            };
-            assert_eq!(item.description, expected, "description mismatch for {}", item.id);
+                assert!(!item.description.is_empty(), "spell {} needs a description", item.id);
+            }
         }
     }
 

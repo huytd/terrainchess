@@ -23,6 +23,14 @@ fn all_spells_are_castable() {
     assert!(SpellId::Freeze.is_castable());
     assert!(SpellId::Shield.is_castable());
     assert!(SpellId::Swap.is_castable());
+    assert!(SpellId::Smite.is_castable());
+    assert!(SpellId::Evaporate.is_castable());
+    assert!(SpellId::Flood.is_castable());
+    assert!(SpellId::Featherfall.is_castable());
+    assert!(SpellId::Curse.is_castable());
+    assert!(SpellId::Sprout.is_castable());
+    assert!(SpellId::Blink.is_castable());
+    assert!(SpellId::Insight.is_castable());
 }
 
 #[test]
@@ -246,6 +254,240 @@ fn swap_legality_effect_and_check_refusal() {
     assert_eq!(game.pos.get(sq("a1")).unwrap().kind, PieceKind::King);
     assert_eq!(game.pos.get(sq("e1")).unwrap().kind, PieceKind::Rook);
     assert_eq!(game.pos.side_to_move, Side::Black, "swap ends turn");
+}
+
+#[test]
+fn smite_destroys_rock_or_tree_obstacles() {
+    let mut game = game_with_fen("7k/8/8/8/8/8/8/7K w - - 0 1");
+    game.terrain.get_mut(sq("d4")).feature = Feature::Obstacle(Obstacle::Rock);
+    game.terrain.get_mut(sq("e4")).feature = Feature::Obstacle(Obstacle::Tree);
+    game.set_deck(Side::White, vec![SpellId::Smite]);
+
+    let targets = game.cast_targets(SpellId::Smite);
+    assert!(targets.contains(&SpellCast::Smite(sq("d4"))), "rock is a valid target");
+    assert!(targets.contains(&SpellCast::Smite(sq("e4"))), "tree is a valid target");
+    assert!(!targets.contains(&SpellCast::Smite(sq("d5"))), "plain tile is not a target");
+    assert!(!targets.contains(&SpellCast::Smite(sq("h1"))), "king square without obstacle is not a target");
+
+    game.cast(SpellCast::Smite(sq("d4"))).expect("smite should succeed");
+    assert_eq!(game.terrain.get(sq("d4")).feature, Feature::None);
+    assert_eq!(game.pos.side_to_move, Side::Black, "smite ends the turn");
+}
+
+#[test]
+fn evaporate_turns_empty_water_or_ice_into_sand() {
+    // White rook on f4 blocks evaporating that square.
+    let mut game = game_with_fen("7k/8/8/8/5R2/8/8/7K w - - 0 1");
+    game.terrain.get_mut(sq("d4")).kind = TileKind::ShallowWater;
+    game.terrain.get_mut(sq("e4")).kind = TileKind::Ice;
+    game.terrain.get_mut(sq("f4")).kind = TileKind::ShallowWater;
+    game.set_deck(Side::White, vec![SpellId::Evaporate]);
+
+    let targets = game.cast_targets(SpellId::Evaporate);
+    assert!(targets.contains(&SpellCast::Evaporate(sq("d4"))), "shallow water is valid");
+    assert!(targets.contains(&SpellCast::Evaporate(sq("e4"))), "ice is valid");
+    assert!(!targets.contains(&SpellCast::Evaporate(sq("f4"))), "occupied square is not valid");
+    assert!(!targets.contains(&SpellCast::Evaporate(sq("d5"))), "grass is not valid");
+
+    game.cast(SpellCast::Evaporate(sq("d4"))).expect("evaporate should succeed");
+    assert_eq!(game.terrain.get(sq("d4")).kind, TileKind::Sand);
+    assert_eq!(game.pos.side_to_move, Side::Black, "evaporate ends the turn");
+}
+
+#[test]
+fn flood_turns_empty_grass_or_sand_into_water_outside_home_rows() {
+    // White pawn on d5 blocks flooding that square.
+    let mut game = game_with_fen("7k/8/8/3P4/8/8/8/7K w - - 0 1");
+    game.terrain.get_mut(sq("e4")).kind = TileKind::Sand;
+    game.terrain.get_mut(sq("f4")).kind = TileKind::DeepWater;
+    game.set_deck(Side::White, vec![SpellId::Flood]);
+
+    let targets = game.cast_targets(SpellId::Flood);
+    assert!(targets.contains(&SpellCast::Flood(sq("d4"))), "grass is valid");
+    assert!(targets.contains(&SpellCast::Flood(sq("e4"))), "sand is valid");
+    assert!(!targets.contains(&SpellCast::Flood(sq("f4"))), "deep water is not valid");
+    assert!(!targets.contains(&SpellCast::Flood(sq("d5"))), "occupied square is not valid");
+    assert!(!targets.contains(&SpellCast::Flood(sq("a1"))), "white home row is not valid");
+    assert!(!targets.contains(&SpellCast::Flood(sq("a8"))), "black home row is not valid");
+
+    game.cast(SpellCast::Flood(sq("d4"))).expect("flood should succeed");
+    assert_eq!(game.terrain.get(sq("d4")).kind, TileKind::ShallowWater);
+    assert_eq!(game.pos.side_to_move, Side::Black, "flood ends the turn");
+}
+
+#[test]
+fn featherfall_ignores_climb_then_expires_on_next_move() {
+    let mut game = game_with_fen("7k/8/8/8/3P4/8/8/6K1 w - - 0 1");
+    game.terrain.get_mut(sq("d5")).height = 2;
+    game.set_deck(Side::White, vec![SpellId::Featherfall]);
+
+    assert!(
+        !game.legal_moves().iter().any(|m| m.from == sq("d4") && m.to == sq("d5")),
+        "climbing 2 is illegal without featherfall"
+    );
+
+    let targets = game.cast_targets(SpellId::Featherfall);
+    assert!(targets.contains(&SpellCast::Featherfall(sq("d4"))), "own pawn is a valid target");
+    assert!(!targets.contains(&SpellCast::Featherfall(sq("h8"))), "enemy king is not a target");
+
+    game.cast(SpellCast::Featherfall(sq("d4"))).expect("featherfall should succeed");
+    assert_eq!(game.pos.side_to_move, Side::White, "featherfall is quick");
+    assert!(
+        game.legal_moves().iter().any(|m| m.from == sq("d4") && m.to == sq("d5")),
+        "feathered pawn can climb"
+    );
+
+    // Moving any of our pieces consumes the effect.
+    game.play(Move::new(sq("g1"), sq("h1"), MoveKind::Normal)).unwrap();
+    assert_eq!(game.pos.featherfall, None, "featherfall expires after our next move");
+    assert!(
+        !game.legal_moves().iter().any(|m| m.from == sq("d4") && m.to == sq("d5")),
+        "climb is illegal again next turn"
+    );
+}
+
+#[test]
+fn featherfall_expires_after_two_plies_without_moving() {
+    let mut game = game_with_fen("7k/8/8/8/3P4/8/8/6K1 w - - 0 1");
+    game.set_deck(Side::White, vec![SpellId::Featherfall, SpellId::RaiseEarth]);
+    game.set_deck(Side::Black, vec![SpellId::RaiseEarth]);
+
+    game.cast(SpellCast::Featherfall(sq("d4"))).unwrap();
+    assert!(game.pos.featherfall.is_some());
+
+    // Ply 1: White casts a turn-ending spell instead of moving.
+    game.cast(SpellCast::RaiseEarth(sq("d4"))).unwrap();
+    assert!(game.pos.featherfall.is_some(), "one ply is not enough to expire");
+    assert_eq!(game.pos.side_to_move, Side::Black);
+
+    // Ply 2: Black casts too, and the effect times out.
+    game.cast(SpellCast::RaiseEarth(sq("d4"))).unwrap();
+    assert_eq!(game.pos.featherfall, None, "featherfall expires after 2 plies");
+}
+
+#[test]
+fn curse_blocks_victim_for_two_turns_then_expires() {
+    let mut game = game_with_fen("7k/8/8/2p5/3P4/8/8/7K w - - 0 1");
+    game.set_deck(Side::White, vec![SpellId::Curse]);
+
+    let targets = game.cast_targets(SpellId::Curse);
+    assert!(targets.contains(&SpellCast::Curse(sq("c5"))), "enemy pawn is a valid target");
+    assert!(!targets.contains(&SpellCast::Curse(sq("h8"))), "enemy king is immune");
+    assert!(!targets.contains(&SpellCast::Curse(sq("d4"))), "own pieces are not targets");
+
+    game.cast(SpellCast::Curse(sq("c5"))).expect("curse should succeed");
+    assert_eq!(game.pos.side_to_move, Side::Black, "curse ends the turn");
+    assert_eq!(game.pos.curses.len(), 1);
+
+    // Black's first turn: the pawn is frozen.
+    assert!(
+        !game.legal_moves().iter().any(|m| m.from == sq("c5")),
+        "cursed pawn cannot move on its first turn"
+    );
+    game.play(Move::new(sq("h8"), sq("g8"), MoveKind::Normal)).unwrap();
+    game.play(Move::new(sq("h1"), sq("g1"), MoveKind::Normal)).unwrap();
+
+    // Black's second turn: still frozen.
+    assert_eq!(game.pos.side_to_move, Side::Black);
+    assert!(
+        !game.legal_moves().iter().any(|m| m.from == sq("c5")),
+        "cursed pawn cannot move on its second turn"
+    );
+    game.play(Move::new(sq("g8"), sq("h8"), MoveKind::Normal)).unwrap();
+    game.play(Move::new(sq("g1"), sq("h1"), MoveKind::Normal)).unwrap();
+
+    // Afterwards the curse lifts.
+    assert!(game.pos.curses.is_empty(), "curse expires after two turns");
+    assert_eq!(game.pos.side_to_move, Side::Black);
+    assert!(
+        game.legal_moves().iter().any(|m| m.from == sq("c5")),
+        "pawn can move again once the curse lifts"
+    );
+}
+
+#[test]
+fn sprout_plants_tree_on_empty_grass_outside_home_rows() {
+    // White pawn on d5 blocks sprouting that square.
+    let mut game = game_with_fen("7k/8/8/3P4/8/8/8/7K w - - 0 1");
+    game.terrain.get_mut(sq("e4")).kind = TileKind::Sand;
+    game.set_deck(Side::White, vec![SpellId::Sprout]);
+
+    let targets = game.cast_targets(SpellId::Sprout);
+    assert!(targets.contains(&SpellCast::Sprout(sq("d4"))), "empty grass is valid");
+    assert!(!targets.contains(&SpellCast::Sprout(sq("e4"))), "sand is not valid");
+    assert!(!targets.contains(&SpellCast::Sprout(sq("d5"))), "occupied square is not valid");
+    assert!(!targets.contains(&SpellCast::Sprout(sq("a1"))), "home row is not valid");
+
+    game.cast(SpellCast::Sprout(sq("d4"))).expect("sprout should succeed");
+    assert_eq!(game.terrain.get(sq("d4")).feature, Feature::Obstacle(Obstacle::Tree));
+    assert_eq!(game.pos.side_to_move, Side::Black, "sprout ends the turn");
+}
+
+#[test]
+fn blink_teleports_within_two_squares() {
+    let mut game = game_with_fen("7k/8/8/8/8/8/8/R3K3 w - - 0 1");
+    game.set_deck(Side::White, vec![SpellId::Blink]);
+
+    let targets = game.cast_targets(SpellId::Blink);
+    assert!(targets.contains(&SpellCast::Blink(sq("a1"), sq("c1"))), "two squares away is valid");
+    assert!(targets.contains(&SpellCast::Blink(sq("a1"), sq("b2"))), "diagonal is valid");
+    assert!(
+        !targets.iter().any(|c| matches!(c, SpellCast::Blink(from, _) if *from == sq("e1"))),
+        "the king cannot blink"
+    );
+    assert!(!targets.contains(&SpellCast::Blink(sq("a1"), sq("d1"))), "three squares is too far");
+    assert!(!targets.contains(&SpellCast::Blink(sq("a1"), sq("e1"))), "occupied square is not valid");
+
+    game.cast(SpellCast::Blink(sq("a1"), sq("c1"))).expect("blink should succeed");
+    assert_eq!(game.pos.get(sq("c1")).unwrap().kind, PieceKind::Rook);
+    assert!(game.pos.get(sq("a1")).is_none());
+    assert_eq!(game.pos.side_to_move, Side::Black, "blink ends the turn");
+}
+
+#[test]
+fn blink_refused_when_king_stays_in_check() {
+    // White king e1 is in check from the black rook on e8.
+    let mut game = game_with_fen("4r2k/8/8/8/8/8/8/4K1N1 w - - 0 1");
+    assert!(game.in_check());
+    game.set_deck(Side::White, vec![SpellId::Blink]);
+
+    let targets = game.cast_targets(SpellId::Blink);
+    assert!(targets.contains(&SpellCast::Blink(sq("g1"), sq("e2"))), "blocking the file is legal");
+    assert!(!targets.contains(&SpellCast::Blink(sq("g1"), sq("f3"))), "leaving the king in check is illegal");
+    assert!(game.cast(SpellCast::Blink(sq("g1"), sq("f3"))).is_err());
+
+    game.cast(SpellCast::Blink(sq("g1"), sq("e2"))).unwrap();
+    assert!(!game.in_check(), "blocking blink removes the check");
+}
+
+#[test]
+fn insight_draws_two_cards_without_ending_turn() {
+    let mut game = game_with_fen("7k/8/8/8/8/8/8/7K w - - 0 1");
+    game.set_deck(
+        Side::White,
+        vec![SpellId::Shield, SpellId::Insight, SpellId::RaiseEarth, SpellId::LowerEarth, SpellId::Swap],
+    );
+    // Hand is [Shield, Insight, RaiseEarth], deck is [LowerEarth, Swap].
+    game.cast(SpellCast::Shield(sq("h1"))).expect("shield first to spend a slot");
+
+    assert_eq!(game.cast_targets(SpellId::Insight), vec![SpellCast::Insight]);
+    game.cast(SpellCast::Insight).expect("insight should succeed");
+    assert_eq!(game.pos.side_to_move, Side::White, "insight is quick");
+    // Two spent slots refilled from the deck, up to the 3-card hand limit.
+    assert_eq!(
+        game.hand(Side::White).hand,
+        [Some(SpellId::LowerEarth), Some(SpellId::Swap), Some(SpellId::RaiseEarth)]
+    );
+    assert_eq!(game.hand(Side::White).used, [false, false, false]);
+    assert_eq!(game.deck_len(Side::White), 0);
+}
+
+#[test]
+fn insight_needs_cards_in_deck() {
+    let mut game = game_with_fen("7k/8/8/8/8/8/8/7K w - - 0 1");
+    game.set_deck(Side::White, vec![SpellId::Insight]);
+    assert!(game.cast_targets(SpellId::Insight).is_empty());
+    assert!(game.cast(SpellCast::Insight).is_err());
 }
 
 #[test]

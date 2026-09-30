@@ -426,6 +426,12 @@ fn tap_board(
                 tc_core::SpellId::Freeze => state.cast(tc_core::SpellCast::Freeze(sq)),
                 tc_core::SpellId::Shield => state.cast(tc_core::SpellCast::Shield(sq)),
                 tc_core::SpellId::Bridge => state.cast(tc_core::SpellCast::Bridge(sq)),
+                tc_core::SpellId::Smite => state.cast(tc_core::SpellCast::Smite(sq)),
+                tc_core::SpellId::Evaporate => state.cast(tc_core::SpellCast::Evaporate(sq)),
+                tc_core::SpellId::Flood => state.cast(tc_core::SpellCast::Flood(sq)),
+                tc_core::SpellId::Featherfall => state.cast(tc_core::SpellCast::Featherfall(sq)),
+                tc_core::SpellId::Curse => state.cast(tc_core::SpellCast::Curse(sq)),
+                tc_core::SpellId::Sprout => state.cast(tc_core::SpellCast::Sprout(sq)),
                 tc_core::SpellId::DigTunnel => {
                     if let Some(first) = state.swap_first {
                         let (a, b) = if first < sq { (first, sq) } else { (sq, first) };
@@ -443,7 +449,16 @@ fn tap_board(
                         state.pieces_dirty = true;
                     }
                 }
+                tc_core::SpellId::Blink => {
+                    if let Some(first) = state.swap_first {
+                        state.cast(tc_core::SpellCast::Blink(first, sq));
+                    } else {
+                        state.swap_first = Some(sq);
+                        state.pieces_dirty = true;
+                    }
+                }
                 tc_core::SpellId::Rewind => state.cast(tc_core::SpellCast::Rewind),
+                tc_core::SpellId::Insight => state.cast(tc_core::SpellCast::Insight),
             }
         } else {
             state.disarm();
@@ -585,7 +600,7 @@ fn apply_actions(
                 state.discard();
             }
             Action::CheatSpells => {
-                const ALL_CASTABLE: [tc_core::SpellId; 8] = [
+                const ALL_CASTABLE: [tc_core::SpellId; 16] = [
                     tc_core::SpellId::RaiseEarth,
                     tc_core::SpellId::LowerEarth,
                     tc_core::SpellId::Freeze,
@@ -594,6 +609,14 @@ fn apply_actions(
                     tc_core::SpellId::Shield,
                     tc_core::SpellId::Swap,
                     tc_core::SpellId::Rewind,
+                    tc_core::SpellId::Smite,
+                    tc_core::SpellId::Evaporate,
+                    tc_core::SpellId::Flood,
+                    tc_core::SpellId::Featherfall,
+                    tc_core::SpellId::Curse,
+                    tc_core::SpellId::Sprout,
+                    tc_core::SpellId::Blink,
+                    tc_core::SpellId::Insight,
                 ];
                 let mut seed = time.elapsed().as_nanos() as u64 ^ state.seed;
                 let mut pick = || {

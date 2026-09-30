@@ -57,6 +57,14 @@ fn never_returns_an_illegal_cast() {
         SpellId::Shield,
         SpellId::Swap,
         SpellId::Rewind,
+        SpellId::Smite,
+        SpellId::Evaporate,
+        SpellId::Flood,
+        SpellId::Featherfall,
+        SpellId::Curse,
+        SpellId::Sprout,
+        SpellId::Blink,
+        SpellId::Insight,
     ];
 
     // Test across several board types and positions
@@ -84,6 +92,40 @@ fn never_returns_an_illegal_cast() {
                     assert!(clone.cast(cast).is_ok(), "cast {:?} must apply successfully", cast);
                     let _ = game.cast(cast);
                 }
+            }
+        }
+    }
+}
+
+#[test]
+fn returns_a_move_with_every_new_spell_in_hand() {
+    let new_spells = vec![
+        SpellId::Smite,
+        SpellId::Evaporate,
+        SpellId::Flood,
+        SpellId::Featherfall,
+        SpellId::Curse,
+        SpellId::Sprout,
+        SpellId::Blink,
+        SpellId::Insight,
+    ];
+
+    for seed in [7u64, 123] {
+        let (terrain, _) = generate(seed, &GenParams::for_floor(8, 3));
+        let mut game = Match::new(terrain, Rules::standard(8), Position::start(8));
+        game.set_deck(Side::White, new_spells.clone());
+        game.set_deck(Side::Black, new_spells.clone());
+
+        let action = choose_action(&game, Limits::depth(2, 500.0));
+        match action {
+            Action::Move(mv) => {
+                assert!(game.legal_moves().contains(&mv), "move {:?} must be legal", mv);
+            }
+            Action::Cast(cast) => {
+                let legal_targets = game.cast_targets(cast.spell_id());
+                assert!(legal_targets.contains(&cast), "cast {:?} must be legal", cast);
+                let mut clone = game.clone();
+                assert!(clone.cast(cast).is_ok(), "cast {:?} must apply successfully", cast);
             }
         }
     }
