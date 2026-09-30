@@ -771,6 +771,47 @@ fn discard_rules() {
 }
 
 #[test]
+fn discarding_last_card_draws_full_hand() {
+    let fen = "7k/8/8/8/8/8/8/7K w - - 0 1";
+    let mut game = game_with_fen(fen);
+
+    let deck = vec![
+        SpellId::RaiseEarth,
+        SpellId::LowerEarth,
+        SpellId::Shield,
+        SpellId::Swap,
+        SpellId::Freeze,
+        SpellId::Bridge,
+        SpellId::DigTunnel,
+        SpellId::Rewind,
+    ];
+    game.set_deck(Side::White, deck);
+
+    // 1. With 2 cards in hand, discarding one still refills only that slot (other slot unchanged).
+    game.hands[Side::White.index()].hand = [Some(SpellId::RaiseEarth), Some(SpellId::LowerEarth), None];
+    let deck_len_before = game.deck_len(Side::White);
+    game.discard(Side::White, 0).expect("discarding slot 0 should succeed");
+    assert_eq!(
+        game.hand(Side::White).hand,
+        [Some(SpellId::Swap), Some(SpellId::LowerEarth), None],
+        "only slot 0 refilled with next card from deck, slot 1 unchanged, slot 2 still None"
+    );
+    assert_eq!(game.deck_len(Side::White), deck_len_before - 1);
+
+    // 2. With only 1 card in hand (only slot 1 holds a card and slots 0 and 2 are None),
+    // discarding it draws a fresh hand of up to 3 cards.
+    game.hands[Side::White.index()].hand = [None, Some(SpellId::LowerEarth), None];
+    let deck_len_before = game.deck_len(Side::White);
+    game.discard(Side::White, 1).expect("discarding last card should succeed");
+
+    let hand = game.hand(Side::White);
+    assert!(hand.hand.iter().all(Option::is_some), "all 3 slots are Some");
+    assert_eq!(hand.hand, [Some(SpellId::Freeze), Some(SpellId::Bridge), Some(SpellId::DigTunnel)]);
+    assert_eq!(hand.used, [false; 3], "used == [false; 3]");
+    assert_eq!(game.deck_len(Side::White), deck_len_before - 3, "deck shrank by 3");
+}
+
+#[test]
 fn spell_hand_serde_default_discards_left() {
     let ron_str = "(deck: [], hand: (None, None, None), used: (false, false, false), discarded: [])";
     let hand: tc_core::SpellHand = ron::from_str(ron_str).expect("should deserialize old SpellHand");

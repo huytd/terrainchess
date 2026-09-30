@@ -226,9 +226,14 @@ impl Match {
         hand.discards_left -= 1;
         let card = hand.hand[slot].take().unwrap();
         hand.discarded.push(card);
-        let new_card = hand.deck.remove(0);
-        hand.hand[slot] = Some(new_card);
-        hand.used[slot] = false;
+        if hand.hand.iter().all(Option::is_none) {
+            // The last card left the hand: draw a fresh hand, as after casting the last card.
+            hand.draw();
+        } else {
+            let new_card = hand.deck.remove(0);
+            hand.hand[slot] = Some(new_card);
+            hand.used[slot] = false;
+        }
         Ok(())
     }
 

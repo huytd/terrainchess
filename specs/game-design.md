@@ -102,7 +102,7 @@ The board size can be set in the menu for a new run. Inside a run, the size can 
    - *Swap*: switch two of your own pieces
    - *Rewind* (rare): undo the last full move
 
-   Each side plays with a 15-card spell deck and a hand of up to 3 cards. Casting a spell removes that card from the hand; once the hand is empty, it draws up to 3 cards from the deck. A player may also discard a chosen card without spending a turn (up to 5 times per match) as long as the deck is not empty, immediately drawing a replacement card into that same slot. Before each stage the player picks which 15 of their owned spell cards make the deck (basic filler cards pad it when they own fewer than 15) by swapping cards between the deck and a reserve. The deck is always shuffled at the start of a match; the player can't set the draw order.
+   Each side plays with a 15-card spell deck and a hand of up to 3 cards. Casting a spell removes that card from the hand; once the hand is empty, it draws up to 3 cards from the deck. A player may also discard a chosen card without spending a turn (up to 5 times per match) as long as the deck is not empty, immediately drawing a replacement card into that same slot (discarding the last card in hand draws a fresh hand of up to 3). Before each stage the player picks which 15 of their owned spell cards make the deck (basic filler cards pad it when they own fewer than 15) by swapping cards between the deck and a reserve. The deck is always shuffled at the start of a match; the player can't set the draw order.
 
 ### In-match pickups
 
