@@ -91,7 +91,11 @@ impl Position {
         // 7×7: Centred 7-piece layout
         const MINI_7: [PieceKind; 7] = [Rook, Knight, Bishop, Queen, King, Bishop, Knight];
 
+        // 4×4: a tiny layout for the first tutorial-sized boards.
+        const MINI_4: [PieceKind; 4] = [Rook, Queen, King, Knight];
+
         let (back, x0): (&[PieceKind], u8) = match size {
+            4 => (&MINI_4, 0),
             5 => (&MINI_5, 0),
             6 => (&MINI_6, 0),
             7 => (&MINI_7, 0),

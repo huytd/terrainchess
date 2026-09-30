@@ -24,7 +24,7 @@ impl Profile {
     /// Everything needed to play `level`: builds a temporary RunState { seed: match_seed, size: level.size,
     /// floor: level.difficulty, owned: self.owned.clone(), .. } and calls its match_setup() (so relics,
     /// enhancements, spells, enemy items, AI level and pickups all work as before), then sets
-    /// `armies = level.army.map(|a| [a.to_vec(), a.to_vec()])`.
+    /// `armies` from the level (the enemy's own army if it has one).
     pub fn match_setup(&self, level: &Level, match_seed: u64) -> MatchSetup {
         let temp_run = RunState {
             seed: match_seed,
@@ -37,7 +37,7 @@ impl Profile {
             last_draft: None,
         };
         let mut setup = temp_run.match_setup();
-        setup.armies = level.army.map(|a| [a.to_vec(), a.to_vec()]);
+        setup.armies = level.army.map(|a| [a.to_vec(), level.enemy_army.unwrap_or(a).to_vec()]);
         if setup.armies.is_some() {
             let (terrain, actual_seed) = setup.terrain();
             let pos = setup.position(level.size).unwrap_or_else(|_| Position::start(level.size));

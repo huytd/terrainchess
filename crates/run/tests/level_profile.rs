@@ -49,7 +49,13 @@ fn test_levels_setup_position_and_ai() {
                 let white_count = pos.pieces().filter(|(_, p)| p.side == Side::White).count();
                 let black_count = pos.pieces().filter(|(_, p)| p.side == Side::Black).count();
                 assert_eq!(white_count, army.len(), "Level {} seed {} white pieces count", lvl.id, seed);
-                assert_eq!(black_count, army.len(), "Level {} seed {} black pieces count", lvl.id, seed);
+                assert_eq!(
+                    black_count,
+                    lvl.enemy_army.unwrap_or(army).len(),
+                    "Level {} seed {} black pieces count",
+                    lvl.id,
+                    seed
+                );
             } else if lvl.size == 8 {
                 let white_count = pos.pieces().filter(|(_, p)| p.side == Side::White).count();
                 assert_eq!(white_count, 16);
