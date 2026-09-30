@@ -15,6 +15,14 @@ pub enum SpellId {
     Shield,
     Swap,
     Rewind,
+    Smite,
+    Evaporate,
+    Flood,
+    Featherfall,
+    Curse,
+    Sprout,
+    Blink,
+    Insight,
 }
 
 impl SpellId {
@@ -25,7 +33,7 @@ impl SpellId {
 
     /// Quick spells do not end the caster's turn.
     pub fn is_quick(&self) -> bool {
-        matches!(self, SpellId::Shield)
+        matches!(self, SpellId::Shield | SpellId::Featherfall | SpellId::Insight)
     }
 }
 
@@ -40,6 +48,14 @@ pub enum SpellCast {
     Shield(Sq),
     Swap(Sq, Sq),
     Rewind,
+    Smite(Sq),
+    Evaporate(Sq),
+    Flood(Sq),
+    Featherfall(Sq),
+    Curse(Sq),
+    Sprout(Sq),
+    Blink(Sq, Sq),
+    Insight,
 }
 
 impl SpellCast {
@@ -53,12 +69,23 @@ impl SpellCast {
             SpellCast::Shield(_) => SpellId::Shield,
             SpellCast::Swap(_, _) => SpellId::Swap,
             SpellCast::Rewind => SpellId::Rewind,
+            SpellCast::Smite(_) => SpellId::Smite,
+            SpellCast::Evaporate(_) => SpellId::Evaporate,
+            SpellCast::Flood(_) => SpellId::Flood,
+            SpellCast::Featherfall(_) => SpellId::Featherfall,
+            SpellCast::Curse(_) => SpellId::Curse,
+            SpellCast::Sprout(_) => SpellId::Sprout,
+            SpellCast::Blink(_, _) => SpellId::Blink,
+            SpellCast::Insight => SpellId::Insight,
         }
     }
 
     /// Whether this cast is a quick spell that does not end the turn.
     pub fn is_quick(&self) -> bool {
-        matches!(self, SpellCast::Shield(_) | SpellCast::Rewind)
+        matches!(
+            self,
+            SpellCast::Shield(_) | SpellCast::Rewind | SpellCast::Featherfall(_) | SpellCast::Insight
+        )
     }
 }
 

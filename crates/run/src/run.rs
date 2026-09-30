@@ -270,7 +270,7 @@ impl RunState {
             player_deck.swap(i, j);
         }
 
-        const ALL_CASTABLE: [SpellId; 8] = [
+        const ALL_CASTABLE: [SpellId; 16] = [
             SpellId::RaiseEarth,
             SpellId::LowerEarth,
             SpellId::Freeze,
@@ -279,6 +279,14 @@ impl RunState {
             SpellId::Shield,
             SpellId::Swap,
             SpellId::Rewind,
+            SpellId::Smite,
+            SpellId::Evaporate,
+            SpellId::Flood,
+            SpellId::Featherfall,
+            SpellId::Curse,
+            SpellId::Sprout,
+            SpellId::Blink,
+            SpellId::Insight,
         ];
         let mut enemy_deck_rng = Rng::new(seed ^ 0x454E_454D_595F_4445);
         let mut enemy_deck = Vec::with_capacity(15);

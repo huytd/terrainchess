@@ -87,4 +87,93 @@
             quick: false,
         ),
     ),
+    (
+        id: "smite",
+        name: "Smite",
+        description: "Destroy the Rock or Tree obstacle on a target square.",
+        rarity: Common,
+        kind: Spell(
+            spell: Smite,
+            charges: 2,
+            quick: false,
+        ),
+    ),
+    (
+        id: "evaporate",
+        name: "Evaporate",
+        description: "Turn an empty Shallow Water or Ice tile into Sand.",
+        rarity: Common,
+        kind: Spell(
+            spell: Evaporate,
+            charges: 2,
+            quick: false,
+        ),
+    ),
+    (
+        id: "flood",
+        name: "Flood",
+        description: "Turn an empty Grass or Sand tile into Shallow Water.",
+        rarity: Uncommon,
+        kind: Spell(
+            spell: Flood,
+            charges: 2,
+            quick: false,
+        ),
+    ),
+    (
+        id: "featherfall",
+        name: "Featherfall",
+        description: "One of your pieces ignores climb and drop limits on its next move.",
+        rarity: Uncommon,
+        kind: Spell(
+            spell: Featherfall,
+            charges: 2,
+            quick: true,
+        ),
+    ),
+    (
+        id: "curse",
+        name: "Curse",
+        description: "An enemy non-King piece cannot move for its side's next 2 turns.",
+        rarity: Rare,
+        kind: Spell(
+            spell: Curse,
+            charges: 2,
+            quick: false,
+        ),
+    ),
+    (
+        id: "sprout",
+        name: "Sprout",
+        description: "Plant a Tree obstacle on an empty Grass tile outside home rows.",
+        rarity: Common,
+        kind: Spell(
+            spell: Sprout,
+            charges: 2,
+            quick: false,
+        ),
+    ),
+    (
+        id: "blink",
+        name: "Blink",
+        description: "Teleport one of your non-King pieces up to 2 squares away.",
+        rarity: Rare,
+        kind: Spell(
+            spell: Blink,
+            charges: 2,
+            quick: false,
+        ),
+    ),
+    (
+        id: "insight",
+        name: "Insight",
+        description: "Draw 2 cards from your deck.",
+        rarity: Uncommon,
+        kind: Spell(
+            spell: Insight,
+            charges: 2,
+            quick: true,
+        ),
+    ),
 ]
+

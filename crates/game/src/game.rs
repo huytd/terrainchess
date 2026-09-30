@@ -129,8 +129,11 @@ impl GameState {
             && !hand.used[slot_idx]
             && let Some(spell) = hand.hand[slot_idx]
         {
-            if spell == SpellId::Rewind {
-                self.cast(SpellCast::Rewind);
+            if spell == SpellId::Rewind || spell == SpellId::Insight {
+                self.cast(match spell {
+                    SpellId::Rewind => SpellCast::Rewind,
+                    _ => SpellCast::Insight,
+                });
                 return;
             }
             self.armed_slot = Some(slot_idx);
@@ -145,6 +148,10 @@ impl GameState {
     pub fn arm_spell(&mut self, spell: SpellId) {
         if spell == SpellId::Rewind {
             self.cast(SpellCast::Rewind);
+            return;
+        }
+        if spell == SpellId::Insight {
+            self.cast(SpellCast::Insight);
             return;
         }
         let side = self.game.pos.side_to_move;
@@ -211,6 +218,48 @@ impl GameState {
                     _ => None,
                 })
                 .collect(),
+            SpellId::Smite => targets
+                .into_iter()
+                .filter_map(|c| match c {
+                    SpellCast::Smite(sq) => Some(sq),
+                    _ => None,
+                })
+                .collect(),
+            SpellId::Evaporate => targets
+                .into_iter()
+                .filter_map(|c| match c {
+                    SpellCast::Evaporate(sq) => Some(sq),
+                    _ => None,
+                })
+                .collect(),
+            SpellId::Flood => targets
+                .into_iter()
+                .filter_map(|c| match c {
+                    SpellCast::Flood(sq) => Some(sq),
+                    _ => None,
+                })
+                .collect(),
+            SpellId::Featherfall => targets
+                .into_iter()
+                .filter_map(|c| match c {
+                    SpellCast::Featherfall(sq) => Some(sq),
+                    _ => None,
+                })
+                .collect(),
+            SpellId::Curse => targets
+                .into_iter()
+                .filter_map(|c| match c {
+                    SpellCast::Curse(sq) => Some(sq),
+                    _ => None,
+                })
+                .collect(),
+            SpellId::Sprout => targets
+                .into_iter()
+                .filter_map(|c| match c {
+                    SpellCast::Sprout(sq) => Some(sq),
+                    _ => None,
+                })
+                .collect(),
             SpellId::Bridge => targets
                 .into_iter()
                 .filter_map(|c| match c {
@@ -250,25 +299,53 @@ impl GameState {
                 if let Some(first) = self.swap_first {
                     let mut seconds = Vec::new();
                     for c in targets {
-                        if let SpellCast::Swap(a, b) = c {
-                            if a == first && !seconds.contains(&b) {
-                                seconds.push(b);
-                            } else if b == first && !seconds.contains(&a) {
-                                seconds.push(a);
-                            }
+                        let (a, b) = match c {
+                            SpellCast::Swap(a, b) => (a, b),
+                            _ => continue,
+                        };
+                        if a == first && !seconds.contains(&b) {
+                            seconds.push(b);
+                        } else if b == first && !seconds.contains(&a) {
+                            seconds.push(a);
                         }
                     }
                     seconds
                 } else {
                     let mut firsts = Vec::new();
                     for c in targets {
-                        if let SpellCast::Swap(a, b) = c {
-                            if !firsts.contains(&a) {
-                                firsts.push(a);
-                            }
-                            if !firsts.contains(&b) {
-                                firsts.push(b);
-                            }
+                        let (a, b) = match c {
+                            SpellCast::Swap(a, b) => (a, b),
+                            _ => continue,
+                        };
+                        if !firsts.contains(&a) {
+                            firsts.push(a);
+                        }
+                        if !firsts.contains(&b) {
+                            firsts.push(b);
+                        }
+                    }
+                    firsts
+                }
+            }
+            SpellId::Blink => {
+                if let Some(first) = self.swap_first {
+                    let mut seconds = Vec::new();
+                    for c in targets {
+                        if let SpellCast::Blink(a, b) = c
+                            && a == first
+                            && !seconds.contains(&b)
+                        {
+                            seconds.push(b);
+                        }
+                    }
+                    seconds
+                } else {
+                    let mut firsts = Vec::new();
+                    for c in targets {
+                        if let SpellCast::Blink(a, _) = c
+                            && !firsts.contains(&a)
+                        {
+                            firsts.push(a);
                         }
                     }
                     firsts
@@ -290,8 +367,14 @@ impl GameState {
             SpellCast::RaiseEarth(sq)
             | SpellCast::LowerEarth(sq)
             | SpellCast::Shield(sq)
-            | SpellCast::Bridge(sq) => vec![sq],
-            SpellCast::Swap(a, b) | SpellCast::DigTunnel(a, b) => vec![a, b],
+            | SpellCast::Bridge(sq)
+            | SpellCast::Smite(sq)
+            | SpellCast::Evaporate(sq)
+            | SpellCast::Flood(sq)
+            | SpellCast::Featherfall(sq)
+            | SpellCast::Curse(sq)
+            | SpellCast::Sprout(sq) => vec![sq],
+            SpellCast::Swap(a, b) | SpellCast::DigTunnel(a, b) | SpellCast::Blink(a, b) => vec![a, b],
             SpellCast::Freeze(sq) => {
                 let size = before.terrain.size;
                 let mut frozen = Vec::new();
@@ -306,7 +389,7 @@ impl GameState {
                 }
                 frozen
             }
-            SpellCast::Rewind => Vec::new(),
+            SpellCast::Rewind | SpellCast::Insight => Vec::new(),
         };
 
         if self.game.cast(cast).is_ok() {

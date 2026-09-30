@@ -1128,6 +1128,12 @@ fn spawn_overlays(
     if let Some((sq, _)) = state.game.pos.shield {
         paint.mark(sq, "ov_ring", 0.7, Color::srgb_u8(0xFF, 0xD3, 0x5A));
     }
+    if let Some(f) = state.game.pos.featherfall {
+        paint.mark(f.sq, "ov_ring", 0.7, Color::srgb_u8(0x7D, 0xE8, 0x8B));
+    }
+    for curse in &state.game.pos.curses {
+        paint.mark(curse.sq, "ov_ring", 0.7, Color::srgb_u8(0xB0, 0x3A, 0x5A));
+    }
     let mut victims = HashSet::new();
     let mut attackers = HashSet::new();
     if red_threats {
@@ -1160,7 +1166,7 @@ fn spawn_overlays(
         }
     }
     if let Some(spell) = state.armed_spell {
-        if matches!(spell, tc_core::SpellId::Swap | tc_core::SpellId::DigTunnel)
+        if matches!(spell, tc_core::SpellId::Swap | tc_core::SpellId::DigTunnel | tc_core::SpellId::Blink)
             && let Some(first) = state.swap_first
         {
             paint.mark(first, "ov_select", 0.95, Color::WHITE);

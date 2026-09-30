@@ -57,6 +57,14 @@ fn spell_item_id(spell: tc_core::SpellId) -> &'static str {
         tc_core::SpellId::Shield => "shield",
         tc_core::SpellId::Swap => "swap",
         tc_core::SpellId::Rewind => "rewind",
+        tc_core::SpellId::Smite => "smite",
+        tc_core::SpellId::Evaporate => "evaporate",
+        tc_core::SpellId::Flood => "flood",
+        tc_core::SpellId::Featherfall => "featherfall",
+        tc_core::SpellId::Curse => "curse",
+        tc_core::SpellId::Sprout => "sprout",
+        tc_core::SpellId::Blink => "blink",
+        tc_core::SpellId::Insight => "insight",
     }
 }
 
@@ -70,6 +78,14 @@ fn spell_name(spell: tc_core::SpellId) -> &'static str {
         tc_core::SpellId::Bridge => "Bridge",
         tc_core::SpellId::DigTunnel => "Dig Tunnel",
         tc_core::SpellId::Rewind => "Rewind",
+        tc_core::SpellId::Smite => "Smite",
+        tc_core::SpellId::Evaporate => "Evaporate",
+        tc_core::SpellId::Flood => "Flood",
+        tc_core::SpellId::Featherfall => "Featherfall",
+        tc_core::SpellId::Curse => "Curse",
+        tc_core::SpellId::Sprout => "Sprout",
+        tc_core::SpellId::Blink => "Blink",
+        tc_core::SpellId::Insight => "Insight",
     }
 }
 
