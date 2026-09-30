@@ -63,6 +63,13 @@ struct RunOverOverlay;
 #[derive(Component)]
 struct NewRunButton;
 
+/// The big "YOU WIN!" / "CHECKMATED" / "STALEMATE" title: pops in at the centre, then
+/// shrinks up toward the top so the board can be reviewed.
+#[derive(Component, Default)]
+struct EndTitle {
+    t: f32,
+}
+
 #[derive(Component)]
 struct MenuOpenButton;
 
@@ -383,6 +390,36 @@ fn sync_overlays(
             };
             let edge = if narrow { 8.0 } else { 16.0 };
 
+            let (big, big_color) = match game_state.outcome {
+                Some(Outcome::Checkmate { winner: Side::White }) => ("YOU WIN!", GOLD),
+                Some(Outcome::Checkmate { .. }) => ("CHECKMATED", RED),
+                Some(Outcome::Draw(DrawReason::Stalemate)) => ("STALEMATE", TEXT),
+                _ if *won => ("YOU WIN!", GOLD),
+                _ if is_draw => ("DRAW", TEXT),
+                _ => ("DEFEAT", RED),
+            };
+            commands
+                .spawn((
+                    RunOverOverlay,
+                    GlobalZIndex(90),
+                    Node {
+                        position_type: PositionType::Absolute,
+                        left: Val::Px(0.0),
+                        right: Val::Px(0.0),
+                        top: Val::Px(0.0),
+                        bottom: Val::Px(0.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    Pickable::IGNORE,
+                ))
+                .with_child((
+                    label_nowrap(big, if narrow { 63.0 } else { 108.0 }, big_color),
+                    EndTitle::default(),
+                    UiTransform { scale: Vec2::ZERO, ..default() },
+                ));
+
             commands
                 .spawn((
                     RunOverOverlay,
@@ -424,7 +461,7 @@ fn sync_overlays(
                                     ..default()
                                 },
                             ),
-                            PopIn::new(0.6, 0.25),
+                            PopIn::new(2.4, 0.3),
                         ))
                         .with_children(|panel| {
                             panel
@@ -474,6 +511,26 @@ fn sync_overlays(
                         });
                 });
         }
+    }
+}
+
+/// Timeline: hidden while the last move lands, pops in, holds, then shrinks up and out of the
+/// board's way.
+fn animate_end_title(
+    time: Res<Time>,
+    window: Query<&Window, With<PrimaryWindow>>,
+    mut q: Query<(&mut EndTitle, &mut UiTransform)>,
+) {
+    let win_h = window.iter().next().map_or(800.0, |w| w.height());
+    for (mut title, mut tf) in &mut q {
+        title.t += time.delta_secs();
+        let t = title.t;
+        let pop = ((t - 0.8) / 0.45).clamp(0.0, 1.0);
+        let settle = ((t - 3.2) / 0.9).clamp(0.0, 1.0);
+        let settle = settle * settle * (3.0 - 2.0 * settle);
+        let scale = if pop <= 0.0 { 0.0 } else { crate::ui_fx::ease_out_back(pop) } * (1.0 - 0.45 * settle);
+        tf.scale = Vec2::splat(scale);
+        tf.translation = Val2::px(0.0, -win_h * 0.33 * settle);
     }
 }
 
@@ -1606,6 +1663,7 @@ impl Plugin for HudPlugin {
             (
                 update_floor_badge,
                 sync_overlays,
+                animate_end_title,
                 sync_title_menu,
                 update_draft_card_sizes,
                 handle_card_interaction,

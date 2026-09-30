@@ -110,6 +110,11 @@ struct Orbit {
     distance: f32,
     /// Window height in logical px, for converting drags to world distances.
     view_h: f32,
+    /// Screen px the board is nudged up to clear the bottom HUD. Applied at view time so the
+    /// camera circles the board centre (a baked-in pan would wobble while auto-rotating).
+    shift: f32,
+    /// A re-fit being eased toward: (distance, shift). Cleared by manual zoom.
+    goal: Option<(f32, f32)>,
 }
 
 impl Default for Orbit {
@@ -121,6 +126,8 @@ impl Default for Orbit {
             pitch: 30.0 * PI / 180.0,
             distance: 20.0,
             view_h: 800.0,
+            shift: 0.0,
+            goal: None,
         }
     }
 }
@@ -147,8 +154,15 @@ impl Orbit {
         self.focus += forward * delta.y / (k * self.pitch.sin());
     }
 
+    /// `focus` moved so the board sits `shift` px higher on screen.
+    fn view_focus(&self) -> Vec3 {
+        let (_, forward) = self.ground_axes();
+        self.focus + forward * self.shift / (self.px_per_unit() * self.pitch.sin())
+    }
+
     /// Zoom in by `factor` (above 1) or out (below 1).
     fn zoom_by(&mut self, factor: f32) {
+        self.goal = None;
         self.distance = (self.distance / factor).clamp(MIN_DISTANCE, MAX_DISTANCE);
     }
 
@@ -193,6 +207,8 @@ fn fit_camera(
     if fit.0 == Some(key) || win.x < 1.0 {
         return;
     }
+    // Only the result strip came or went: ease into the new framing instead of jumping.
+    let ease = fit.0.is_some_and(|(w, seed, size, _)| (w, seed, size) == (win, state.seed, state.size));
     fit.0 = Some(key);
     // Size the board for its widest view (a diagonal), with room for tall pieces.
     // The result strip sits where the hand bar was, but it's taller.
@@ -209,34 +225,61 @@ fn fit_camera(
         (win.x / (span + 1.0)).min((win.y - HUD_TOP - bottom) / (span * orbit.pitch.sin() + 3.0));
     // The near side of the board looks bigger in perspective; leave it some room.
     orbit.view_h = win.y;
-    orbit.distance =
-        (1.1 * win.y / (2.0 * px_per_unit * (FOV / 2.0).tan())).clamp(MIN_DISTANCE, MAX_DISTANCE);
-    orbit.focus = board_center(state.size);
+    let distance = (1.1 * win.y / (2.0 * px_per_unit * (FOV / 2.0).tan())).clamp(MIN_DISTANCE, MAX_DISTANCE);
     // Centre the board in the space between the HUD bars.
-    orbit.pan(Vec2::new(0.0, (bottom - HUD_TOP) / 2.0));
+    let shift = (bottom - HUD_TOP) / 2.0;
+    if ease {
+        orbit.goal = Some((distance, shift));
+    } else {
+        orbit.distance = distance;
+        orbit.shift = shift;
+        orbit.goal = None;
+        orbit.focus = board_center(state.size);
+    }
 }
 
 fn apply_orbit(
     time: Res<Time>,
     window: Single<&Window, With<PrimaryWindow>>,
     title_menu: Res<TitleMenu>,
+    run: Res<Run>,
+    mut result_t: Local<f32>,
     mut orbit: ResMut<Orbit>,
     mut camera: Single<&mut Transform, With<MainCamera>>,
 ) {
-    if title_menu.open {
-        let rot_speed = 4.0 * std::f32::consts::PI / 180.0;
-        orbit.target_yaw += rot_speed * time.delta_secs();
+    let dt = time.delta_secs();
+    let deg = std::f32::consts::PI / 180.0;
+    if matches!(run.phase, RunPhase::Result { .. }) {
+        // After a match: hold still a moment, then slowly circle the final position.
+        *result_t += dt;
+        let ramp = ((*result_t - 1.5) / 2.0).clamp(0.0, 1.0);
+        orbit.target_yaw += 6.0 * deg * ramp * ramp * dt;
+    } else {
+        *result_t = 0.0;
+        if title_menu.open {
+            orbit.target_yaw += 4.0 * deg * dt;
+        }
+    }
+    if let Some((distance, shift)) = orbit.goal {
+        let k = (dt * 1.5).min(1.0);
+        orbit.distance += (distance - orbit.distance) * k;
+        orbit.shift += (shift - orbit.shift) * k;
+        if (distance - orbit.distance).abs() < 0.01 && (shift - orbit.shift).abs() < 0.5 {
+            orbit.goal = None;
+        }
     }
     orbit.view_h = window.height().max(1.0);
-    let ease = (time.delta_secs() * 12.0).min(1.0);
+    let ease = (dt * 12.0).min(1.0);
     orbit.yaw += (orbit.target_yaw - orbit.yaw) * ease;
     let dir = Vec3::new(
         orbit.yaw.sin() * orbit.pitch.cos(),
         orbit.pitch.sin(),
         orbit.yaw.cos() * orbit.pitch.cos(),
     );
-    **camera =
-        Transform::from_translation(orbit.focus + dir * orbit.distance).looking_at(orbit.focus, Vec3::Y);
+    **camera = {
+        let focus = orbit.view_focus();
+        Transform::from_translation(focus + dir * orbit.distance).looking_at(focus, Vec3::Y)
+    };
 }
 
 #[allow(clippy::too_many_arguments)]

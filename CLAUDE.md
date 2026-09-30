@@ -42,7 +42,7 @@ Vercel, `.github/workflows/deploy.yml`). Specs in `specs/` (game-design.md is th
 - `hud.rs` — all UI: stage badge, main menu (`spawn_main_menu`: Start run / Continue / New run /
   Resume / Abandon run, two-tap confirm), Prepare screen (`spawn_prepare`:
   5×3 deck grid, reserve chips, Back/Reset/Start), hand bar (tooltip above the hovered/armed card; blocked cards dimmed with a
-  red !), draft overlay, result strip at the bottom (no scrim; the camera stays free and `fit_camera` reserves room for it), toasts. Big file; grep for the `fn sync_*` you need.
+  red !), draft overlay, end of match (big `EndTitle` "YOU WIN!"/"CHECKMATED"/"STALEMATE" pops in, then shrinks to the top; result strip at the bottom fades in at 2.4 s; no scrim), toasts. `input.rs` eases the camera re-fit (`Orbit.goal`, `shift`) and slowly orbits the board during the result. Big file; grep for the `fn sync_*` you need.
 - `announce.rs` — enemy spell banner + "Enemy: <spell>" pill. AI casts are stashed in
   `GameState.announce` (events + dirty flags) and released by `finish_announce()` when the
   banner closes.
