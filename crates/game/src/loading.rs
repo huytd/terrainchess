@@ -25,7 +25,7 @@ impl Plugin for LoadingPlugin {
 }
 
 fn notify_loading_start() {
-    call_js_status("Loading art…");
+    call_js_status("Loading art...");
 }
 
 fn check_assets(

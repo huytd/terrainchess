@@ -17,16 +17,15 @@ mod run;
 mod save;
 mod scenery;
 mod sfx;
+mod theme;
+mod ui_fx;
 
 use bevy::asset::{AssetId, AssetMetaCheck};
 use bevy::prelude::*;
 use bevy::text::Font;
 
-const JACQUARD_FONT: &[u8] = include_bytes!("../../../assets/fonts/Jacquard24-Regular.ttf");
-const HANDJET_FONT: &[u8] = include_bytes!("../../../assets/fonts/Handjet-Medium.ttf");
-
-#[derive(Resource, Clone, Deref)]
-pub struct TitleFont(pub Handle<Font>);
+/// m6x11plus by Daniel Linssen, the only UI font; crisp at multiples of 9 px (see `theme`).
+const M6X11_FONT: &[u8] = include_bytes!("../../../assets/fonts/m6x11plus.ttf");
 
 fn main() {
     let mut app = App::new();
@@ -60,17 +59,15 @@ fn main() {
         fx::FxPlugin,
         sfx::SfxPlugin,
         announce::AnnouncePlugin,
+        ui_fx::UiFxPlugin,
         particles::ParticlesPlugin,
     ));
 
-    let handjet = Font::from_bytes(HANDJET_FONT.to_vec());
-    let jacquard = Font::from_bytes(JACQUARD_FONT.to_vec());
-    let title_font = {
-        let mut fonts = app.world_mut().resource_mut::<Assets<Font>>();
-        fonts.insert(AssetId::default(), handjet).expect("insert default font");
-        fonts.add(jacquard)
-    };
-    app.insert_resource(TitleFont(title_font));
+    let m6x11 = Font::from_bytes(M6X11_FONT.to_vec());
+    app.world_mut()
+        .resource_mut::<Assets<Font>>()
+        .insert(AssetId::default(), m6x11)
+        .expect("insert default font");
 
     app.run();
 }

@@ -16,8 +16,17 @@ Vercel, `.github/workflows/deploy.yml`). Specs in `specs/` (game-design.md is th
 
 ### Game crate (`crates/game/src`)
 
-- `main.rs` — plugins; fonts: Handjet is the default font, Jacquard 24 is `TitleFont` (use
-  `FontSource::Handle(title_font.0.clone())` for big titles only).
+- `main.rs` — plugins; font: m6x11plus is the only (default) font. It sits on an 18 px em, so
+  use sizes in multiples of 9 (`theme::XS/S/M/L/XL` = 18/27/36/54/72). It has ASCII, Latin-1 and
+  `×`, but no `·` `—` `–` `…`; `crates/run/tests/ui_strings.rs` checks rules/item strings.
+- `theme.rs` — Balatro-style UI kit, all drawn in code: palette, `label`/`label_nowrap`/`ink`,
+  `panel(PanelKind)`, `scrim`, `title_bar`, `number_chip`, `tag_chip`, `button(tone, w, h)` +
+  `update_button_visuals` (`Tone`, `ButtonDisabled`), `card_root` + `spawn_card_face`,
+  `spell_accent`/`rarity_color`. Bundles must not repeat components (Bevy panics at spawn):
+  add extra components with `.insert(...)`.
+- `ui_fx.rs` — `CardMotion` (sway, hover lift/scale, cursor tilt, `extra` offset) is the only
+  writer of a card's `UiTransform`; interaction handlers set `motion.active`. `PopIn` scales
+  panels/cards in.
 - `game.rs` — `GameState` resource: the `Match`, selection, armed spell, `undo`, `events:
   Vec<GameEvent>`, dirty flags (`terrain_dirty`, `pieces_dirty`), `toast: Option<String>`
   (HUD shows and clears it), `announce` (held-back AI cast), `last_enemy_spell`,
@@ -30,8 +39,8 @@ Vercel, `.github/workflows/deploy.yml`). Specs in `specs/` (game-design.md is th
 - `input.rs` — camera orbit/zoom, click/tap → `tap_board`, hotkeys → `Action` messages →
   `apply_actions`.
 - `hud.rs` — all UI: level badge, title menu/level select, Prepare screen (`spawn_prepare`:
-  5×3 deck grid, reserve chips, Back/Shuffle/Reset/Start), hand bar (blocked cards dimmed with a
-  red ✕), draft + result overlays, toasts. Big file; grep for the `fn sync_*` you need.
+  5×3 deck grid, reserve chips, Back/Shuffle/Reset/Start), hand bar (tooltip above the hovered/armed card; blocked cards dimmed with a
+  red !), draft + result overlays, toasts. Big file; grep for the `fn sync_*` you need.
 - `announce.rs` — enemy spell banner + "Enemy: <spell>" pill. AI casts are stashed in
   `GameState.announce` (events + dirty flags) and released by `finish_announce()` when the
   banner closes.
@@ -55,7 +64,9 @@ Vercel, `.github/workflows/deploy.yml`). Specs in `specs/` (game-design.md is th
   install numpy pillow`). Output is deterministic; re-running unchanged gives identical files.
 - `tools/gen_terrain_art.py` draws procedural pixel art (`wall_rock`, `grass_lip`) that
   process_sprites.py packs in. Add new generated sprites there.
-- Card art is `art_<spell_item_id>` (see `hud::spell_item_id`); icons `icon_*`, fx `fx_*`.
+- Card art is `art_<spell_item_id>` (see `theme::spell_item_id`); icons `icon_*`, fx `fx_*`.
+  UI frames are drawn in code; the `gui_*`, `btn_*`, `panel_*`, `banner`, `badge_*` and
+  `deck_pile` atlas sprites are no longer used.
 
 ## Checks (run all before pushing)
 
@@ -78,12 +89,12 @@ with a pattern matching your own shell). Scripts use `playwright-core` with
 --enable-unsafe-swiftshader`, URL `http://localhost:8765/?dev`, wait ~13 s for load (phone
 viewport 390×844: ~30 s). Count console messages matching `/ERROR|panic/`.
 
-- Level select at 1280×800: left column x=515, right x=765, rows y=331/391/451/511/571
-  (levels 1–5 left, 6–10 right). Phone: left column x≈110, rows from y≈336, step ≈66.
+- Level select at 1280×800: left column x=503, right x=775, rows y=331/405/479/553/627
+  (levels 1–5 left, 6–10 right). Phone: left column x≈105, rows y≈358, step 66.
 - A level button opens its Prepare (deck) screen; Enter starts. 1280×800 with no reserve:
-  Start (868, 644), deck tiles x=400/520/640/760/880, rows y=310/405/500. With a full reserve the
-  panel is taller: Start (868, 719), tile rows y=235/330/425, reserve chips from y=589.
-- Gear/menu button (1246, 33). Mouse wheel zooms the camera.
+  deck tiles x=400/520/640/760/880. With a full reserve: tile rows y=215/320/425, reserve chips
+  from y=589, Start (882, 720).
+- Gear/menu button (1242, 38). Mouse wheel zooms the camera.
 - Swiftshader is slow (~0.5 s per screenshot); use F4 slow motion to catch short effects.
 
 Dev keys (only with `?dev`): **F4** slow motion 0.2×, **F6** AI casts the next spell in

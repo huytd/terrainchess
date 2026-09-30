@@ -36,7 +36,7 @@ impl CastBlock {
         match self {
             CastBlock::GameOver => "The game is over",
             CastBlock::CardUsed => "That card is already used",
-            CastBlock::InCheck => "Your king is in check — this spell can't save it",
+            CastBlock::InCheck => "Your king is in check. This spell can't save it.",
             CastBlock::ExposesKing => "Any cast would leave your king in check",
             CastBlock::TooEarly => "Rewind needs two turns of history",
             CastBlock::NoTargets(spell) => spell.no_target_hint(),

@@ -62,5 +62,5 @@ The region table at the top of the script maps sheet cells to sprite names.
 
 ## Credits
 
-- UI font: **Jacquard 24** by The Soft Type Project (Sarah Cadigan-Fried), licensed under the SIL Open Font License, Version 1.1 (`assets/fonts/OFL.txt`).
+- UI font: **m6x11plus** by Daniel Linssen (https://managore.itch.io/m6x11), free to use with attribution (`assets/fonts/m6x11-LICENSE.txt`).
 
