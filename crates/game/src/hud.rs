@@ -4,11 +4,11 @@ use bevy::window::PrimaryWindow;
 use tc_core::Side;
 use tc_run::ItemKind;
 
+use crate::TitleFont;
 use crate::atlas::Atlas;
 use crate::game::GameState;
 use crate::loading::AppState;
 use crate::run::{PickCard, Run, RunPhase, StartLevel, TitleMenu};
-use crate::TitleFont;
 
 /// Ink colour on light wood.
 pub const INK_WOOD: Color = Color::srgb_u8(0xF7, 0xED, 0xD0);
@@ -343,6 +343,7 @@ fn update_floor_badge(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_overlays(
     mut commands: Commands,
     run: Res<Run>,
@@ -377,7 +378,13 @@ fn sync_overlays(
                 win_w * 0.30 * 4.0 / 3.0
             };
             let (card_size, _) = integer_scaled_size(&atlas, "gui_card_common", target_h);
-            let card_font_scale = if win_w < 500.0 { 0.75 } else if win_w < 800.0 { 0.88 } else { 1.0 };
+            let card_font_scale: f32 = if win_w < 500.0 {
+                0.75
+            } else if win_w < 800.0 {
+                0.88
+            } else {
+                1.0
+            };
 
             commands
                 .spawn((
@@ -419,7 +426,7 @@ fn sync_overlays(
                         .with_child((
                             Text::new("Choose a reward"),
                             TextFont {
-                                font: title_font.0.clone(),
+                                font: FontSource::Handle(title_font.0.clone()),
                                 font_size: FontSize::Px(if win_w < 500.0 { 40.0 } else { 48.0 }),
                                 ..default()
                             },
@@ -512,9 +519,7 @@ fn sync_overlays(
                                         children![(
                                             Text::new(&item.name),
                                             TextFont {
-                                                font_size: FontSize::Px(
-                                                    (26.0 * card_font_scale).round(),
-                                                ),
+                                                font_size: FontSize::Px((26.0 * card_font_scale).round(),),
                                                 ..default()
                                             },
                                             TextColor(INK_WOOD),
@@ -686,7 +691,7 @@ fn sync_overlays(
                             panel.spawn((
                                 Text::new(if *won { "Victory!" } else { "Defeat" }),
                                 TextFont {
-                                    font: title_font.0.clone(),
+                                    font: FontSource::Handle(title_font.0.clone()),
                                     font_size: FontSize::Px(48.0),
                                     ..default()
                                 },
@@ -703,10 +708,7 @@ fn sync_overlays(
                                 }),
                                 TextFont { font_size: FontSize::Px(26.0), ..default() },
                                 TextColor(INK_PARCHMENT),
-                                TextLayout {
-                                    justify: Justify::Center,
-                                    linebreak: LineBreak::WordBoundary,
-                                },
+                                TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
                             ));
 
                             // Action buttons row: Retry and Levels
@@ -887,7 +889,10 @@ fn sync_hand_bar(
     let is_compact = win_w < 600.0;
     let hand_font_size = if is_compact { 20.0 } else { 26.0 };
     let hand_sub_font_size = if is_compact { 18.0 } else { 22.0 };
-    let discard_font_size = if is_compact { 22.0 } else { 26.0 };
+    let discard_font_size = if is_compact { 16.0 } else { 20.0 };
+    // Fixed button width: an auto-sized button in this absolutely positioned
+    // column measured narrower than its label, so the text spilled out.
+    let discard_btn_w = if is_compact { 108.0 } else { 136.0 };
     let deck_font_size = if is_compact { 22.0 } else { 26.0 };
     let center_x = if win_w < 600.0 {
         let sidebar_zone = sidebar_w + 6.0 + 8.0;
@@ -1123,6 +1128,8 @@ fn sync_hand_bar(
                         ButtonVisuals::WOOD,
                         ButtonDisabled(!can_discard),
                         Node {
+                            width: Val::Px(discard_btn_w),
+                            min_height: Val::Px(36.0),
                             flex_direction: FlexDirection::Row,
                             justify_content: JustifyContent::Center,
                             align_items: AlignItems::Center,
@@ -1139,7 +1146,12 @@ fn sync_hand_bar(
                     ))
                     .with_children(|btn| {
                         btn.spawn((
-                            Node { width: Val::Px(34.0), height: Val::Px(16.0), ..default() },
+                            Node {
+                                width: Val::Px(34.0),
+                                height: Val::Px(16.0),
+                                flex_shrink: 0.0,
+                                ..default()
+                            },
                             ImageNode {
                                 image: atlas.image.clone(),
                                 rect: Some(atlas.rect("icon_discard")),
@@ -1261,6 +1273,7 @@ fn handle_card_interaction(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn sync_title_menu(
     mut commands: Commands,
     title_menu: Res<TitleMenu>,
@@ -1348,7 +1361,7 @@ fn sync_title_menu(
                         .with_child((
                             Text::new("Terrain Chess"),
                             TextFont {
-                                font: title_font.0.clone(),
+                                font: FontSource::Handle(title_font.0.clone()),
                                 font_size: FontSize::Px(if is_compact { 42.0 } else { 48.0 }),
                                 ..default()
                             },
@@ -1395,7 +1408,7 @@ fn sync_title_menu(
                                             || match level_def.size {
                                                 16 => 32,
                                                 _ => 16,
-                                             },
+                                            },
                                         );
 
                                         col.spawn((
@@ -1424,7 +1437,11 @@ fn sync_title_menu(
                                             btn.spawn((
                                                 Text::new(format!("{} · {}", level_def.id, level_def.name)),
                                                 TextFont {
-                                                    font_size: FontSize::Px(if is_compact { 22.0 } else { 26.0 }),
+                                                    font_size: FontSize::Px(if is_compact {
+                                                        22.0
+                                                    } else {
+                                                        26.0
+                                                    }),
                                                     ..default()
                                                 },
                                                 TextColor(INK_WOOD),
@@ -1439,7 +1456,11 @@ fn sync_title_menu(
                                                     level_def.size, level_def.size, piece_count
                                                 )),
                                                 TextFont {
-                                                    font_size: FontSize::Px(if is_compact { 20.0 } else { 24.0 }),
+                                                    font_size: FontSize::Px(if is_compact {
+                                                        20.0
+                                                    } else {
+                                                        24.0
+                                                    }),
                                                     ..default()
                                                 },
                                                 TextColor(INK_WOOD),

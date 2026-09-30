@@ -61,10 +61,11 @@ fn main() {
 
     let handjet = Font::from_bytes(HANDJET_FONT.to_vec());
     let jacquard = Font::from_bytes(JACQUARD_FONT.to_vec());
-    let mut fonts = app.world_mut().resource_mut::<Assets<Font>>();
-    fonts.insert(AssetId::default(), handjet).expect("insert default font");
-    let title_font = fonts.add(jacquard);
-    drop(fonts);
+    let title_font = {
+        let mut fonts = app.world_mut().resource_mut::<Assets<Font>>();
+        fonts.insert(AssetId::default(), handjet).expect("insert default font");
+        fonts.add(jacquard)
+    };
     app.insert_resource(TitleFont(title_font));
 
     app.run();
