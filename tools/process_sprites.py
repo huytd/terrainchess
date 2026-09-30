@@ -570,6 +570,11 @@ def process(src, src_sky, src_ground, src_gui, palette):
         )
 
     out.update(wall_sprites(out))
+    # Generated terrain art (cliff rock, grass lip); see gen_terrain_art.py.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    from gen_terrain_art import terrain_art
+
+    out.update(terrain_art())
 
     if palette:
         pal = palette_array()

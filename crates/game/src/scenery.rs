@@ -7,8 +7,7 @@ use tc_core::Sq;
 
 use crate::atlas::Atlas;
 use crate::board_view::{
-    Billboard, CUSHION, Look, PX, Quads, board_center, card_mesh, cushion, flat, full_uv, hash, rotate_uv,
-    top_y, wall_tinted,
+    Billboard, Look, PX, Quads, board_center, card_mesh, cushion, flat, full_uv, hash, rim, rotate_uv, top_y,
 };
 use crate::game::GameState;
 use crate::input::MainCamera;
@@ -538,26 +537,13 @@ fn rebuild_scenery(
                 CellType::Board(_) | CellType::Sea => unreachable!(),
             }
 
-            for ((dx, dy), a, b, side_shade, side) in [
-                (
-                    (0i8, -1i8),
-                    Vec3::new(cx - 0.5, 0.0, cz + 0.5),
-                    Vec3::new(cx + 0.5, 0.0, cz + 0.5),
-                    0.84,
-                    2,
-                ),
-                ((1, 0), Vec3::new(cx + 0.5, 0.0, cz + 0.5), Vec3::new(cx + 0.5, 0.0, cz - 0.5), 0.72, 1),
-                ((0, 1), Vec3::new(cx + 0.5, 0.0, cz - 0.5), Vec3::new(cx - 0.5, 0.0, cz - 0.5), 0.56, 0),
-                ((-1, 0), Vec3::new(cx - 0.5, 0.0, cz - 0.5), Vec3::new(cx - 0.5, 0.0, cz + 0.5), 0.62, 3),
-            ] {
-                let n_cell = cell_at(x + dx as i32, y + dy as i32);
-                let n_top = height_at(n_cell);
-                if n_top < top_h {
-                    let wall_tint = Color::srgb(side_shade * 0.62, side_shade * 0.70, side_shade * 0.80);
-                    let hi = if cushioned && drops[side] { top_h - CUSHION } else { top_h };
-                    wall_tinted(&mut solid, &atlas, a, b, n_top, hi, wall_tint);
-                }
-            }
+            // Cliffs where the ground drops away, grass lips over grass edges.
+            let los = [(0, 1), (1, 0), (0, -1), (-1, 0)].map(|(dx, dy)| height_at(cell_at(x + dx, y + dy)));
+            let tints = [0.56, 0.72, 0.84, 0.62].map(|s: f32| Color::srgb(s * 0.62, s * 0.70, s * 0.80));
+            let rim_drops = if cushioned { drops } else { [false; 4] };
+            let lip = matches!(cell, CellType::Grass(_))
+                .then(|| Color::srgb(shade * 0.62, shade * 0.70, shade * 0.80));
+            rim(&mut solid, &mut decals, &atlas, top, rim_drops, los, tints, lip);
 
             if matches!(cell, CellType::Grass(_)) {
                 let d = rect_distance(x, y, n);

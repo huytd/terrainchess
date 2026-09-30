@@ -584,44 +584,93 @@ pub(crate) fn flat(c: Vec3, size: Vec2) -> [Vec3; 4] {
 
 /// How far a square's top rounds down toward an edge that drops away.
 pub(crate) const CUSHION: f32 = 0.17;
+/// How far the grass lip stands out from the cliff, and how far it hangs below the curve.
+const LIP_OUT: f32 = 0.025;
+const LIP_HANG: f32 = 0.2;
+/// World height of one repeat of the cliff rock texture (32 px, like a square's width).
+const ROCK_REPEAT: f32 = 1.0;
+/// Segments per rounded corner.
+const ARC_SEGMENTS: usize = 4;
 
-/// A square's top as a soft cushion: flat in the middle, curving down by `CUSHION`
-/// toward each side in `drops` (north, east, south, west), and darker as it falls.
+/// Outward normals of the four sides, in `drops` order: north (-z), east, south, west.
+const SIDE_NORMALS: [Vec2; 4] =
+    [Vec2::new(0.0, -1.0), Vec2::new(1.0, 0.0), Vec2::new(0.0, 1.0), Vec2::new(-1.0, 0.0)];
+/// Corners as (x sign, z sign, side swept first, side swept second, start angle in degrees),
+/// walking around the column the way its walls run left to right seen from outside.
+const CORNERS: [(f32, f32, usize, usize, f32); 4] =
+    [(1.0, -1.0, 1, 0, 0.0), (-1.0, -1.0, 0, 3, 90.0), (-1.0, 1.0, 3, 2, 180.0), (1.0, 1.0, 2, 1, 270.0)];
+
+/// Whether the corner between two dropping sides is rounded off in plan.
+fn rounded(drops: [bool; 4], corner: usize) -> bool {
+    let (_, _, s1, s2, _) = CORNERS[corner];
+    drops[s1] && drops[s2]
+}
+
+/// Baked light for a surface normal: soft diffuse from the south-east plus a glossy glint,
+/// so rounded rims catch the light. Returns (diffuse multiplier, specular add).
+fn shine(n: Vec3) -> (f32, f32) {
+    let l = Vec3::new(0.45, 0.8, 0.4).normalize();
+    let v = Vec3::new(0.0, 0.7, 0.7).normalize();
+    let h = (l + v).normalize();
+    let flat = Vec3::Y.dot(l);
+    let diffuse = (0.6 + 0.4 * n.dot(l).max(0.0) / flat).clamp(0.45, 1.12);
+    let spec = 0.4 * n.dot(h).max(0.0).powi(24);
+    (diffuse, spec)
+}
+
+/// A square's top as a soft cushion: flat in the middle, curving down by `CUSHION` toward
+/// each side in `drops` (north, east, south, west). Corners between two dropping sides
+/// are rounded in plan too. Rims are lit with a baked glossy highlight.
 pub(crate) fn cushion(q: &mut Quads, top: Vec3, drops: [bool; 4], uv: Uv, tint: Color) {
     let r = CUSHION;
     // Grid lines spaced along a quarter circle so the curve reads smooth.
     let arc = [0.0, 0.134, 0.5, 1.0];
     let mut coords: Vec<f32> = arc.iter().map(|a| -0.5 + r * a).collect();
     coords.extend(arc.iter().rev().map(|a| 0.5 - r * a));
-    // Drop below the top at a point `d` in from an edge.
-    let fall = |d: f32| {
-        let k = ((r - d) / r).clamp(0.0, 1.0);
-        r * (1.0 - (1.0 - k * k).sqrt())
-    };
-    let [n, e, s, w] = drops;
-    let height = |lx: f32, lz: f32| {
-        // Distance in from each dropping edge (north is -z).
-        let dn = if n { lz + 0.5 } else { f32::MAX };
-        let ds = if s { 0.5 - lz } else { f32::MAX };
-        let de = if e { 0.5 - lx } else { f32::MAX };
-        let dw = if w { lx + 0.5 } else { f32::MAX };
-        let dz = dn.min(ds);
-        let dx = de.min(dw);
-        // Where two dropping edges meet, round the corner as a sphere.
-        let d = if dx < r && dz < r { r - ((r - dx).powi(2) + (r - dz).powi(2)).sqrt() } else { dx.min(dz) };
-        fall(d.max(0.0))
-    };
     let c = tint.to_linear();
     let base = q.pos.len() as u32;
     let m = coords.len() as u32;
     for &lz in &coords {
         for &lx in &coords {
-            let drop = height(lx, lz);
-            let shade = 1.0 - 0.5 * (drop / r);
-            q.pos.push([top.x + lx, top.y - drop, top.z + lz]);
-            q.normal.push([0.0, 1.0, 0.0]);
-            q.uv.push(uv.at(lx + 0.5, lz + 0.5));
-            q.color.push([c.red * shade, c.green * shade, c.blue * shade, c.alpha]);
+            let (mut px, mut pz) = (lx, lz);
+            // Inward distance from the nearest dropping edge, and the outward direction there.
+            let mut d = f32::MAX;
+            let mut out = Vec2::ZERO;
+            for (i, n) in SIDE_NORMALS.iter().enumerate() {
+                if drops[i] {
+                    let di = 0.5 - Vec2::new(lx, lz).dot(*n);
+                    if di < d {
+                        d = di;
+                        out = *n;
+                    }
+                }
+            }
+            for (k, &(sx, sz, ..)) in CORNERS.iter().enumerate() {
+                let (ox, oz) = (sx * lx - (0.5 - r), sz * lz - (0.5 - r));
+                if rounded(drops, k) && ox > 0.0 && oz > 0.0 {
+                    // Square corner cell → quarter disc, so the corner is round seen from above.
+                    let len = ox.hypot(oz);
+                    let reach = ox.max(oz);
+                    let (mx, mz) = (ox / len * reach, oz / len * reach);
+                    px = sx * (0.5 - r + mx);
+                    pz = sz * (0.5 - r + mz);
+                    d = r - reach;
+                    out = Vec2::new(sx * ox, sz * oz).normalize_or_zero();
+                }
+            }
+            let k = ((r - d) / r).clamp(0.0, 1.0);
+            let drop = r * (1.0 - (1.0 - k * k).sqrt());
+            let normal = Vec3::new(out.x * k, (1.0 - k * k).max(0.0).sqrt(), out.y * k).normalize_or_zero();
+            let (diffuse, spec) = shine(normal);
+            q.pos.push([top.x + px, top.y - drop, top.z + pz]);
+            q.normal.push(normal.to_array());
+            q.uv.push(uv.at(px + 0.5, pz + 0.5));
+            q.color.push([
+                c.red * diffuse + spec,
+                c.green * diffuse + spec,
+                c.blue * diffuse + spec,
+                c.alpha,
+            ]);
         }
     }
     for j in 0..m - 1 {
@@ -633,27 +682,120 @@ pub(crate) fn cushion(q: &mut Quads, top: Vec3, drops: [bool; 4], uv: Uv, tint: 
     }
 }
 
-/// Walls of one column side from `lo` up to `hi`: grass lip under the top edge, stone
-/// below. `a` → `b` runs left to right along the bottom as seen from outside.
-pub(crate) fn wall(q: &mut Quads, atlas: &Atlas, a: Vec3, b: Vec3, lo: f32, hi: f32, shade: f32) {
-    wall_tinted(q, atlas, a, b, lo, hi, Color::srgb(shade, shade, shade));
-}
-
-pub(crate) fn wall_tinted(q: &mut Quads, atlas: &Atlas, a: Vec3, b: Vec3, lo: f32, hi: f32, tint: Color) {
-    let mut top = hi;
-    let mut first = true;
-    while top > lo + 1e-4 {
-        let bottom = (top - LEVEL).max(lo);
-        let uv = atlas.uv(if first { "wall_lip" } else { "wall_stone" });
-        let frac = (top - bottom) / LEVEL;
-        let at = |p: Vec3, y: f32| Vec3::new(p.x, y, p.z);
+/// Chunky rock wall from `lo` up to `hi` between `a` and `b` (left to right seen from
+/// outside), with texture `u0..u1` across so rock keeps its scale on short pieces.
+#[allow(clippy::too_many_arguments)]
+fn rock_wall(q: &mut Quads, atlas: &Atlas, a: Vec3, b: Vec3, u: (f32, f32), lo: f32, hi: f32, tint: Color) {
+    let uv = atlas.uv("wall_rock");
+    let at = |p: Vec3, y: f32| Vec3::new(p.x, y, p.z);
+    let mut y = hi;
+    while y > lo + 1e-4 {
+        let bottom = (y - ROCK_REPEAT).max(lo);
+        let frac = (y - bottom) / ROCK_REPEAT;
         q.add_tinted(
-            [at(a, bottom), at(b, bottom), at(b, top), at(a, top)],
-            [uv.at(0.0, frac), uv.at(1.0, frac), uv.at(1.0, 0.0), uv.at(0.0, 0.0)],
+            [at(a, bottom), at(b, bottom), at(b, y), at(a, y)],
+            [uv.at(u.0, frac), uv.at(u.1, frac), uv.at(u.1, 0.0), uv.at(u.0, 0.0)],
             tint,
         );
-        top = bottom;
-        first = false;
+        y = bottom;
+    }
+}
+
+/// The grass lip hanging over a cliff edge, just outside the wall.
+#[allow(clippy::too_many_arguments)]
+fn lip_strip(
+    q: &mut Quads,
+    atlas: &Atlas,
+    a: Vec3,
+    b: Vec3,
+    u: (f32, f32),
+    lo: f32,
+    top_y: f32,
+    tint: Color,
+) {
+    let uv = atlas.uv("grass_lip");
+    let hi = top_y - CUSHION * 0.3;
+    let bottom = (top_y - CUSHION - LIP_HANG).max(lo + 0.02);
+    if hi <= bottom {
+        return;
+    }
+    let at = |p: Vec3, y: f32| Vec3::new(p.x, y, p.z);
+    q.add_tinted(
+        [at(a, bottom), at(b, bottom), at(b, hi), at(a, hi)],
+        [uv.at(u.0, 1.0), uv.at(u.1, 1.0), uv.at(u.1, 0.0), uv.at(u.0, 0.0)],
+        tint,
+    );
+}
+
+/// Cliff walls, rounded corners and grass lips around one column.
+/// `los[i]` is the ground height beyond side `i` (north, east, south, west); walls are
+/// drawn where it is below the top. `lip` adds the grass overhang on dropping sides.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn rim(
+    solid: &mut Quads,
+    lips: &mut Quads,
+    atlas: &Atlas,
+    top: Vec3,
+    drops: [bool; 4],
+    los: [f32; 4],
+    tints: [Color; 4],
+    lip: Option<Color>,
+) {
+    let r = CUSHION;
+    let c = Vec2::new(top.x, top.z);
+    let p3 = |p: Vec2| Vec3::new(p.x, 0.0, p.y);
+    // Each side runs from corner `a` to corner `b`: north NE→NW, east SE→NE, south SW→SE, west NW→SW.
+    let ends = [(0, 1), (3, 0), (2, 3), (1, 2)];
+    for side in 0..4 {
+        if los[side] >= top.y - 1e-4 {
+            continue;
+        }
+        let n = SIDE_NORMALS[side];
+        let corner_pos = |k: usize| c + Vec2::new(CORNERS[k].0, CORNERS[k].1) * 0.5;
+        let (ka, kb) = ends[side];
+        let (mut a, mut b) = (corner_pos(ka), corner_pos(kb));
+        let dir = (b - a).normalize();
+        if rounded(drops, ka) {
+            a += dir * r;
+        }
+        if rounded(drops, kb) {
+            b -= dir * r;
+        }
+        let len = (b - a).length();
+        let hi = if drops[side] { top.y - r } else { top.y };
+        rock_wall(solid, atlas, p3(a), p3(b), (0.0, len), los[side], hi, tints[side]);
+        if let Some(t) = lip.filter(|_| drops[side]) {
+            let o = n * LIP_OUT;
+            lip_strip(lips, atlas, p3(a + o), p3(b + o), (0.0, len), los[side], top.y, t);
+        }
+    }
+    for (k, &(sx, sz, s1, s2, start)) in CORNERS.iter().enumerate() {
+        if !rounded(drops, k) {
+            continue;
+        }
+        let center = c + Vec2::new(sx, sz) * (0.5 - r);
+        let lo = los[s1].min(los[s2]);
+        let tint = tints[s1].mix(&tints[s2], 0.5);
+        let seg = (r * std::f32::consts::FRAC_PI_2) / ARC_SEGMENTS as f32;
+        for i in 0..ARC_SEGMENTS {
+            let angle = |j: usize| (start + 90.0 * j as f32 / ARC_SEGMENTS as f32).to_radians();
+            let dir = |j: usize| Vec2::new(angle(j).cos(), -angle(j).sin());
+            let (d0, d1) = (dir(i), dir(i + 1));
+            rock_wall(
+                solid,
+                atlas,
+                p3(center + d0 * r),
+                p3(center + d1 * r),
+                (0.0, seg),
+                lo,
+                top.y - r,
+                tint,
+            );
+            if let Some(t) = lip {
+                let rr = r + LIP_OUT;
+                lip_strip(lips, atlas, p3(center + d0 * rr), p3(center + d1 * rr), (0.0, seg), lo, top.y, t);
+            }
+        }
     }
 }
 
@@ -678,6 +820,7 @@ fn spawn_terrain(
     let mut solid = Quads::default();
     let mut water = [Quads::default(), Quads::default()];
     let mut grid_quads = Quads::default();
+    let mut lips = Quads::default();
     for sq in tc_core::board::squares(size) {
         let tile = *t.get(sq);
         let top = square_top(sq, tile.height);
@@ -749,21 +892,17 @@ fn spawn_terrain(
             }
         }
 
-        // Sides: south/east 30% darker (0.588, 0.504), north/west 15% darker (0.476, 0.527).
+        // Sides: south/east 30% darker, north/west 15% darker; rounded corners and a
+        // grass lip where the ground drops away.
         let (x, z) = (top.x, top.z);
-        for ((dx, dy), a, b, shade, side) in [
-            ((0i8, -1i8), Vec3::new(x - 0.5, 0.0, z + 0.5), Vec3::new(x + 0.5, 0.0, z + 0.5), 0.588, 2),
-            ((1, 0), Vec3::new(x + 0.5, 0.0, z + 0.5), Vec3::new(x + 0.5, 0.0, z - 0.5), 0.504, 1),
-            ((0, 1), Vec3::new(x + 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z - 0.5), 0.476, 0),
-            ((-1, 0), Vec3::new(x - 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z + 0.5), 0.527, 3),
-        ] {
-            let lo = match sq.offset(dx, dy, size) {
-                Some(n) => top_y(t.height(n) as i8),
-                None => -BASE,
-            };
-            let hi = if drops[side] { top.y - CUSHION } else { top.y };
-            wall(&mut solid, &atlas, a, b, lo, hi, shade + 0.03 * tile.height as f32);
-        }
+        let los = [(0i8, 1i8), (1, 0), (0, -1), (-1, 0)].map(|(dx, dy)| match sq.offset(dx, dy, size) {
+            Some(n) => top_y(t.height(n) as i8),
+            None => -BASE,
+        });
+        let lift = 0.03 * tile.height as f32;
+        let tints = [0.476, 0.504, 0.588, 0.527].map(|s: f32| Color::srgb(s + lift, s + lift, s + lift));
+        let lip = (!tile.is_water()).then(|| Color::srgb(0.62, 0.66, 0.62));
+        rim(&mut solid, &mut lips, &atlas, top, drops, los, tints, lip);
 
         // Grid lines along square edges and column top rims:
         let y_lift = top.y + LIFT_GRID;
@@ -876,6 +1015,9 @@ fn spawn_terrain(
     }
     let material = MeshMaterial3d(look.terrain.clone());
     commands.spawn((TerrainPart, Mesh3d(meshes.add(solid.mesh())), material.clone()));
+    if !lips.pos.is_empty() {
+        commands.spawn((TerrainPart, Mesh3d(meshes.add(lips.mesh())), MeshMaterial3d(look.cards.clone())));
+    }
     for (i, q) in water.into_iter().enumerate() {
         if !q.pos.is_empty() {
             commands.spawn((TerrainPart, WaterFrame(i), Mesh3d(meshes.add(q.mesh())), material.clone()));
