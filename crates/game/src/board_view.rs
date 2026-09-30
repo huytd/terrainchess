@@ -777,6 +777,15 @@ pub(crate) fn rim(
         let center = c + Vec2::new(sx, sz) * (0.5 - r);
         let lo = los[s1].min(los[s2]);
         let tint = tints[s1].mix(&tints[s2], 0.5);
+        // Floor of the corner the curve cuts away, so nothing shows through at its foot;
+        // dark, as the cliff's shadow.
+        let sq_c = c + Vec2::new(sx, sz) * (0.5 - r * 0.5);
+        let shadow = Color::srgb(0.2, 0.17, 0.16);
+        solid.add_tinted(
+            flat(Vec3::new(sq_c.x, lo + 0.002, sq_c.y), Vec2::splat(r)),
+            full_uv(atlas.uv("wall_rock")),
+            shadow,
+        );
         let seg = (r * std::f32::consts::FRAC_PI_2) / ARC_SEGMENTS as f32;
         for i in 0..ARC_SEGMENTS {
             let angle = |j: usize| (start + 90.0 * j as f32 / ARC_SEGMENTS as f32).to_radians();

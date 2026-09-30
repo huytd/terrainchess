@@ -14,6 +14,8 @@ use crate::input::MainCamera;
 
 /// Sea surface level.
 pub(crate) const SEA_Y: f32 = -0.55;
+/// Width of the surf strip on the sea along sandy shores.
+const SURF: f32 = 0.4;
 
 /// Tag for entities rebuilt when the board seed or size changes.
 #[derive(Component)]
@@ -482,7 +484,8 @@ fn rebuild_scenery(
 
             match cell {
                 CellType::Grass(_) => {
-                    let tile = ["grass_0", "grass_1", "grass_dark", "moss"][hash(x, y, 1) as usize % 4];
+                    // Only the two light grasses, which share a tone, so the ground reads as one lawn.
+                    let tile = ["grass_0", "grass_1"][hash(x, y, 1) as usize % 2];
                     let grass_tint = Color::srgb(shade * 0.62, shade * 0.70, shade * 0.80);
                     // The lip art is brighter than the grass tiles; scale it to this tile's
                     // average colour so the overhang matches the surface.
@@ -517,25 +520,40 @@ fn rebuild_scenery(
                     }
                 }
                 CellType::Shore => {
-                    let sea_dir = if cell_at(x, y + 1) == CellType::Sea {
-                        Some(0)
-                    } else if cell_at(x + 1, y) == CellType::Sea {
-                        Some(1)
-                    } else if cell_at(x, y - 1) == CellType::Sea {
-                        Some(2)
-                    } else if cell_at(x - 1, y) == CellType::Sea {
-                        Some(3)
-                    } else {
-                        None
-                    };
-
-                    if let Some(dir) = sea_dir {
-                        let uv_0 = rotate_uv(full_uv(atlas.uv("shore_0")), dir);
-                        let uv_1 = rotate_uv(full_uv(atlas.uv("shore_1")), dir);
-                        let foam_tint = Color::srgb(0.279, 0.325, 0.560);
-                        sea_quads[0].add_tinted(corners, uv_0, foam_tint);
-                        sea_quads[1].add_tinted(corners, uv_1, foam_tint);
-                    } else {
+                    // Sand, with a strip of surf on the sea along every edge that meets it.
+                    // Strips run past convex corners so neighbouring strips join up.
+                    let sides = [(0, 1), (1, 0), (0, -1), (-1, 0)];
+                    let sea = sides.map(|(dx, dy)| cell_at(x + dx, y + dy) == CellType::Sea);
+                    let normals = [Vec2::new(0.0, -1.0), Vec2::X, Vec2::new(0.0, 1.0), Vec2::NEG_X];
+                    let foam_tint = Color::srgb(0.279, 0.325, 0.560);
+                    for side in 0..4 {
+                        if !sea[side] {
+                            continue;
+                        }
+                        let n = normals[side];
+                        let along = Vec2::new(-n.y, n.x);
+                        let (prev, next) = ((side + 3) % 4, (side + 1) % 4);
+                        let ext = |other: usize| if sea[other] { SURF } else { 0.0 };
+                        let c = Vec2::new(cx, cz) + n * 0.5;
+                        // Along-edge ends; extended toward a neighbouring sea side.
+                        let (e0, e1) = (-0.5 - ext(prev), 0.5 + ext(next));
+                        let y_surf = SEA_Y + 0.01 + 0.002 * side as f32;
+                        let p = |t: f32, o: f32| {
+                            let q = c + along * t + n * o;
+                            Vec3::new(q.x, y_surf, q.y)
+                        };
+                        for (i, frame) in ["shore_0", "shore_1"].into_iter().enumerate() {
+                            let uv = atlas.uv(frame);
+                            // The shore art runs water (top) → foam → sand (bottom).
+                            let (v_in, v_out) = (0.62, 0.30);
+                            sea_quads[i].add_tinted(
+                                [p(e0, 0.0), p(e1, 0.0), p(e1, SURF), p(e0, SURF)],
+                                [uv.at(0.0, v_in), uv.at(1.0, v_in), uv.at(1.0, v_out), uv.at(0.0, v_out)],
+                                foam_tint,
+                            );
+                        }
+                    }
+                    {
                         let name = if hash(x, y, 3).is_multiple_of(4) { "sand_shells" } else { "sand_dry" };
                         let sand_shade = shade * 0.80;
                         let sand_tint = Color::srgb(sand_shade * 0.62, sand_shade * 0.70, sand_shade * 0.80);
