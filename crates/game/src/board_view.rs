@@ -701,11 +701,12 @@ fn rock_wall(q: &mut Quads, atlas: &Atlas, a: Vec3, b: Vec3, u: (f32, f32), lo: 
     }
 }
 
-/// The grass lip hanging over a cliff edge, just outside the wall.
+/// The lip (grass or stone, per `sprite`) hanging over a cliff edge, just outside the wall.
 #[allow(clippy::too_many_arguments)]
 fn lip_strip(
     q: &mut Quads,
     atlas: &Atlas,
+    sprite: &str,
     a: Vec3,
     b: Vec3,
     u: (f32, f32),
@@ -713,7 +714,7 @@ fn lip_strip(
     top_y: f32,
     tint: Color,
 ) {
-    let uv = atlas.uv("grass_lip");
+    let uv = atlas.uv(sprite);
     let hi = top_y - CUSHION * 0.3;
     let bottom = (top_y - CUSHION - LIP_HANG).max(lo + 0.02);
     if hi <= bottom {
@@ -729,7 +730,7 @@ fn lip_strip(
 
 /// Cliff walls, rounded corners and grass lips around one column.
 /// `los[i]` is the ground height beyond side `i` (north, east, south, west); walls are
-/// drawn where it is below the top. `lip` adds the grass overhang on dropping sides.
+/// drawn where it is below the top. `lip` (sprite, tint) adds an overhang on dropping sides.
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn rim(
     solid: &mut Quads,
@@ -739,7 +740,7 @@ pub(crate) fn rim(
     drops: [bool; 4],
     los: [f32; 4],
     tints: [Color; 4],
-    lip: Option<Color>,
+    lip: Option<(&str, Color)>,
 ) {
     let r = CUSHION;
     let c = Vec2::new(top.x, top.z);
@@ -764,9 +765,9 @@ pub(crate) fn rim(
         let len = (b - a).length();
         let hi = if drops[side] { top.y - r } else { top.y };
         rock_wall(solid, atlas, p3(a), p3(b), (0.0, len), los[side], hi, tints[side]);
-        if let Some(t) = lip.filter(|_| drops[side]) {
+        if let Some((sprite, t)) = lip.filter(|_| drops[side]) {
             let o = n * LIP_OUT;
-            lip_strip(lips, atlas, p3(a + o), p3(b + o), (0.0, len), los[side], top.y, t);
+            lip_strip(lips, atlas, sprite, p3(a + o), p3(b + o), (0.0, len), los[side], top.y, t);
         }
     }
     for (k, &(sx, sz, s1, s2, start)) in CORNERS.iter().enumerate() {
@@ -791,9 +792,19 @@ pub(crate) fn rim(
                 top.y - r,
                 tint,
             );
-            if let Some(t) = lip {
+            if let Some((sprite, t)) = lip {
                 let rr = r + LIP_OUT;
-                lip_strip(lips, atlas, p3(center + d0 * rr), p3(center + d1 * rr), (0.0, seg), lo, top.y, t);
+                lip_strip(
+                    lips,
+                    atlas,
+                    sprite,
+                    p3(center + d0 * rr),
+                    p3(center + d1 * rr),
+                    (0.0, seg),
+                    lo,
+                    top.y,
+                    t,
+                );
             }
         }
     }
@@ -901,7 +912,8 @@ fn spawn_terrain(
         });
         let lift = 0.03 * tile.height as f32;
         let tints = [0.476, 0.504, 0.588, 0.527].map(|s: f32| Color::srgb(s + lift, s + lift, s + lift));
-        let lip = (!tile.is_water()).then(|| Color::srgb(0.62, 0.66, 0.62));
+        // Board squares are cut stone, so their rims are stone too.
+        let lip = (!tile.is_water()).then(|| ("stone_lip", Color::srgb(0.95, 0.93, 0.86)));
         rim(&mut solid, &mut lips, &atlas, top, drops, los, tints, lip);
 
         // Grid lines along square edges and column top rims:

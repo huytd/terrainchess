@@ -478,11 +478,24 @@ fn rebuild_scenery(
             let drops =
                 [(0, 1), (1, 0), (0, -1), (-1, 0)].map(|(dx, dy)| height_at(cell_at(x + dx, y + dy)) < top_h);
             let mut cushioned = false;
+            let mut lip = None;
 
             match cell {
                 CellType::Grass(_) => {
                     let tile = ["grass_0", "grass_1", "grass_dark", "moss"][hash(x, y, 1) as usize % 4];
                     let grass_tint = Color::srgb(shade * 0.62, shade * 0.70, shade * 0.80);
+                    // The lip art is brighter than the grass tiles; scale it to this tile's
+                    // average colour so the overhang matches the surface.
+                    let [lr, lg, lb] = match tile {
+                        "grass_0" => [0.82, 0.90, 0.82],
+                        "grass_1" => [0.80, 0.87, 0.86],
+                        "grass_dark" => [0.58, 0.63, 0.75],
+                        _ => [0.48, 0.44, 0.52],
+                    };
+                    lip = Some((
+                        "grass_lip",
+                        Color::srgb(shade * 0.62 * lr, shade * 0.70 * lg, shade * 0.80 * lb),
+                    ));
                     if drops.contains(&true) {
                         cushion(&mut solid, top, drops, atlas.uv(tile), grass_tint);
                         cushioned = true;
@@ -541,8 +554,6 @@ fn rebuild_scenery(
             let los = [(0, 1), (1, 0), (0, -1), (-1, 0)].map(|(dx, dy)| height_at(cell_at(x + dx, y + dy)));
             let tints = [0.56, 0.72, 0.84, 0.62].map(|s: f32| Color::srgb(s * 0.62, s * 0.70, s * 0.80));
             let rim_drops = if cushioned { drops } else { [false; 4] };
-            let lip = matches!(cell, CellType::Grass(_))
-                .then(|| Color::srgb(shade * 0.62, shade * 0.70, shade * 0.80));
             rim(&mut solid, &mut decals, &atlas, top, rim_drops, los, tints, lip);
 
             if matches!(cell, CellType::Grass(_)) {
