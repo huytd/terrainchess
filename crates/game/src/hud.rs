@@ -16,6 +16,14 @@ pub const INK_WOOD: Color = Color::srgb_u8(0xF7, 0xED, 0xD0);
 /// Ink colour on aged parchment.
 pub const INK_PARCHMENT: Color = Color::srgb_u8(0x3B, 0x2F, 0x2A);
 
+/// Space kept clear between a modal panel and the screen edge.
+const OVERLAY_GUTTER: f32 = 16.0;
+
+/// Clamps a preferred panel width so it fits inside the overlay gutter on narrow screens.
+fn fit_width(preferred: f32, win_w: f32) -> f32 {
+    preferred.min(win_w - 2.0 * OVERLAY_GUTTER).max(0.0)
+}
+
 fn button_slicer() -> NodeImageMode {
     NodeImageMode::Sliced(TextureSlicer {
         border: BorderRect::all(6.0),
@@ -416,6 +424,7 @@ fn sync_overlays(
                         right: Val::Px(0.0),
                         top: Val::Px(0.0),
                         bottom: Val::Px(0.0),
+                        padding: UiRect::all(Val::Px(OVERLAY_GUTTER)),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         flex_direction: FlexDirection::Column,
@@ -429,8 +438,15 @@ fn sync_overlays(
                     parent
                         .spawn((
                             Node {
-                                min_width: Val::Px(if win_w < 500.0 { 320.0 } else { 380.0 }),
-                                padding: UiRect::axes(Val::Px(36.0), Val::Px(12.0)),
+                                min_width: Val::Px(fit_width(
+                                    if win_w < 500.0 { 320.0 } else { 380.0 },
+                                    win_w,
+                                )),
+                                max_width: Val::Percent(100.0),
+                                padding: UiRect::axes(
+                                    Val::Px(if win_w < 500.0 { 20.0 } else { 36.0 }),
+                                    Val::Px(12.0),
+                                ),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
                                 overflow: Overflow::visible(),
@@ -654,6 +670,8 @@ fn sync_overlays(
         RunPhase::Result { won } => {
             let badge_name = if *won { "badge_victory" } else { "badge_defeat" };
             let (badge_size, _) = integer_scaled_size(&atlas, badge_name, 60.0);
+            let win_w = window.iter().next().map(|w| w.width()).unwrap_or(800.0);
+            let is_compact = win_w < 500.0;
 
             commands
                 .spawn((
@@ -665,6 +683,7 @@ fn sync_overlays(
                         right: Val::Px(0.0),
                         top: Val::Px(0.0),
                         bottom: Val::Px(0.0),
+                        padding: UiRect::all(Val::Px(OVERLAY_GUTTER)),
                         justify_content: JustifyContent::Center,
                         align_items: AlignItems::Center,
                         ..default()
@@ -675,12 +694,18 @@ fn sync_overlays(
                     parent
                         .spawn((
                             Node {
-                                padding: UiRect::all(Val::Px(28.0)),
+                                padding: UiRect::axes(
+                                    Val::Px(if is_compact { 20.0 } else { 28.0 }),
+                                    Val::Px(if is_compact { 20.0 } else { 28.0 }),
+                                ),
                                 flex_direction: FlexDirection::Column,
                                 align_items: AlignItems::Center,
                                 justify_content: JustifyContent::Center,
-                                row_gap: Val::Px(16.0),
-                                min_width: Val::Px(360.0),
+                                row_gap: Val::Px(if is_compact { 12.0 } else { 16.0 }),
+                                min_width: Val::Px(fit_width(360.0, win_w)),
+                                max_width: Val::Percent(100.0),
+                                max_height: Val::Percent(100.0),
+                                overflow: Overflow::scroll_y(),
                                 min_height: Val::Px(260.0),
                                 ..default()
                             },
@@ -719,7 +744,7 @@ fn sync_overlays(
                                 }),
                                 TextFont {
                                     font: FontSource::Handle(title_font.0.clone()),
-                                    font_size: FontSize::Px(48.0),
+                                    font_size: FontSize::Px(if is_compact { 40.0 } else { 48.0 }),
                                     ..default()
                                 },
                                 TextColor(INK_PARCHMENT),
@@ -731,7 +756,10 @@ fn sync_overlays(
                             if !reason.is_empty() {
                                 panel.spawn((
                                     Text::new(reason),
-                                    TextFont { font_size: FontSize::Px(26.0), ..default() },
+                                    TextFont {
+                                        font_size: FontSize::Px(if is_compact { 22.0 } else { 26.0 }),
+                                        ..default()
+                                    },
                                     TextColor(INK_PARCHMENT),
                                     TextLayout {
                                         justify: Justify::Center,
@@ -747,7 +775,10 @@ fn sync_overlays(
                                 } else {
                                     level_name.to_string()
                                 }),
-                                TextFont { font_size: FontSize::Px(26.0), ..default() },
+                                TextFont {
+                                    font_size: FontSize::Px(if is_compact { 22.0 } else { 26.0 }),
+                                    ..default()
+                                },
                                 TextColor(INK_PARCHMENT),
                                 TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
                             ));
@@ -789,9 +820,12 @@ fn sync_overlays(
                             panel
                                 .spawn(Node {
                                     flex_direction: FlexDirection::Row,
+                                    flex_wrap: FlexWrap::Wrap,
                                     column_gap: Val::Px(16.0),
+                                    row_gap: Val::Px(8.0),
                                     align_items: AlignItems::Center,
                                     justify_content: JustifyContent::Center,
+                                    max_width: Val::Percent(100.0),
                                     margin: UiRect::top(Val::Px(8.0)),
                                     ..default()
                                 })
@@ -1458,6 +1492,7 @@ fn sync_title_menu(
                 bottom: Val::Px(0.0),
                 width: Val::Percent(100.0),
                 height: Val::Percent(100.0),
+                padding: UiRect::all(Val::Px(OVERLAY_GUTTER)),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 ..default()
@@ -1473,7 +1508,8 @@ fn sync_title_menu(
                         align_items: AlignItems::Center,
                         row_gap: Val::Px(8.0),
                         padding: UiRect::all(Val::Px(panel_padding)),
-                        max_height: Val::Percent(95.0),
+                        max_width: Val::Percent(100.0),
+                        max_height: Val::Percent(100.0),
                         overflow: Overflow::scroll_y(),
                         ..default()
                     },
@@ -1489,7 +1525,10 @@ fn sync_title_menu(
                     parent
                         .spawn((
                             Node {
-                                width: Val::Px(if is_compact { 320.0 } else { 380.0 }),
+                                width: Val::Px(fit_width(
+                                    if is_compact { 320.0 } else { 380.0 },
+                                    win_w - 2.0 * panel_padding,
+                                )),
                                 height: Val::Px(52.0),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
