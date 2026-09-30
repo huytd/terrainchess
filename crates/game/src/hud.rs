@@ -8,6 +8,7 @@ use crate::atlas::Atlas;
 use crate::game::GameState;
 use crate::loading::AppState;
 use crate::run::{PickCard, Run, RunPhase, StartLevel, TitleMenu};
+use crate::TitleFont;
 
 /// Ink colour on light wood.
 pub const INK_WOOD: Color = Color::srgb_u8(0xF7, 0xED, 0xD0);
@@ -186,11 +187,12 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
                 FloorBadge,
                 Node {
                     min_width: Val::Px(120.0),
-                    height: Val::Px(48.0),
+                    min_height: Val::Px(48.0),
+                    height: Val::Auto,
                     flex_direction: FlexDirection::Column,
                     justify_content: JustifyContent::Center,
                     align_items: AlignItems::Center,
-                    padding: UiRect::axes(Val::Px(24.0), Val::Px(6.0)),
+                    padding: UiRect::axes(Val::Px(20.0), Val::Px(6.0)),
                     ..default()
                 },
                 ImageNode {
@@ -203,7 +205,7 @@ fn setup_hud(mut commands: Commands, atlas: Res<Atlas>) {
             .with_children(|badge| {
                 badge.spawn((
                     Text::new(""),
-                    TextFont { font_size: FontSize::Px(24.0), ..default() },
+                    TextFont { font_size: FontSize::Px(26.0), ..default() },
                     TextColor(INK_WOOD),
                     TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                     FloorBadgeText,
@@ -329,6 +331,7 @@ fn sync_overlays(
     mut commands: Commands,
     run: Res<Run>,
     atlas: Res<Atlas>,
+    title_font: Res<TitleFont>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut last_phase: Local<Option<RunPhase>>,
     draft_query: Query<Entity, With<DraftOverlay>>,
@@ -358,6 +361,7 @@ fn sync_overlays(
                 win_w * 0.30 * 4.0 / 3.0
             };
             let (card_size, _) = integer_scaled_size(&atlas, "gui_card_common", target_h);
+            let card_font_scale = if win_w < 500.0 { 0.75 } else if win_w < 800.0 { 0.88 } else { 1.0 };
 
             commands
                 .spawn((
@@ -382,7 +386,7 @@ fn sync_overlays(
                     parent
                         .spawn((
                             Node {
-                                min_width: Val::Px(380.0),
+                                min_width: Val::Px(if win_w < 500.0 { 320.0 } else { 380.0 }),
                                 padding: UiRect::axes(Val::Px(36.0), Val::Px(12.0)),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
@@ -398,7 +402,11 @@ fn sync_overlays(
                         ))
                         .with_child((
                             Text::new("Choose a reward"),
-                            TextFont { font_size: FontSize::Px(48.0), ..default() },
+                            TextFont {
+                                font: title_font.0.clone(),
+                                font_size: FontSize::Px(if win_w < 500.0 { 40.0 } else { 48.0 }),
+                                ..default()
+                            },
                             TextColor(INK_WOOD),
                             TextLayout { justify: Justify::Center, ..default() },
                         ));
@@ -478,18 +486,27 @@ fn sync_overlays(
                                     card_root.spawn((
                                         Node {
                                             position_type: PositionType::Absolute,
-                                            left: Val::Percent(-10.0),
-                                            width: Val::Percent(120.0),
+                                            left: Val::Percent(-15.0),
+                                            width: Val::Percent(130.0),
                                             bottom: Val::Percent(103.0),
                                             justify_content: JustifyContent::Center,
+                                            align_items: AlignItems::Center,
                                             ..default()
                                         },
                                         children![(
                                             Text::new(&item.name),
-                                            TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                            TextFont {
+                                                font_size: FontSize::Px(
+                                                    (26.0 * card_font_scale).round(),
+                                                ),
+                                                ..default()
+                                            },
                                             TextColor(INK_WOOD),
                                             TextShadow::default(),
-                                            TextLayout { justify: Justify::Center, ..default() },
+                                            TextLayout {
+                                                justify: Justify::Center,
+                                                linebreak: LineBreak::WordBoundary,
+                                            },
                                         )],
                                     ));
 
@@ -542,10 +559,10 @@ fn sync_overlays(
                                             // 2. Parchment text box: spans x 12% - 88%, y 52% - 94%
                                             card.spawn(Node {
                                                 position_type: PositionType::Absolute,
-                                                left: Val::Percent(12.0),
-                                                width: Val::Percent(76.0),
+                                                left: Val::Percent(10.0),
+                                                width: Val::Percent(80.0),
                                                 top: Val::Percent(52.0),
-                                                height: Val::Percent(42.0),
+                                                height: Val::Percent(44.0),
                                                 flex_direction: FlexDirection::Column,
                                                 align_items: AlignItems::Center,
                                                 justify_content: JustifyContent::Center,
@@ -559,7 +576,9 @@ fn sync_overlays(
                                                     tb.spawn((
                                                         Text::new(kind_str),
                                                         TextFont {
-                                                            font_size: FontSize::Px(24.0),
+                                                            font_size: FontSize::Px(
+                                                                (24.0 * card_font_scale).round(),
+                                                            ),
                                                             ..default()
                                                         },
                                                         TextColor(INK_PARCHMENT),
@@ -571,7 +590,9 @@ fn sync_overlays(
                                                     tb.spawn((
                                                         Text::new(&item.description),
                                                         TextFont {
-                                                            font_size: FontSize::Px(24.0),
+                                                            font_size: FontSize::Px(
+                                                                (22.0 * card_font_scale).round(),
+                                                            ),
                                                             ..default()
                                                         },
                                                         TextColor(INK_PARCHMENT),
@@ -579,7 +600,7 @@ fn sync_overlays(
                                                             justify: Justify::Center,
                                                             linebreak: LineBreak::WordBoundary,
                                                         },
-                                                        LineHeight::RelativeToFont(1.1),
+                                                        LineHeight::RelativeToFont(1.05),
                                                     ));
                                                 },
                                             );
@@ -648,7 +669,11 @@ fn sync_overlays(
                             // Title
                             panel.spawn((
                                 Text::new(if *won { "Victory!" } else { "Defeat" }),
-                                TextFont { font_size: FontSize::Px(48.0), ..default() },
+                                TextFont {
+                                    font: title_font.0.clone(),
+                                    font_size: FontSize::Px(48.0),
+                                    ..default()
+                                },
                                 TextColor(INK_PARCHMENT),
                                 TextLayout { justify: Justify::Center, ..default() },
                             ));
@@ -660,9 +685,12 @@ fn sync_overlays(
                                 } else {
                                     level_name.to_string()
                                 }),
-                                TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                TextFont { font_size: FontSize::Px(26.0), ..default() },
                                 TextColor(INK_PARCHMENT),
-                                TextLayout { justify: Justify::Center, ..default() },
+                                TextLayout {
+                                    justify: Justify::Center,
+                                    linebreak: LineBreak::WordBoundary,
+                                },
                             ));
 
                             // Action buttons row: Retry and Levels
@@ -684,9 +712,10 @@ fn sync_overlays(
                                             ButtonVisuals::GOLD,
                                             Node {
                                                 width: Val::Px(140.0),
-                                                height: Val::Px(52.0),
+                                                min_height: Val::Px(52.0),
                                                 justify_content: JustifyContent::Center,
                                                 align_items: AlignItems::Center,
+                                                padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
                                                 ..default()
                                             },
                                             ImageNode {
@@ -698,8 +727,12 @@ fn sync_overlays(
                                         ))
                                         .with_child((
                                             Text::new("Retry"),
-                                            TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                            TextFont { font_size: FontSize::Px(26.0), ..default() },
                                             TextColor(INK_WOOD),
+                                            TextLayout {
+                                                justify: Justify::Center,
+                                                linebreak: LineBreak::NoWrap,
+                                            },
                                         ));
 
                                     btn_row
@@ -710,9 +743,10 @@ fn sync_overlays(
                                             ButtonVisuals::WOOD,
                                             Node {
                                                 width: Val::Px(140.0),
-                                                height: Val::Px(52.0),
+                                                min_height: Val::Px(52.0),
                                                 justify_content: JustifyContent::Center,
                                                 align_items: AlignItems::Center,
+                                                padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
                                                 ..default()
                                             },
                                             ImageNode {
@@ -724,8 +758,12 @@ fn sync_overlays(
                                         ))
                                         .with_child((
                                             Text::new("Levels"),
-                                            TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                            TextFont { font_size: FontSize::Px(26.0), ..default() },
                                             TextColor(INK_WOOD),
+                                            TextLayout {
+                                                justify: Justify::Center,
+                                                linebreak: LineBreak::NoWrap,
+                                            },
                                         ));
                                 });
                         });
@@ -830,6 +868,11 @@ fn sync_hand_bar(
     let dx = (1.0 - overlap) * card_w;
 
     let sidebar_w = if win_w < 600.0 { 108.0 } else { 120.0 };
+    let is_compact = win_w < 600.0;
+    let hand_font_size = if is_compact { 20.0 } else { 26.0 };
+    let hand_sub_font_size = if is_compact { 18.0 } else { 22.0 };
+    let discard_font_size = if is_compact { 22.0 } else { 26.0 };
+    let deck_font_size = if is_compact { 22.0 } else { 26.0 };
     let center_x = if win_w < 600.0 {
         let sidebar_zone = sidebar_w + 6.0 + 8.0;
         (win_w - sidebar_zone) * 0.5
@@ -967,13 +1010,13 @@ fn sync_hand_bar(
                                 },
                             ));
 
-                            // Parchment text box: spans x 12%-88%, y 52%-94%
+                            // Parchment text box: spans x 10%-90%, y 52%-96%
                             card.spawn(Node {
                                 position_type: PositionType::Absolute,
-                                left: Val::Percent(12.0),
-                                width: Val::Percent(76.0),
+                                left: Val::Percent(10.0),
+                                width: Val::Percent(80.0),
                                 top: Val::Percent(52.0),
-                                height: Val::Percent(42.0),
+                                height: Val::Percent(44.0),
                                 flex_direction: FlexDirection::Column,
                                 align_items: AlignItems::Center,
                                 justify_content: JustifyContent::Center,
@@ -985,7 +1028,7 @@ fn sync_hand_bar(
                             .with_children(|tb| {
                                 tb.spawn((
                                     Text::new(spell_name(spell)),
-                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                    TextFont { font_size: FontSize::Px(hand_font_size), ..default() },
                                     TextColor(INK_PARCHMENT),
                                     TextLayout {
                                         justify: Justify::Center,
@@ -1001,7 +1044,7 @@ fn sync_hand_bar(
                                 };
                                 tb.spawn((
                                     Text::new(subtext),
-                                    TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                    TextFont { font_size: FontSize::Px(hand_sub_font_size), ..default() },
                                     TextColor(INK_PARCHMENT),
                                     TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                                 ));
@@ -1092,7 +1135,7 @@ fn sync_hand_bar(
                         ));
                         btn.spawn((
                             Text::new(format!("Discard {discards_left}/{}", tc_core::MAX_DISCARDS)),
-                            TextFont { font_size: FontSize::Px(24.0), ..default() },
+                            TextFont { font_size: FontSize::Px(discard_font_size), ..default() },
                             TextColor(text_color),
                             TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                         ));
@@ -1118,7 +1161,7 @@ fn sync_hand_bar(
                     ))
                     .with_child((
                         Text::new(deck_len.to_string()),
-                        TextFont { font_size: FontSize::Px(24.0), ..default() },
+                        TextFont { font_size: FontSize::Px(deck_font_size), ..default() },
                         TextColor(INK_WOOD),
                         TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                     ));
@@ -1209,6 +1252,7 @@ fn sync_title_menu(
     title_menu: Res<TitleMenu>,
     run: Res<Run>,
     atlas: Res<Atlas>,
+    title_font: Res<TitleFont>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut last_open: Local<Option<bool>>,
     overlay_query: Query<Entity, With<TitleOverlay>>,
@@ -1227,8 +1271,9 @@ fn sync_title_menu(
     }
 
     let win_w = window.iter().next().map(|w| w.width()).unwrap_or(800.0);
-    let btn_w = if win_w < 500.0 { ((win_w - 60.0) / 2.0).clamp(140.0, 180.0) } else { 240.0 };
-    let panel_padding = if win_w < 500.0 { 12.0 } else { 20.0 };
+    let is_compact = win_w < 500.0;
+    let btn_w = if is_compact { ((win_w - 60.0) / 2.0).clamp(140.0, 180.0) } else { 240.0 };
+    let panel_padding = if is_compact { 12.0 } else { 20.0 };
 
     commands
         .spawn((
@@ -1273,7 +1318,7 @@ fn sync_title_menu(
                     parent
                         .spawn((
                             Node {
-                                width: Val::Px(if win_w < 500.0 { 320.0 } else { 380.0 }),
+                                width: Val::Px(if is_compact { 320.0 } else { 380.0 }),
                                 height: Val::Px(52.0),
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
@@ -1288,7 +1333,11 @@ fn sync_title_menu(
                         ))
                         .with_child((
                             Text::new("Terrain Chess"),
-                            TextFont { font_size: FontSize::Px(48.0), ..default() },
+                            TextFont {
+                                font: title_font.0.clone(),
+                                font_size: FontSize::Px(if is_compact { 42.0 } else { 48.0 }),
+                                ..default()
+                            },
                             TextColor(INK_WOOD),
                             TextLayout { justify: Justify::Center, ..default() },
                         ));
@@ -1296,7 +1345,7 @@ fn sync_title_menu(
                     // Items owned count
                     parent.spawn((
                         Text::new(format!("Items: {}", run.profile.owned.len())),
-                        TextFont { font_size: FontSize::Px(24.0), ..default() },
+                        TextFont { font_size: FontSize::Px(26.0), ..default() },
                         TextColor(INK_WOOD),
                         TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
                     ));
@@ -1332,7 +1381,7 @@ fn sync_title_menu(
                                             || match level_def.size {
                                                 16 => 32,
                                                 _ => 16,
-                                            },
+                                             },
                                         );
 
                                         col.spawn((
@@ -1342,11 +1391,12 @@ fn sync_title_menu(
                                             visuals,
                                             Node {
                                                 width: Val::Px(btn_w),
-                                                height: Val::Px(52.0),
+                                                min_height: Val::Px(52.0),
+                                                height: Val::Auto,
                                                 flex_direction: FlexDirection::Column,
                                                 justify_content: JustifyContent::Center,
                                                 align_items: AlignItems::Center,
-                                                padding: UiRect::axes(Val::Px(6.0), Val::Px(2.0)),
+                                                padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
                                                 ..default()
                                             },
                                             ImageNode {
@@ -1359,11 +1409,14 @@ fn sync_title_menu(
                                         .with_children(|btn| {
                                             btn.spawn((
                                                 Text::new(format!("{} · {}", level_def.id, level_def.name)),
-                                                TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                                TextFont {
+                                                    font_size: FontSize::Px(if is_compact { 22.0 } else { 26.0 }),
+                                                    ..default()
+                                                },
                                                 TextColor(INK_WOOD),
                                                 TextLayout {
                                                     justify: Justify::Center,
-                                                    linebreak: LineBreak::NoWrap,
+                                                    linebreak: LineBreak::WordBoundary,
                                                 },
                                             ));
                                             btn.spawn((
@@ -1371,7 +1424,10 @@ fn sync_title_menu(
                                                     "{}×{} · {} pcs",
                                                     level_def.size, level_def.size, piece_count
                                                 )),
-                                                TextFont { font_size: FontSize::Px(24.0), ..default() },
+                                                TextFont {
+                                                    font_size: FontSize::Px(if is_compact { 20.0 } else { 24.0 }),
+                                                    ..default()
+                                                },
                                                 TextColor(INK_WOOD),
                                                 TextLayout {
                                                     justify: Justify::Center,

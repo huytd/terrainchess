@@ -21,6 +21,10 @@ use bevy::prelude::*;
 use bevy::text::Font;
 
 const JACQUARD_FONT: &[u8] = include_bytes!("../../../assets/fonts/Jacquard24-Regular.ttf");
+const HANDJET_FONT: &[u8] = include_bytes!("../../../assets/fonts/Handjet-Medium.ttf");
+
+#[derive(Resource, Clone, Deref)]
+pub struct TitleFont(pub Handle<Font>);
 
 fn main() {
     let mut app = App::new();
@@ -55,11 +59,13 @@ fn main() {
         sfx::SfxPlugin,
     ));
 
-    let font = Font::from_bytes(JACQUARD_FONT.to_vec());
-    app.world_mut()
-        .resource_mut::<Assets<Font>>()
-        .insert(AssetId::default(), font)
-        .expect("insert default font");
+    let handjet = Font::from_bytes(HANDJET_FONT.to_vec());
+    let jacquard = Font::from_bytes(JACQUARD_FONT.to_vec());
+    let mut fonts = app.world_mut().resource_mut::<Assets<Font>>();
+    fonts.insert(AssetId::default(), handjet).expect("insert default font");
+    let title_font = fonts.add(jacquard);
+    drop(fonts);
+    app.insert_resource(TitleFont(title_font));
 
     app.run();
 }
