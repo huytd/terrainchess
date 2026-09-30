@@ -59,8 +59,27 @@ pub fn time_seed() -> u64 {
 
     #[cfg(target_arch = "wasm32")]
     {
-        let t = bevy::platform::time::Instant::now();
-        (t.elapsed().as_nanos() as u64) ^ 0x9E37_79B9_7F4A_7C15
+        fn splitmix64(mut x: u64) -> u64 {
+            x = x.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = x;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        }
+
+        // `Instant::now().elapsed()` is ~0 on wasm, so gather real entropy instead:
+        // wall-clock ms, 64 bits from `Math.random()`, and a sub-ms monotonic clock.
+        static COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let date_bits = js_sys::Date::now().to_bits();
+        let hi = (js_sys::Math::random() * 4_294_967_296.0) as u64;
+        let lo = (js_sys::Math::random() * 4_294_967_296.0) as u64;
+        let rand_bits = (hi << 32) | (lo & 0xFFFF_FFFF);
+        let perf_bits = web_sys::window()
+            .and_then(|w| w.performance())
+            .map(|p| p.now().to_bits())
+            .unwrap_or(0x243F_6A88_85A3_08D3);
+        let count = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        splitmix64(date_bits ^ rand_bits ^ perf_bits ^ count)
     }
 }
 
@@ -119,14 +138,15 @@ fn handle_run_messages(
     mut start_events: MessageReader<StartLevel>,
     mut run: ResMut<Run>,
     mut game_state: ResMut<GameState>,
-    time: Res<Time>,
 ) {
     for pick in pick_events.read() {
         apply_pick(&pick.0, &mut run);
     }
 
     for start in start_events.read() {
-        let seed = time.elapsed().as_nanos() as u64 ^ time_seed();
+        // Fresh entropy per match: `Time::elapsed` is frame-quantized on web,
+        // so it adds almost no entropy over `time_seed()` itself.
+        let seed = time_seed();
         start_level(start.0, &mut run, &mut game_state, seed);
     }
 }

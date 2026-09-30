@@ -11,7 +11,14 @@
     <link data-trunk rel="rust" href="../crates/game/Cargo.toml" data-bin="terrainchess" data-cargo-profile="wasm-release" data-wasm-opt="z" data-wasm-opt-params="--all-features" data-initializer="loader.js" />
     <!-- Only the processed atlas ships; the source sheet stays out of the build. -->
     <link data-trunk rel="copy-file" href="../assets/atlas.png" data-target-path="assets" />
+    <!-- The game's two fonts, so the loading screen matches the in-game UI. -->
+    <link data-trunk rel="copy-file" href="../assets/fonts/Jacquard24-Regular.ttf" data-target-path="assets/fonts" />
+    <link data-trunk rel="copy-file" href="../assets/fonts/Handjet-Medium.ttf" data-target-path="assets/fonts" />
+    <link rel="preload" href="assets/fonts/Jacquard24-Regular.ttf" as="font" type="font/ttf" crossorigin />
+    <link rel="preload" href="assets/fonts/Handjet-Medium.ttf" as="font" type="font/ttf" crossorigin />
     <style>
+      @font-face { font-family: "Jacquard 24"; src: url("assets/fonts/Jacquard24-Regular.ttf") format("truetype"); font-display: block; }
+      @font-face { font-family: "Handjet"; src: url("assets/fonts/Handjet-Medium.ttf") format("truetype"); font-display: block; }
       html, body {
         margin: 0; height: 100%; background: #1a1c2c; overflow: hidden;
         /* Mobile: no page scroll, bounce, text selection or tap flash; the game handles touch. */
@@ -23,11 +30,11 @@
       #loading {
         position: fixed; inset: 0; z-index: 99999; background: #1a1c2c;
         display: flex; flex-direction: column; align-items: center; justify-content: center;
-        font-family: monospace; color: #e9dab2;
+        font-family: "Handjet", monospace; color: #e9dab2;
         transition: opacity 300ms ease;
       }
       .loading-title {
-        color: #e9dab2; font-family: monospace; font-size: 28px; font-weight: bold;
+        color: #e9dab2; font-family: "Jacquard 24", serif; font-size: 48px; font-weight: normal;
         letter-spacing: 1px; margin-bottom: 24px; text-align: center;
       }
       .loading-bar-track {
@@ -49,7 +56,7 @@
         100% { left: 100%; }
       }
       #loading-status {
-        color: #e9dab2; font-family: monospace; font-size: 14px;
+        color: #e9dab2; font-family: "Handjet", monospace; font-size: 22px;
         text-align: center; min-height: 1.2em;
       }
     </style>

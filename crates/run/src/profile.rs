@@ -90,3 +90,44 @@ impl Profile {
         ron::from_str(s)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spell_profile() -> Profile {
+        let mut profile = Profile::new(0);
+        profile.owned = vec![
+            "raise_earth".into(),
+            "lower_earth".into(),
+            "freeze".into(),
+            "bridge".into(),
+            "smite".into(),
+            "shield".into(),
+        ];
+        profile
+    }
+
+    #[test]
+    fn match_setup_shuffles_player_deck_per_seed() {
+        let level = crate::level(1).unwrap();
+        let profile = spell_profile();
+
+        // Same seed => same order (deterministic).
+        let first = profile.match_setup(level, 42).player_deck;
+        let second = profile.match_setup(level, 42).player_deck;
+        assert_eq!(first, second);
+        assert_eq!(first.len(), 15);
+
+        // Different seeds => different orders for most seed pairs.
+        let mut differed = 0;
+        for i in 0..20u64 {
+            let a = profile.match_setup(level, i).player_deck;
+            let b = profile.match_setup(level, 1000 + i).player_deck;
+            if a != b {
+                differed += 1;
+            }
+        }
+        assert!(differed >= 15, "only {differed}/20 seed pairs differed");
+    }
+}
