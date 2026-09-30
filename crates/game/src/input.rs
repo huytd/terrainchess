@@ -19,7 +19,7 @@ use tc_core::{Outcome, PieceKind, Side};
 
 use crate::game::{GameEvent, GameState, MAX_AI_LEVEL};
 use crate::loading::AppState;
-use crate::run::{self, Run, RunPhase, TitleMenu};
+use crate::run::{Run, RunPhase, StartLevel, TitleMenu};
 
 /// Camera distance from the point it looks at, the zoom.
 const MIN_DISTANCE: f32 = 3.0;
@@ -41,10 +41,6 @@ const START_YAW: f32 = -FRAC_PI_4;
 #[derive(Message, Clone, Copy, PartialEq, Eq)]
 pub enum Action {
     Undo,
-    /// Start the specified level.
-    StartLevel(u8),
-    /// Restart the current level.
-    RestartLevel,
     SwapSides,
     AiLevel(i8),
     Deselect,
@@ -497,9 +493,14 @@ fn hotkeys(
     dev: Res<DevMode>,
     mut title_menu: ResMut<TitleMenu>,
     mut actions: MessageWriter<Action>,
+    mut start: MessageWriter<StartLevel>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
-        if title_menu.open {
+        if title_menu.open && title_menu.held.is_some() {
+            title_menu.held = None;
+        } else if title_menu.open && title_menu.prepare.is_some() {
+            title_menu.prepare = None;
+        } else if title_menu.open {
             title_menu.open = false;
         } else if state.armed_spell.is_some() || state.selected.is_some() {
             actions.write(Action::Deselect);
@@ -508,23 +509,35 @@ fn hotkeys(
         }
     }
 
+    if title_menu.open
+        && let Some(level) = title_menu.prepare
+        && keys.any_just_pressed([KeyCode::Enter, KeyCode::NumpadEnter])
+    {
+        start.write(StartLevel(level));
+        title_menu.open = false;
+        title_menu.prepare = None;
+        title_menu.held = None;
+    }
+
     if title_menu.open {
         return;
     }
 
+    // Browser and OS shortcuts (Cmd+1 switches tabs, Ctrl+D bookmarks) aren't game keys.
+    let chord = keys.any_pressed([
+        KeyCode::SuperLeft,
+        KeyCode::SuperRight,
+        KeyCode::ControlLeft,
+        KeyCode::ControlRight,
+        KeyCode::AltLeft,
+        KeyCode::AltRight,
+    ]);
+
     for (key, action) in [
-        (KeyCode::Digit1, Action::StartLevel(1)),
-        (KeyCode::Digit2, Action::StartLevel(2)),
-        (KeyCode::Digit3, Action::StartLevel(3)),
-        (KeyCode::Digit4, Action::StartLevel(4)),
-        (KeyCode::Digit5, Action::ArmSlot(0)),
-        (KeyCode::Digit6, Action::ArmSlot(1)),
-        (KeyCode::Digit7, Action::ArmSlot(2)),
-        (KeyCode::Digit8, Action::StartLevel(8)),
-        (KeyCode::Digit9, Action::StartLevel(9)),
-        (KeyCode::Digit0, Action::StartLevel(10)),
+        (KeyCode::Digit1, Action::ArmSlot(0)),
+        (KeyCode::Digit2, Action::ArmSlot(1)),
+        (KeyCode::Digit3, Action::ArmSlot(2)),
         (KeyCode::KeyD, Action::Discard),
-        (KeyCode::KeyN, Action::RestartLevel),
         (KeyCode::KeyF, Action::SwapSides),
         (KeyCode::Minus, Action::AiLevel(-1)),
         (KeyCode::Equal, Action::AiLevel(1)),
@@ -534,7 +547,7 @@ fn hotkeys(
         (KeyCode::KeyE, Action::Turn(-1)),
         (KeyCode::KeyA, Action::ToggleArrows),
     ] {
-        if keys.just_pressed(key) {
+        if !chord && keys.just_pressed(key) {
             actions.write(action);
         }
     }
@@ -561,7 +574,7 @@ fn hotkeys(
 fn apply_actions(
     mut actions: MessageReader<Action>,
     mut state: ResMut<GameState>,
-    mut run: ResMut<Run>,
+    run: Res<Run>,
     mut orbit: ResMut<Orbit>,
     mut arrows: ResMut<ArrowsEnabled>,
     time: Res<Time>,
@@ -569,29 +582,10 @@ fn apply_actions(
 ) {
     for &action in actions.read() {
         if run.phase != RunPhase::Playing {
-            match action {
-                Action::StartLevel(level) => {
-                    let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
-                    run::start_level(level, &mut run, &mut state, seed);
-                }
-                Action::RestartLevel => {
-                    let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
-                    run::start_level(run.level, &mut run, &mut state, seed);
-                }
-                _ => {}
-            }
             continue;
         }
 
         match action {
-            Action::StartLevel(level) => {
-                let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
-                run::start_level(level, &mut run, &mut state, seed);
-            }
-            Action::RestartLevel => {
-                let seed = time.elapsed().as_nanos() as u64 ^ run::time_seed();
-                run::start_level(run.level, &mut run, &mut state, seed);
-            }
             Action::SwapSides if state.ai_side.is_some() => {
                 state.ai_side = state.ai_side.map(Side::opposite);
                 state.selected = None;

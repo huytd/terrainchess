@@ -2,14 +2,14 @@ use bevy::prelude::*;
 use bevy::text::LineHeight;
 use bevy::window::PrimaryWindow;
 use tc_core::rules::DrawReason;
-use tc_core::{Outcome, Side};
+use tc_core::{Outcome, Side, SpellId};
 use tc_run::ItemKind;
 
 use crate::TitleFont;
 use crate::atlas::Atlas;
 use crate::game::GameState;
 use crate::loading::AppState;
-use crate::run::{PickCard, Run, RunPhase, StartLevel, TitleMenu};
+use crate::run::{DeckEdit, DeckSlot, PickCard, Run, RunPhase, StartLevel, TitleMenu};
 
 /// Ink colour on light wood.
 pub const INK_WOOD: Color = Color::srgb_u8(0xF7, 0xED, 0xD0);
@@ -1192,9 +1192,9 @@ fn sync_hand_bar(
                                 let subtext = if is_used {
                                     "Used".to_string()
                                 } else if spell.is_quick() {
-                                    format!("[{}] Quick", slot_idx + 5)
+                                    format!("[{}] Quick", slot_idx + 1)
                                 } else {
-                                    format!("[{}]", slot_idx + 5)
+                                    format!("[{}]", slot_idx + 1)
                                 };
                                 tb.spawn((
                                     Text::new(subtext),
@@ -1451,6 +1451,61 @@ fn handle_card_interaction(
     }
 }
 
+#[derive(Component)]
+struct PrepareCard {
+    slot: DeckSlot,
+    spell: SpellId,
+}
+
+#[derive(Component)]
+struct PrepareDetail;
+
+#[derive(Component)]
+struct PrepareBack;
+
+#[derive(Component)]
+struct PrepareShuffle;
+
+#[derive(Component)]
+struct PrepareReset;
+
+#[derive(Component)]
+struct PrepareStart;
+
+/// What the title panel was last built from; any change rebuilds it.
+type TitleKey = (bool, Option<u8>, Option<DeckSlot>, Vec<SpellId>, bool, (u32, u32));
+
+/// Pieces per side on a level: its army, or the standard set for its board size.
+fn level_piece_count(level: &tc_run::Level) -> usize {
+    level.army.map(|a| a.len()).unwrap_or(match level.size {
+        16 => 32,
+        _ => 16,
+    })
+}
+
+/// The held card on the Prepare screen, if any.
+fn held_spell(held: Option<DeckSlot>, deck: &[SpellId], reserve: &[SpellId]) -> Option<SpellId> {
+    match held? {
+        DeckSlot::Deck(i) => deck.get(i).copied(),
+        DeckSlot::Reserve(r) => reserve.get(r).copied(),
+    }
+}
+
+/// A card's name and effect, for the Prepare screen's detail line.
+fn card_detail(spell: SpellId) -> String {
+    let quick = if spell.is_quick() { " (Quick: doesn't use your turn)" } else { "" };
+    format!("{} — {}{quick}", spell_name(spell), spell.effect_text())
+}
+
+/// The Prepare screen's detail line when no card is hovered.
+fn prepare_hint(held: Option<SpellId>, shuffle: bool) -> String {
+    match held {
+        Some(spell) => format!("Tap another card to swap it with {}.", spell_name(spell)),
+        None if shuffle => "Shuffled at the start of each match. Tap two cards to swap them.".into(),
+        None => "Drawn in this order — cards 1–3 are your opening hand.".into(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn sync_title_menu(
     mut commands: Commands,
@@ -1459,13 +1514,23 @@ fn sync_title_menu(
     atlas: Res<Atlas>,
     title_font: Res<TitleFont>,
     window: Query<&Window, With<PrimaryWindow>>,
-    mut last_open: Local<Option<bool>>,
+    mut last: Local<Option<TitleKey>>,
     overlay_query: Query<Entity, With<TitleOverlay>>,
 ) {
-    if *last_open == Some(title_menu.open) {
+    let (win_w, win_h) = window.iter().next().map(|w| (w.width(), w.height())).unwrap_or((800.0, 600.0));
+    let deck = if title_menu.prepare.is_some() { run.profile.deck() } else { Vec::new() };
+    let key: TitleKey = (
+        title_menu.open,
+        title_menu.prepare,
+        title_menu.held,
+        deck,
+        run.profile.shuffle_deck,
+        (win_w as u32, win_h as u32),
+    );
+    if last.as_ref() == Some(&key) {
         return;
     }
-    *last_open = Some(title_menu.open);
+    *last = Some(key);
 
     for e in &overlay_query {
         commands.entity(e).despawn();
@@ -1475,9 +1540,7 @@ fn sync_title_menu(
         return;
     }
 
-    let win_w = window.iter().next().map(|w| w.width()).unwrap_or(800.0);
     let is_compact = win_w < 500.0;
-    let btn_w = if is_compact { ((win_w - 60.0) / 2.0).clamp(140.0, 180.0) } else { 240.0 };
     let panel_padding = if is_compact { 12.0 } else { 20.0 };
 
     commands
@@ -1520,157 +1583,530 @@ fn sync_title_menu(
                         ..default()
                     },
                 ))
-                .with_children(|parent| {
-                    // Title banner: large light ink on a banner
-                    parent
-                        .spawn((
+                .with_children(|parent| match title_menu.prepare.and_then(tc_run::level) {
+                    Some(level) => {
+                        spawn_prepare(parent, level, &run, title_menu.held, &atlas, &title_font, win_w)
+                    }
+                    None => spawn_level_select(parent, &run, &atlas, &title_font, win_w),
+                });
+        });
+}
+
+/// A title banner with large light ink, as on the level select.
+fn spawn_banner(
+    parent: &mut ChildSpawnerCommands,
+    text: String,
+    width: f32,
+    font_px: f32,
+    atlas: &Atlas,
+    title_font: &TitleFont,
+) {
+    parent
+        .spawn((
+            Node {
+                width: Val::Px(width),
+                height: Val::Px(52.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            ImageNode {
+                image: atlas.image.clone(),
+                rect: Some(atlas.rect("banner")),
+                image_mode: banner_slicer(),
+                ..default()
+            },
+        ))
+        .with_child((
+            Text::new(text),
+            TextFont {
+                font: FontSource::Handle(title_font.0.clone()),
+                font_size: FontSize::Px(font_px),
+                ..default()
+            },
+            TextColor(INK_WOOD),
+            TextLayout { justify: Justify::Center, ..default() },
+        ));
+}
+
+fn spawn_level_select(
+    parent: &mut ChildSpawnerCommands,
+    run: &Run,
+    atlas: &Atlas,
+    title_font: &TitleFont,
+    win_w: f32,
+) {
+    let is_compact = win_w < 500.0;
+    let btn_w = if is_compact { ((win_w - 60.0) / 2.0).clamp(140.0, 180.0) } else { 240.0 };
+    let panel_padding = if is_compact { 12.0 } else { 20.0 };
+
+    spawn_banner(
+        parent,
+        "Terrain Chess".into(),
+        fit_width(if is_compact { 320.0 } else { 380.0 }, win_w - 2.0 * panel_padding),
+        if is_compact { 42.0 } else { 48.0 },
+        atlas,
+        title_font,
+    );
+
+    // Items owned count
+    parent.spawn((
+        Text::new(format!("Items: {}", run.profile.owned.len())),
+        TextFont { font_size: FontSize::Px(26.0), ..default() },
+        TextColor(INK_WOOD),
+        TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
+    ));
+
+    // 2 columns of 5 levels each
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            column_gap: Val::Px(10.0),
+            align_items: AlignItems::FlexStart,
+            justify_content: JustifyContent::Center,
+            margin: UiRect::top(Val::Px(4.0)),
+            ..default()
+        })
+        .with_children(|grid| {
+            for col_levels in tc_run::LEVELS.chunks(5) {
+                grid.spawn(Node {
+                    flex_direction: FlexDirection::Column,
+                    row_gap: Val::Px(8.0),
+                    align_items: AlignItems::Center,
+                    ..default()
+                })
+                .with_children(|col| {
+                    for level_def in col_levels {
+                        let is_cleared = run.profile.cleared.contains(&level_def.id);
+                        let visuals = if is_cleared { ButtonVisuals::GOLD } else { ButtonVisuals::WOOD };
+                        let sprite = if is_cleared { "btn_gold" } else { "btn_wood" };
+
+                        col.spawn((
+                            Button,
+                            Interaction::default(),
+                            LevelButton(level_def.id),
+                            visuals,
                             Node {
-                                width: Val::Px(fit_width(
-                                    if is_compact { 320.0 } else { 380.0 },
-                                    win_w - 2.0 * panel_padding,
-                                )),
-                                height: Val::Px(52.0),
+                                width: Val::Px(btn_w),
+                                min_height: Val::Px(52.0),
+                                height: Val::Auto,
+                                flex_direction: FlexDirection::Column,
                                 justify_content: JustifyContent::Center,
                                 align_items: AlignItems::Center,
+                                padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
                                 ..default()
                             },
                             ImageNode {
                                 image: atlas.image.clone(),
-                                rect: Some(atlas.rect("banner")),
-                                image_mode: banner_slicer(),
+                                rect: Some(atlas.rect(sprite)),
+                                image_mode: button_slicer(),
                                 ..default()
                             },
                         ))
-                        .with_child((
-                            Text::new("Terrain Chess"),
-                            TextFont {
-                                font: FontSource::Handle(title_font.0.clone()),
-                                font_size: FontSize::Px(if is_compact { 42.0 } else { 48.0 }),
+                        .with_children(|btn| {
+                            btn.spawn((
+                                Text::new(format!("{} · {}", level_def.id, level_def.name)),
+                                TextFont {
+                                    font_size: FontSize::Px(if is_compact { 22.0 } else { 26.0 }),
+                                    ..default()
+                                },
+                                TextColor(INK_WOOD),
+                                TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
+                            ));
+                            btn.spawn((
+                                Text::new(format!(
+                                    "{}×{} · {} pcs",
+                                    level_def.size,
+                                    level_def.size,
+                                    level_piece_count(level_def)
+                                )),
+                                TextFont {
+                                    font_size: FontSize::Px(if is_compact { 20.0 } else { 24.0 }),
+                                    ..default()
+                                },
+                                TextColor(INK_WOOD),
+                                TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
+                            ));
+                        });
+                    }
+                });
+            }
+        });
+}
+
+/// The Prepare screen: level info, the 15-card deck in draw order, the reserve, and Start.
+fn spawn_prepare(
+    parent: &mut ChildSpawnerCommands,
+    level: &tc_run::Level,
+    run: &Run,
+    held: Option<DeckSlot>,
+    atlas: &Atlas,
+    title_font: &TitleFont,
+    win_w: f32,
+) {
+    let is_compact = win_w < 500.0;
+    let panel_padding = if is_compact { 12.0 } else { 20.0 };
+    let avail = win_w.min(760.0) - 2.0 * OVERLAY_GUTTER - 2.0 * panel_padding;
+    let gap = if is_compact { 4.0 } else { 8.0 };
+    let tile_w = ((avail - 4.0 * gap) / 5.0).floor().clamp(62.0, 112.0);
+    let grid_w = 5.0 * tile_w + 4.0 * gap;
+    let shuffle = run.profile.shuffle_deck;
+    let deck = run.profile.deck();
+    let reserve = run.profile.deck_reserve();
+    let px = |big: f32, small: f32| FontSize::Px(if is_compact { small } else { big });
+
+    spawn_banner(
+        parent,
+        format!("{} · {}", level.id, level.name),
+        fit_width(if is_compact { 320.0 } else { 380.0 }, win_w - 2.0 * panel_padding),
+        if is_compact { 40.0 } else { 48.0 },
+        atlas,
+        title_font,
+    );
+
+    parent.spawn((
+        Text::new(format!("{}×{} · {} pcs", level.size, level.size, level_piece_count(level))),
+        TextFont { font_size: px(26.0, 22.0), ..default() },
+        TextColor(INK_WOOD),
+        TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
+    ));
+
+    let mut header = format!("Your deck · {} cards", deck.len());
+    if !reserve.is_empty() {
+        header += &format!(" · {} in reserve", reserve.len());
+    }
+    parent.spawn((
+        Text::new(header),
+        TextFont { font_size: px(24.0, 20.0), ..default() },
+        TextColor(INK_WOOD),
+        TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
+    ));
+
+    let grid = Node {
+        width: Val::Px(grid_w),
+        flex_direction: FlexDirection::Row,
+        flex_wrap: FlexWrap::Wrap,
+        justify_content: JustifyContent::Center,
+        column_gap: Val::Px(gap),
+        row_gap: Val::Px(gap),
+        ..default()
+    };
+
+    parent.spawn(grid.clone()).with_children(|grid| {
+        for (i, &spell) in deck.iter().enumerate() {
+            let slot = DeckSlot::Deck(i);
+            let (sprite, slicer) = if held == Some(slot) {
+                ("btn_gold", button_slicer())
+            } else {
+                ("panel_gui_parchment", panel_slicer())
+            };
+            grid.spawn((
+                Button,
+                Interaction::default(),
+                PrepareCard { slot, spell },
+                Node {
+                    width: Val::Px(tile_w),
+                    flex_direction: FlexDirection::Column,
+                    align_items: AlignItems::Center,
+                    padding: if is_compact {
+                        UiRect::axes(Val::Px(1.0), Val::Px(3.0))
+                    } else {
+                        UiRect::all(Val::Px(4.0))
+                    },
+                    row_gap: Val::Px(2.0),
+                    position_type: PositionType::Relative,
+                    ..default()
+                },
+                ImageNode {
+                    image: atlas.image.clone(),
+                    rect: Some(atlas.rect(sprite)),
+                    image_mode: slicer,
+                    ..default()
+                },
+            ))
+            .with_children(|tile| {
+                if !shuffle {
+                    // Cards 1–3 are the opening hand.
+                    let ink = if i < 3 { Color::srgb_u8(0x9A, 0x6A, 0x12) } else { INK_PARCHMENT };
+                    tile.spawn((
+                        Text::new(format!("{}", i + 1)),
+                        TextFont { font_size: px(18.0, 16.0), ..default() },
+                        TextColor(ink),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(6.0),
+                            top: Val::Px(3.0),
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                    ));
+                }
+                let art = format!("art_{}", spell_item_id(spell));
+                // Older art is 60×54, newer art 30×26 drawn at 2×.
+                let (art_px, _) = integer_scaled_size(atlas, &art, 54.0);
+                tile.spawn((
+                    ImageNode { image: atlas.image.clone(), rect: Some(atlas.rect(&art)), ..default() },
+                    Node { width: Val::Px(art_px.x), height: Val::Px(art_px.y), ..default() },
+                    Pickable::IGNORE,
+                ));
+                tile.spawn((
+                    Text::new(spell_name(spell)),
+                    TextFont { font_size: px(20.0, 16.0), ..default() },
+                    TextColor(INK_PARCHMENT),
+                    TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
+                    Pickable::IGNORE,
+                ));
+                // Spawned after the art so it draws on top where the art fills a phone tile.
+                if spell.is_quick() {
+                    spawn_bolt(tile, atlas);
+                }
+            });
+        }
+    });
+
+    parent.spawn((
+        PrepareDetail,
+        Text::new(prepare_hint(held_spell(held, &deck, &reserve), shuffle)),
+        TextFont { font_size: px(22.0, 18.0), ..default() },
+        TextColor(INK_WOOD),
+        TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
+        Node {
+            width: Val::Px(avail.min(grid_w + 40.0)),
+            min_height: Val::Px(if is_compact { 40.0 } else { 50.0 }),
+            ..default()
+        },
+    ));
+
+    if !reserve.is_empty() {
+        parent.spawn((
+            Text::new("Reserve"),
+            TextFont { font_size: px(24.0, 20.0), ..default() },
+            TextColor(INK_WOOD),
+        ));
+        parent.spawn(grid).with_children(|grid| {
+            for (r, &spell) in reserve.iter().enumerate() {
+                let slot = DeckSlot::Reserve(r);
+                let is_held = held == Some(slot);
+                let (sprite, slicer) = if is_held {
+                    ("btn_gold", button_slicer())
+                } else {
+                    ("panel_gui_parchment", panel_slicer())
+                };
+                grid.spawn((
+                    Button,
+                    Interaction::default(),
+                    PrepareCard { slot, spell },
+                    Node {
+                        width: Val::Px(tile_w),
+                        min_height: Val::Px(30.0),
+                        column_gap: Val::Px(2.0),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        padding: UiRect::axes(Val::Px(4.0), Val::Px(3.0)),
+                        position_type: PositionType::Relative,
+                        ..default()
+                    },
+                    ImageNode {
+                        image: atlas.image.clone(),
+                        rect: Some(atlas.rect(sprite)),
+                        image_mode: slicer,
+                        color: if is_held { Color::WHITE } else { Color::srgb(0.78, 0.74, 0.70) },
+                        ..default()
+                    },
+                ))
+                .with_children(|chip| {
+                    chip.spawn((
+                        Text::new(spell_name(spell)),
+                        TextFont { font_size: px(18.0, 16.0), ..default() },
+                        TextColor(INK_PARCHMENT),
+                        TextLayout { justify: Justify::Center, linebreak: LineBreak::WordBoundary },
+                        Pickable::IGNORE,
+                    ));
+                    // Phone chips are too narrow for a long name plus the bolt; hover still says Quick.
+                    if spell.is_quick() && !is_compact {
+                        chip.spawn((
+                            ImageNode {
+                                image: atlas.image.clone(),
+                                rect: Some(atlas.rect("icon_bolt")),
                                 ..default()
                             },
-                            TextColor(INK_WOOD),
-                            TextLayout { justify: Justify::Center, ..default() },
+                            Node {
+                                width: Val::Px(15.0),
+                                height: Val::Px(13.0),
+                                flex_shrink: 0.0,
+                                ..default()
+                            },
+                            Pickable::IGNORE,
                         ));
-
-                    // Items owned count
-                    parent.spawn((
-                        Text::new(format!("Items: {}", run.profile.owned.len())),
-                        TextFont { font_size: FontSize::Px(26.0), ..default() },
-                        TextColor(INK_WOOD),
-                        TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
-                    ));
-
-                    // 2 columns of 5 levels each
-                    parent
-                        .spawn(Node {
-                            flex_direction: FlexDirection::Row,
-                            column_gap: Val::Px(10.0),
-                            align_items: AlignItems::FlexStart,
-                            justify_content: JustifyContent::Center,
-                            margin: UiRect::top(Val::Px(4.0)),
-                            ..default()
-                        })
-                        .with_children(|grid| {
-                            for col_levels in tc_run::LEVELS.chunks(5) {
-                                grid.spawn(Node {
-                                    flex_direction: FlexDirection::Column,
-                                    row_gap: Val::Px(8.0),
-                                    align_items: AlignItems::Center,
-                                    ..default()
-                                })
-                                .with_children(|col| {
-                                    for level_def in col_levels {
-                                        let is_cleared = run.profile.cleared.contains(&level_def.id);
-                                        let visuals = if is_cleared {
-                                            ButtonVisuals::GOLD
-                                        } else {
-                                            ButtonVisuals::WOOD
-                                        };
-                                        let sprite = if is_cleared { "btn_gold" } else { "btn_wood" };
-                                        let piece_count = level_def.army.map(|a| a.len()).unwrap_or_else(
-                                            || match level_def.size {
-                                                16 => 32,
-                                                _ => 16,
-                                            },
-                                        );
-
-                                        col.spawn((
-                                            Button,
-                                            Interaction::default(),
-                                            LevelButton(level_def.id),
-                                            visuals,
-                                            Node {
-                                                width: Val::Px(btn_w),
-                                                min_height: Val::Px(52.0),
-                                                height: Val::Auto,
-                                                flex_direction: FlexDirection::Column,
-                                                justify_content: JustifyContent::Center,
-                                                align_items: AlignItems::Center,
-                                                padding: UiRect::axes(Val::Px(6.0), Val::Px(4.0)),
-                                                ..default()
-                                            },
-                                            ImageNode {
-                                                image: atlas.image.clone(),
-                                                rect: Some(atlas.rect(sprite)),
-                                                image_mode: button_slicer(),
-                                                ..default()
-                                            },
-                                        ))
-                                        .with_children(|btn| {
-                                            btn.spawn((
-                                                Text::new(format!("{} · {}", level_def.id, level_def.name)),
-                                                TextFont {
-                                                    font_size: FontSize::Px(if is_compact {
-                                                        22.0
-                                                    } else {
-                                                        26.0
-                                                    }),
-                                                    ..default()
-                                                },
-                                                TextColor(INK_WOOD),
-                                                TextLayout {
-                                                    justify: Justify::Center,
-                                                    linebreak: LineBreak::WordBoundary,
-                                                },
-                                            ));
-                                            btn.spawn((
-                                                Text::new(format!(
-                                                    "{}×{} · {} pcs",
-                                                    level_def.size, level_def.size, piece_count
-                                                )),
-                                                TextFont {
-                                                    font_size: FontSize::Px(if is_compact {
-                                                        20.0
-                                                    } else {
-                                                        24.0
-                                                    }),
-                                                    ..default()
-                                                },
-                                                TextColor(INK_WOOD),
-                                                TextLayout {
-                                                    justify: Justify::Center,
-                                                    linebreak: LineBreak::NoWrap,
-                                                },
-                                            ));
-                                        });
-                                    }
-                                });
-                            }
-                        });
+                    }
                 });
+            }
         });
+    }
+
+    let btn_w = if is_compact { (avail - 12.0) / 2.0 } else { 140.0 };
+    parent
+        .spawn(Node {
+            flex_direction: FlexDirection::Row,
+            flex_wrap: FlexWrap::Wrap,
+            column_gap: Val::Px(12.0),
+            row_gap: Val::Px(8.0),
+            justify_content: JustifyContent::Center,
+            margin: UiRect::top(Val::Px(4.0)),
+            ..default()
+        })
+        .with_children(|row| {
+            let reset_disabled = run.profile.deck.is_empty() && shuffle;
+            let shuffle_label = if shuffle { "Shuffle: On" } else { "Shuffle: Off" };
+            spawn_prepare_button(row, PrepareBack, "Back", ButtonVisuals::WOOD, false, btn_w, atlas);
+            spawn_prepare_button(
+                row,
+                PrepareShuffle,
+                shuffle_label,
+                ButtonVisuals::WOOD,
+                false,
+                btn_w,
+                atlas,
+            );
+            spawn_prepare_button(
+                row,
+                PrepareReset,
+                "Reset",
+                ButtonVisuals::WOOD,
+                reset_disabled,
+                btn_w,
+                atlas,
+            );
+            spawn_prepare_button(row, PrepareStart, "Start", ButtonVisuals::GOLD, false, btn_w, atlas);
+        });
+}
+
+/// The quick-spell bolt in a card's top-right corner.
+fn spawn_bolt(parent: &mut ChildSpawnerCommands, atlas: &Atlas) {
+    let size = atlas.px("icon_bolt");
+    parent.spawn((
+        ImageNode { image: atlas.image.clone(), rect: Some(atlas.rect("icon_bolt")), ..default() },
+        Node {
+            position_type: PositionType::Absolute,
+            right: Val::Px(3.0),
+            top: Val::Px(2.0),
+            width: Val::Px(size.x),
+            height: Val::Px(size.y),
+            ..default()
+        },
+        Pickable::IGNORE,
+    ));
+}
+
+fn spawn_prepare_button(
+    parent: &mut ChildSpawnerCommands,
+    marker: impl Component,
+    label: &str,
+    visuals: ButtonVisuals,
+    disabled: bool,
+    width: f32,
+    atlas: &Atlas,
+) {
+    let sprite = if disabled { visuals.disabled.unwrap_or(visuals.normal) } else { visuals.normal };
+    parent
+        .spawn((
+            Button,
+            Interaction::default(),
+            marker,
+            visuals,
+            ButtonDisabled(disabled),
+            Node {
+                width: Val::Px(width),
+                height: Val::Px(52.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                ..default()
+            },
+            ImageNode {
+                image: atlas.image.clone(),
+                rect: Some(atlas.rect(sprite)),
+                image_mode: button_slicer(),
+                ..default()
+            },
+        ))
+        .with_child((
+            Text::new(label),
+            TextFont { font_size: FontSize::Px(26.0), ..default() },
+            TextColor(INK_WOOD),
+            TextLayout { justify: Justify::Center, linebreak: LineBreak::NoWrap },
+            Pickable::IGNORE,
+        ));
 }
 
 fn handle_level_buttons(
     button_query: Query<(&Interaction, &LevelButton), (Changed<Interaction>, With<Button>)>,
     mut title_menu: ResMut<TitleMenu>,
-    mut start_writer: MessageWriter<StartLevel>,
 ) {
     for (interaction, btn) in &button_query {
         if *interaction == Interaction::Pressed {
-            start_writer.write(StartLevel(btn.0));
-            title_menu.open = false;
+            title_menu.prepare = Some(btn.0);
+            title_menu.held = None;
         }
+    }
+}
+
+/// Deck tiles: tap to pick up / swap, hover to lift the tile and describe the card.
+fn handle_prepare_cards(
+    mut cards: Query<(&Interaction, &PrepareCard, &mut Node), Changed<Interaction>>,
+    mut detail: Query<&mut Text, With<PrepareDetail>>,
+    title_menu: Res<TitleMenu>,
+    run: Res<Run>,
+    mut edits: MessageWriter<DeckEdit>,
+) {
+    for (interaction, card, mut node) in &mut cards {
+        let text = match interaction {
+            Interaction::Pressed => {
+                edits.write(DeckEdit::Tap(card.slot));
+                continue;
+            }
+            Interaction::Hovered => {
+                node.top = Val::Px(-4.0);
+                card_detail(card.spell)
+            }
+            Interaction::None => {
+                node.top = Val::Px(0.0);
+                let held = held_spell(title_menu.held, &run.profile.deck(), &run.profile.deck_reserve());
+                prepare_hint(held, run.profile.shuffle_deck)
+            }
+        };
+        for mut t in &mut detail {
+            t.0 = text.clone();
+        }
+    }
+}
+
+#[allow(clippy::type_complexity)]
+fn handle_prepare_buttons(
+    back: Query<&Interaction, (Changed<Interaction>, With<PrepareBack>)>,
+    shuffle: Query<&Interaction, (Changed<Interaction>, With<PrepareShuffle>)>,
+    reset: Query<(&Interaction, &ButtonDisabled), (Changed<Interaction>, With<PrepareReset>)>,
+    start: Query<&Interaction, (Changed<Interaction>, With<PrepareStart>)>,
+    mut title_menu: ResMut<TitleMenu>,
+    mut edits: MessageWriter<DeckEdit>,
+    mut start_writer: MessageWriter<StartLevel>,
+) {
+    if back.iter().any(|i| *i == Interaction::Pressed) {
+        title_menu.prepare = None;
+        title_menu.held = None;
+    }
+    if shuffle.iter().any(|i| *i == Interaction::Pressed) {
+        edits.write(DeckEdit::ToggleShuffle);
+    }
+    if reset.iter().any(|(i, d)| *i == Interaction::Pressed && !d.0) {
+        edits.write(DeckEdit::Reset);
+    }
+    if start.iter().any(|i| *i == Interaction::Pressed)
+        && let Some(level) = title_menu.prepare
+    {
+        start_writer.write(StartLevel(level));
+        title_menu.open = false;
+        title_menu.prepare = None;
+        title_menu.held = None;
     }
 }
 
@@ -1681,6 +2117,8 @@ fn handle_menu_button(
     for interaction in &button_query {
         if *interaction == Interaction::Pressed {
             title_menu.open = !title_menu.open;
+            title_menu.prepare = None;
+            title_menu.held = None;
         }
     }
 }
@@ -1709,6 +2147,8 @@ fn handle_result_buttons(
         if *interaction == Interaction::Pressed {
             run.phase = RunPhase::Playing;
             title_menu.open = true;
+            title_menu.prepare = None;
+            title_menu.held = None;
         }
     }
 }
@@ -1831,6 +2271,8 @@ impl Plugin for HudPlugin {
                 handle_card_interaction,
                 handle_result_buttons,
                 handle_level_buttons,
+                handle_prepare_cards,
+                handle_prepare_buttons,
                 handle_menu_button,
                 handle_hand_card_interaction,
                 handle_discard_button_interaction,

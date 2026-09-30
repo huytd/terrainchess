@@ -11,6 +11,7 @@ use tc_core::spell::SpellId;
 use tc_core::terrain::{Feature, Terrain, TileKind};
 use tc_core::worldgen::GenParams;
 
+use crate::deck::{self, DECK_SIZE};
 use crate::item::{ItemId, ItemKind, Rarity, RelicEffect, catalog, find_item};
 
 /// Number of normal floors before the boss.
@@ -243,32 +244,8 @@ impl RunState {
             }
         }
 
-        let mut player_deck = Vec::with_capacity(15);
-        for id in &self.owned {
-            if let Some(crate::item::Item { kind: ItemKind::Spell { spell, charges: c, .. }, .. }) =
-                find_item(id)
-            {
-                for _ in 0..*c {
-                    if player_deck.len() < 15 {
-                        player_deck.push(*spell);
-                    }
-                }
-            }
-        }
-
-        const FILLER: [SpellId; 5] =
-            [SpellId::RaiseEarth, SpellId::LowerEarth, SpellId::Shield, SpellId::Swap, SpellId::Freeze];
-        let mut filler_idx = 0;
-        while player_deck.len() < 15 {
-            player_deck.push(FILLER[filler_idx % FILLER.len()]);
-            filler_idx += 1;
-        }
-
-        let mut player_rng = Rng::new(seed);
-        for i in (1..player_deck.len()).rev() {
-            let j = player_rng.below((i + 1) as u32) as usize;
-            player_deck.swap(i, j);
-        }
+        let mut player_deck = deck::card_pool(&self.owned)[..DECK_SIZE].to_vec();
+        deck::shuffle(&mut player_deck, seed);
 
         const ALL_CASTABLE: [SpellId; 16] = [
             SpellId::RaiseEarth,
@@ -298,7 +275,7 @@ impl RunState {
         }
         let mut enemy_filler_idx = 0;
         while enemy_deck.len() < 15 {
-            enemy_deck.push(FILLER[enemy_filler_idx % FILLER.len()]);
+            enemy_deck.push(deck::FILLER[enemy_filler_idx % deck::FILLER.len()]);
             enemy_filler_idx += 1;
         }
         for i in (1..enemy_deck.len()).rev() {

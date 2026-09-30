@@ -198,3 +198,89 @@ fn profile_ron_round_trip() {
     let loaded_default: Profile = Profile::from_ron(ron_without_last_draft).expect("deserialize");
     assert_eq!(loaded_default.last_draft, None);
 }
+
+fn all_spells_profile() -> Profile {
+    let mut profile = Profile::new(7);
+    profile.owned = catalog()
+        .iter()
+        .filter(|i| matches!(i.kind, tc_run::item::ItemKind::Spell { .. }))
+        .map(|i| i.id.clone())
+        .collect();
+    profile
+}
+
+fn multiset(v: &[tc_run::SpellId]) -> Vec<String> {
+    let mut s: Vec<String> = v.iter().map(|c| format!("{c:?}")).collect();
+    s.sort();
+    s
+}
+
+#[test]
+fn deck_swaps_keep_the_pool() {
+    let mut profile = all_spells_profile();
+    let reserve = profile.deck_reserve();
+    assert!(!reserve.is_empty());
+    let old = profile.deck()[2];
+    profile.swap_with_reserve(2, 0);
+    assert!(profile.shuffle_deck, "reserve swaps don't change shuffling");
+    assert_eq!(profile.deck()[2], reserve[0]);
+    assert!(profile.deck_reserve().contains(&old));
+    let mut all = profile.deck();
+    all.extend(profile.deck_reserve());
+    assert_eq!(multiset(&all), multiset(&profile.deck_pool()));
+
+    let before = profile.deck();
+    profile.swap_deck_cards(0, 4);
+    assert!(!profile.shuffle_deck);
+    assert_eq!(profile.deck()[0], before[4]);
+    assert_eq!(profile.deck()[4], before[0]);
+
+    // Out of range is a no-op.
+    let before = profile.deck();
+    profile.swap_deck_cards(0, 99);
+    profile.swap_with_reserve(99, 0);
+    assert_eq!(profile.deck(), before);
+
+    profile.reset_deck();
+    assert!(profile.deck.is_empty() && profile.shuffle_deck);
+}
+
+#[test]
+fn match_setup_uses_arranged_deck() {
+    let lvl = level(3).unwrap();
+    let mut profile = all_spells_profile();
+    profile.swap_with_reserve(0, 1);
+    profile.swap_deck_cards(1, 2);
+    assert_eq!(profile.match_setup(lvl, 5).player_deck, profile.deck());
+
+    profile.shuffle_deck = true;
+    let shuffled = profile.match_setup(lvl, 5).player_deck;
+    assert_eq!(multiset(&shuffled), multiset(&profile.deck()));
+
+    // Unarranged profile: exactly the deck RunState always built.
+    let fresh = all_spells_profile();
+    let run = tc_run::RunState {
+        seed: 5,
+        size: lvl.size,
+        floor: lvl.difficulty,
+        owned: fresh.owned.clone(),
+        rng: 5,
+        outcome: None,
+        bonus_picks: 0,
+        last_draft: None,
+    };
+    assert_eq!(fresh.match_setup(lvl, 5).player_deck, run.match_setup().player_deck);
+}
+
+#[test]
+fn deck_fields_round_trip_and_default() {
+    let mut profile = all_spells_profile();
+    profile.swap_deck_cards(0, 1);
+    let loaded = Profile::from_ron(&profile.to_ron().unwrap()).unwrap();
+    assert_eq!(loaded, profile);
+    assert!(!loaded.shuffle_deck);
+
+    let old = Profile::from_ron("(rng: 1, owned: [], cleared: [])").unwrap();
+    assert!(old.shuffle_deck);
+    assert!(old.deck.is_empty());
+}

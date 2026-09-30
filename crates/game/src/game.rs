@@ -38,9 +38,9 @@ pub struct GameState {
     pub ai_side: Option<Side>,
     /// AI strength as a run floor (0 = gentle, 7 = boss).
     pub ai_level: u8,
-    /// Hand slot armed by clicking its card in the hand bar or pressing 5–7.
+    /// Hand slot armed by clicking its card in the hand bar or pressing 1–3.
     pub armed_slot: Option<usize>,
-    /// Spell armed by clicking its card in the hand bar or pressing 5–7.
+    /// Spell armed by clicking its card in the hand bar or pressing 1–3.
     pub armed_spell: Option<SpellId>,
     /// For Swap: first square selected.
     pub swap_first: Option<Sq>,

@@ -23,12 +23,31 @@ pub enum RunPhase {
 #[derive(Resource, Debug, Clone)]
 pub struct TitleMenu {
     pub open: bool,
+    /// Level whose Prepare screen (deck review) is showing instead of the level select.
+    pub prepare: Option<u8>,
+    /// Card picked up on the Prepare screen; the next card tapped swaps with it.
+    pub held: Option<DeckSlot>,
 }
 
 impl Default for TitleMenu {
     fn default() -> Self {
-        Self { open: true }
+        Self { open: true, prepare: None, held: None }
     }
+}
+
+/// A card position on the Prepare screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum DeckSlot {
+    Deck(usize),
+    Reserve(usize),
+}
+
+/// Deck arrangement edits from the Prepare screen.
+#[derive(Message, Clone, Copy, Debug)]
+pub enum DeckEdit {
+    Tap(DeckSlot),
+    ToggleShuffle,
+    Reset,
 }
 
 /// Active profile state and current level.
@@ -108,7 +127,38 @@ pub fn apply_pick(item_id: &str, run: &mut Run, title_menu: &mut TitleMenu) {
         save::store(&run.profile);
         run.phase = RunPhase::Playing;
         title_menu.open = true;
+        title_menu.prepare = None;
+        title_menu.held = None;
     }
+}
+
+/// Applies a Prepare screen edit: tapping picks a card up, tapping a second card swaps the two.
+pub fn apply_deck_edit(edit: DeckEdit, run: &mut Run, title_menu: &mut TitleMenu) {
+    use DeckSlot::{Deck, Reserve};
+    match edit {
+        DeckEdit::Tap(slot) => match (title_menu.held, slot) {
+            (Some(h), s) if h == s => title_menu.held = None,
+            (Some(Deck(a)), Deck(b)) => {
+                run.profile.swap_deck_cards(a, b);
+                title_menu.held = None;
+            }
+            (Some(Deck(i)), Reserve(r)) | (Some(Reserve(r)), Deck(i)) => {
+                run.profile.swap_with_reserve(i, r);
+                title_menu.held = None;
+            }
+            (_, s) => {
+                // Picking up (or switching the held card) doesn't change the saved deck.
+                title_menu.held = Some(s);
+                return;
+            }
+        },
+        DeckEdit::ToggleShuffle => run.profile.shuffle_deck = !run.profile.shuffle_deck,
+        DeckEdit::Reset => {
+            run.profile.reset_deck();
+            title_menu.held = None;
+        }
+    }
+    save::store(&run.profile);
 }
 
 fn check_run_match_outcome(mut run: ResMut<Run>, game_state: Res<GameState>) {
@@ -138,12 +188,17 @@ fn check_run_match_outcome(mut run: ResMut<Run>, game_state: Res<GameState>) {
 fn handle_run_messages(
     mut pick_events: MessageReader<PickCard>,
     mut start_events: MessageReader<StartLevel>,
+    mut deck_edits: MessageReader<DeckEdit>,
     mut run: ResMut<Run>,
     mut game_state: ResMut<GameState>,
     mut title_menu: ResMut<TitleMenu>,
 ) {
     for pick in pick_events.read() {
         apply_pick(&pick.0, &mut run, &mut title_menu);
+    }
+
+    for &edit in deck_edits.read() {
+        apply_deck_edit(edit, &mut run, &mut title_menu);
     }
 
     for start in start_events.read() {
@@ -175,6 +230,7 @@ impl Plugin for RunPlugin {
             .init_resource::<TitleMenu>()
             .add_message::<PickCard>()
             .add_message::<StartLevel>()
+            .add_message::<DeckEdit>()
             .add_systems(
                 Update,
                 (check_run_match_outcome, handle_run_messages).chain().run_if(in_state(AppState::Ready)),

@@ -11,7 +11,7 @@ Vercel, `.github/workflows/deploy.yml`). Specs in `specs/` (game-design.md is th
 |---|---|---|
 | `tc_core` | `crates/core` | Rules, no Bevy. `Match` (rules.rs) = terrain + `Position` + hands + timed effects; `play`, `cast`, `cast_targets`, `cast_block`/`target_block` (why a card/square is refused), `outcome` (repetition hashes position **and** terrain). `spell.rs`: `SpellId` (16 spells, `ALL`, `is_quick`, `effect_text`, `no_target_hint`, `target_hint`), `SpellCast`. `position.rs`: `start(size)` (4,5,6,7,8,12,16), `from_army`. `worldgen/`: terrain generator. |
 | `tc_ai` | `crates/ai` | Alpha-beta search + `choose_action` (move or spell; casts must beat the move by +60). `Limits::for_floor(n)`. |
-| `tc_run` | `crates/run` | `level.rs`: `LEVELS` (10 levels: size, `army`, optional `enemy_army`, difficulty). `profile.rs`: `Profile` (owned items, cleared levels, `match_setup(level, seed)`, `record_win` → draft, `pick`). `run.rs`: `RunState`/`MatchSetup` (terrain, armies, decks, AI level). `item.rs` + `assets/items/*.ron`. |
+| `tc_run` | `crates/run` | `level.rs`: `LEVELS` (10 levels: size, `army`, optional `enemy_army`, difficulty). `profile.rs`: `Profile` (owned items, cleared levels, `match_setup(level, seed)`, `record_win` → draft, `pick`, arranged `deck`/`shuffle_deck` + swap helpers). `deck.rs`: `card_pool`, `reconcile`, `reserve`, `shuffle`. `run.rs`: `RunState`/`MatchSetup` (terrain, armies, decks, AI level). `item.rs` + `assets/items/*.ron`. |
 | `terrainchess` | `crates/game` | The Bevy app (below). |
 
 ### Game crate (`crates/game/src`)
@@ -24,10 +24,13 @@ Vercel, `.github/workflows/deploy.yml`). Specs in `specs/` (game-design.md is th
   `force_ai_cast` (dev). `cast()`/`play()` push events.
 - `run.rs` — `Run { profile, level, phase: Playing | Draft(items) | Result{won}, pending_draft }`.
   Win → Result screen with "Claim reward" → Draft → pick → back to level select (title menu).
+  `TitleMenu { open, prepare, held }`: clicking a level opens its Prepare (deck) screen;
+  `DeckEdit` messages (tap/shuffle/reset) go through `apply_deck_edit`. Retry skips Prepare.
 - `ai.rs` — runs `tc_ai` in time slices; waits while a banner is up (`state.announce`).
 - `input.rs` — camera orbit/zoom, click/tap → `tap_board`, hotkeys → `Action` messages →
   `apply_actions`.
-- `hud.rs` — all UI: level badge, title menu/level select, hand bar (blocked cards dimmed with a
+- `hud.rs` — all UI: level badge, title menu/level select, Prepare screen (`spawn_prepare`:
+  5×3 deck grid, reserve chips, Back/Shuffle/Reset/Start), hand bar (blocked cards dimmed with a
   red ✕), draft + result overlays, toasts. Big file; grep for the `fn sync_*` you need.
 - `announce.rs` — enemy spell banner + "Enemy: <spell>" pill. AI casts are stashed in
   `GameState.announce` (events + dirty flags) and released by `finish_announce()` when the
@@ -77,6 +80,9 @@ viewport 390×844: ~30 s). Count console messages matching `/ERROR|panic/`.
 
 - Level select at 1280×800: left column x=515, right x=765, rows y=331/391/451/511/571
   (levels 1–5 left, 6–10 right). Phone: left column x≈110, rows from y≈336, step ≈66.
+- A level button opens its Prepare (deck) screen; Enter starts. 1280×800 with no reserve:
+  Start (868, 644), deck tiles x=400/520/640/760/880, rows y=310/405/500. With a full reserve the
+  panel is taller: Start (868, 719), tile rows y=235/330/425, reserve chips from y=589.
 - Gear/menu button (1246, 33). Mouse wheel zooms the camera.
 - Swiftshader is slow (~0.5 s per screenshot); use F4 slow motion to catch short effects.
 

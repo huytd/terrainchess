@@ -2,7 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 use tc_core::Position;
+use tc_core::spell::SpellId;
 
+use crate::deck;
 use crate::item::{ItemId, RelicEffect};
 use crate::level::Level;
 use crate::run::{MatchSetup, RunError, RunState, place_pickups, roll_draft};
@@ -14,11 +16,28 @@ pub struct Profile {
     pub cleared: Vec<u8>,
     #[serde(default)]
     pub last_draft: Option<Vec<ItemId>>,
+    /// The arranged deck; empty until the player arranges it. Reconciled with owned cards on use.
+    #[serde(default)]
+    pub deck: Vec<SpellId>,
+    /// Shuffle the deck each match (default) or draw it in the arranged order.
+    #[serde(default = "default_true")]
+    pub shuffle_deck: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 impl Profile {
     pub fn new(seed: u64) -> Self {
-        Profile { rng: seed, owned: Vec::new(), cleared: Vec::new(), last_draft: None }
+        Profile {
+            rng: seed,
+            owned: Vec::new(),
+            cleared: Vec::new(),
+            last_draft: None,
+            deck: Vec::new(),
+            shuffle_deck: true,
+        }
     }
 
     /// Everything needed to play `level`: builds a temporary RunState { seed: match_seed, size: level.size,
@@ -37,6 +56,10 @@ impl Profile {
             last_draft: None,
         };
         let mut setup = temp_run.match_setup();
+        setup.player_deck = self.deck();
+        if self.shuffle_deck {
+            deck::shuffle(&mut setup.player_deck, setup.seed);
+        }
         setup.armies = level.army.map(|a| [a.to_vec(), level.enemy_army.unwrap_or(a).to_vec()]);
         if setup.armies.is_some() {
             let (terrain, actual_seed) = setup.terrain();
@@ -53,6 +76,49 @@ impl Profile {
             );
         }
         setup
+    }
+
+    /// Every card the player can put in the deck (owned spell charges, padded with filler).
+    pub fn deck_pool(&self) -> Vec<SpellId> {
+        deck::card_pool(&self.owned)
+    }
+
+    /// The 15-card deck in draw order: the saved arrangement reconciled with owned cards.
+    pub fn deck(&self) -> Vec<SpellId> {
+        deck::reconcile(&self.deck, &self.deck_pool())
+    }
+
+    /// Pool cards that aren't in the deck.
+    pub fn deck_reserve(&self) -> Vec<SpellId> {
+        deck::reserve(&self.deck(), &self.deck_pool())
+    }
+
+    /// Swap two deck positions. Choosing an order turns shuffling off.
+    pub fn swap_deck_cards(&mut self, a: usize, b: usize) {
+        let mut cards = self.deck();
+        if a >= cards.len() || b >= cards.len() {
+            return;
+        }
+        cards.swap(a, b);
+        self.deck = cards;
+        self.shuffle_deck = false;
+    }
+
+    /// Put reserve card `r` at deck position `i`; the card that was there joins the reserve.
+    pub fn swap_with_reserve(&mut self, i: usize, r: usize) {
+        let mut cards = self.deck();
+        let reserve = deck::reserve(&cards, &self.deck_pool());
+        if i >= cards.len() || r >= reserve.len() {
+            return;
+        }
+        cards[i] = reserve[r];
+        self.deck = cards;
+    }
+
+    /// Back to the default deck, shuffled.
+    pub fn reset_deck(&mut self) {
+        self.deck.clear();
+        self.shuffle_deck = true;
     }
 
     /// Mark cleared (no duplicates) and roll a draft: up to 3 distinct unowned items (same rarity rules as
