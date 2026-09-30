@@ -1,7 +1,8 @@
 use bevy::prelude::*;
 use bevy::text::LineHeight;
 use bevy::window::PrimaryWindow;
-use tc_core::Side;
+use tc_core::rules::DrawReason;
+use tc_core::{Outcome, Side};
 use tc_run::ItemKind;
 
 use crate::TitleFont;
@@ -343,12 +344,26 @@ fn update_floor_badge(
     }
 }
 
+/// One line explaining how a match ended, shown on the result screen (the player is White).
+fn outcome_reason(outcome: Option<Outcome>) -> &'static str {
+    match outcome {
+        Some(Outcome::Checkmate { winner: Side::White }) => "Checkmate — White wins",
+        Some(Outcome::Checkmate { winner: Side::Black }) => "Checkmate — Black wins",
+        Some(Outcome::Draw(DrawReason::Stalemate)) => "Draw by stalemate",
+        Some(Outcome::Draw(DrawReason::FiftyMoves)) => "Draw by the fifty-move rule",
+        Some(Outcome::Draw(DrawReason::Repetition)) => "Draw by threefold repetition",
+        Some(Outcome::Draw(DrawReason::InsufficientMaterial)) => "Draw — insufficient material",
+        None => "",
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn sync_overlays(
     mut commands: Commands,
     run: Res<Run>,
     atlas: Res<Atlas>,
     title_font: Res<TitleFont>,
+    game_state: Res<GameState>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut last_phase: Local<Option<RunPhase>>,
     draft_query: Query<Entity, With<DraftOverlay>>,
@@ -687,9 +702,16 @@ fn sync_overlays(
                                 },
                             ));
 
-                            // Title
+                            // Title; a draw still counts as a loss but gets its own title.
+                            let is_draw = matches!(game_state.outcome, Some(Outcome::Draw(_)));
                             panel.spawn((
-                                Text::new(if *won { "Victory!" } else { "Defeat" }),
+                                Text::new(if *won {
+                                    "Victory!"
+                                } else if is_draw {
+                                    "Draw"
+                                } else {
+                                    "Defeat"
+                                }),
                                 TextFont {
                                     font: FontSource::Handle(title_font.0.clone()),
                                     font_size: FontSize::Px(48.0),
@@ -698,6 +720,20 @@ fn sync_overlays(
                                 TextColor(INK_PARCHMENT),
                                 TextLayout { justify: Justify::Center, ..default() },
                             ));
+
+                            // Why the match ended.
+                            let reason = outcome_reason(game_state.outcome);
+                            if !reason.is_empty() {
+                                panel.spawn((
+                                    Text::new(reason),
+                                    TextFont { font_size: FontSize::Px(26.0), ..default() },
+                                    TextColor(INK_PARCHMENT),
+                                    TextLayout {
+                                        justify: Justify::Center,
+                                        linebreak: LineBreak::WordBoundary,
+                                    },
+                                ));
+                            }
 
                             let level_name = tc_run::level(run.level).map(|l| l.name).unwrap_or("Level");
                             panel.spawn((
