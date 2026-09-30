@@ -582,6 +582,57 @@ pub(crate) fn flat(c: Vec3, size: Vec2) -> [Vec3; 4] {
     ]
 }
 
+/// How far a square's top rounds down toward an edge that drops away.
+pub(crate) const CUSHION: f32 = 0.17;
+
+/// A square's top as a soft cushion: flat in the middle, curving down by `CUSHION`
+/// toward each side in `drops` (north, east, south, west), and darker as it falls.
+pub(crate) fn cushion(q: &mut Quads, top: Vec3, drops: [bool; 4], uv: Uv, tint: Color) {
+    let r = CUSHION;
+    // Grid lines spaced along a quarter circle so the curve reads smooth.
+    let arc = [0.0, 0.134, 0.5, 1.0];
+    let mut coords: Vec<f32> = arc.iter().map(|a| -0.5 + r * a).collect();
+    coords.extend(arc.iter().rev().map(|a| 0.5 - r * a));
+    // Drop below the top at a point `d` in from an edge.
+    let fall = |d: f32| {
+        let k = ((r - d) / r).clamp(0.0, 1.0);
+        r * (1.0 - (1.0 - k * k).sqrt())
+    };
+    let [n, e, s, w] = drops;
+    let height = |lx: f32, lz: f32| {
+        // Distance in from each dropping edge (north is -z).
+        let dn = if n { lz + 0.5 } else { f32::MAX };
+        let ds = if s { 0.5 - lz } else { f32::MAX };
+        let de = if e { 0.5 - lx } else { f32::MAX };
+        let dw = if w { lx + 0.5 } else { f32::MAX };
+        let dz = dn.min(ds);
+        let dx = de.min(dw);
+        // Where two dropping edges meet, round the corner as a sphere.
+        let d = if dx < r && dz < r { r - ((r - dx).powi(2) + (r - dz).powi(2)).sqrt() } else { dx.min(dz) };
+        fall(d.max(0.0))
+    };
+    let c = tint.to_linear();
+    let base = q.pos.len() as u32;
+    let m = coords.len() as u32;
+    for &lz in &coords {
+        for &lx in &coords {
+            let drop = height(lx, lz);
+            let shade = 1.0 - 0.5 * (drop / r);
+            q.pos.push([top.x + lx, top.y - drop, top.z + lz]);
+            q.normal.push([0.0, 1.0, 0.0]);
+            q.uv.push(uv.at(lx + 0.5, lz + 0.5));
+            q.color.push([c.red * shade, c.green * shade, c.blue * shade, c.alpha]);
+        }
+    }
+    for j in 0..m - 1 {
+        for i in 0..m - 1 {
+            let a = base + j * m + i;
+            // Same winding as `flat`: +z row first, so faces point up.
+            q.idx.extend([a + m, a + m + 1, a + 1, a + m, a + 1, a]);
+        }
+    }
+}
+
 /// Walls of one column side from `lo` up to `hi`: grass lip under the top edge, stone
 /// below. `a` → `b` runs left to right along the bottom as seen from outside.
 pub(crate) fn wall(q: &mut Quads, atlas: &Atlas, a: Vec3, b: Vec3, lo: f32, hi: f32, shade: f32) {
@@ -656,10 +707,19 @@ fn spawn_terrain(
             Color::srgb(c.red * bright, c.green * bright, c.blue * bright)
         };
         let corners = flat(top, Vec2::ONE);
+        // Land squares round off toward every side that drops away (lower neighbour or
+        // board edge), like soft cushions; the cliff wall starts below the curve.
+        let drops = [(0i8, 1i8), (1, 0), (0, -1), (-1, 0)].map(|(dx, dy)| {
+            !tile.is_water()
+                && tile.kind != TileKind::Void
+                && sq.offset(dx, dy, size).is_none_or(|n| t.height(n) < tile.height)
+        });
         if tile.kind == TileKind::ShallowWater {
             for (i, frame) in ["shallow_0", "shallow_1"].into_iter().enumerate() {
                 water[i].add_tinted(corners, full_uv(atlas.uv(frame)), tint);
             }
+        } else if drops.contains(&true) {
+            cushion(&mut solid, top, drops, atlas.uv(name), tint);
         } else {
             solid.add_tinted(corners, full_uv(atlas.uv(name)), tint);
         }
@@ -691,23 +751,28 @@ fn spawn_terrain(
 
         // Sides: south/east 30% darker (0.588, 0.504), north/west 15% darker (0.476, 0.527).
         let (x, z) = (top.x, top.z);
-        for ((dx, dy), a, b, shade) in [
-            ((0i8, -1i8), Vec3::new(x - 0.5, 0.0, z + 0.5), Vec3::new(x + 0.5, 0.0, z + 0.5), 0.588),
-            ((1, 0), Vec3::new(x + 0.5, 0.0, z + 0.5), Vec3::new(x + 0.5, 0.0, z - 0.5), 0.504),
-            ((0, 1), Vec3::new(x + 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z - 0.5), 0.476),
-            ((-1, 0), Vec3::new(x - 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z + 0.5), 0.527),
+        for ((dx, dy), a, b, shade, side) in [
+            ((0i8, -1i8), Vec3::new(x - 0.5, 0.0, z + 0.5), Vec3::new(x + 0.5, 0.0, z + 0.5), 0.588, 2),
+            ((1, 0), Vec3::new(x + 0.5, 0.0, z + 0.5), Vec3::new(x + 0.5, 0.0, z - 0.5), 0.504, 1),
+            ((0, 1), Vec3::new(x + 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z - 0.5), 0.476, 0),
+            ((-1, 0), Vec3::new(x - 0.5, 0.0, z - 0.5), Vec3::new(x - 0.5, 0.0, z + 0.5), 0.527, 3),
         ] {
             let lo = match sq.offset(dx, dy, size) {
                 Some(n) => top_y(t.height(n) as i8),
                 None => -BASE,
             };
-            wall(&mut solid, &atlas, a, b, lo, top.y, shade + 0.03 * tile.height as f32);
+            let hi = if drops[side] { top.y - CUSHION } else { top.y };
+            wall(&mut solid, &atlas, a, b, lo, hi, shade + 0.03 * tile.height as f32);
         }
 
         // Grid lines along square edges and column top rims:
         let y_lift = top.y + LIFT_GRID;
         let is_water = tile.is_water();
-        for (dx, dy) in [(0i8, 1i8), (1, 0), (0, -1), (-1, 0)] {
+        for (side, (dx, dy)) in [(0i8, 1i8), (1, 0), (0, -1), (-1, 0)].into_iter().enumerate() {
+            // A rounded edge outlines itself; a flat line there would float over the curve.
+            if drops[side] {
+                continue;
+            }
             let n_opt = sq.offset(dx, dy, size);
             match n_opt {
                 None => {

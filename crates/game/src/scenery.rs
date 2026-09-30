@@ -7,7 +7,8 @@ use tc_core::Sq;
 
 use crate::atlas::Atlas;
 use crate::board_view::{
-    Billboard, Look, PX, Quads, board_center, card_mesh, flat, full_uv, hash, rotate_uv, top_y, wall_tinted,
+    Billboard, CUSHION, Look, PX, Quads, board_center, card_mesh, cushion, flat, full_uv, hash, rotate_uv,
+    top_y, wall_tinted,
 };
 use crate::game::GameState;
 use crate::input::MainCamera;
@@ -474,12 +475,21 @@ fn rebuild_scenery(
             let corners = flat(top, Vec2::ONE);
             let n_shade = noise(cx, y as f32, 0.25, 2, seed);
             let shade = 0.68 * (0.92 + 0.08 * n_shade);
+            // Round off toward lower neighbours (north, east, south, west), like the board.
+            let drops =
+                [(0, 1), (1, 0), (0, -1), (-1, 0)].map(|(dx, dy)| height_at(cell_at(x + dx, y + dy)) < top_h);
+            let mut cushioned = false;
 
             match cell {
                 CellType::Grass(_) => {
                     let tile = ["grass_0", "grass_1", "grass_dark", "moss"][hash(x, y, 1) as usize % 4];
                     let grass_tint = Color::srgb(shade * 0.62, shade * 0.70, shade * 0.80);
-                    solid.add_tinted(corners, full_uv(atlas.uv(tile)), grass_tint);
+                    if drops.contains(&true) {
+                        cushion(&mut solid, top, drops, atlas.uv(tile), grass_tint);
+                        cushioned = true;
+                    } else {
+                        solid.add_tinted(corners, full_uv(atlas.uv(tile)), grass_tint);
+                    }
 
                     if (hash(x, y, 200) % 100) < 30 {
                         let decal_idx = (hash(x, y, 201) % 8) as usize;
@@ -517,23 +527,35 @@ fn rebuild_scenery(
                         let name = if hash(x, y, 3).is_multiple_of(4) { "sand_shells" } else { "sand_dry" };
                         let sand_shade = shade * 0.80;
                         let sand_tint = Color::srgb(sand_shade * 0.62, sand_shade * 0.70, sand_shade * 0.80);
-                        solid.add_tinted(corners, full_uv(atlas.uv(name)), sand_tint);
+                        if drops.contains(&true) {
+                            cushion(&mut solid, top, drops, atlas.uv(name), sand_tint);
+                            cushioned = true;
+                        } else {
+                            solid.add_tinted(corners, full_uv(atlas.uv(name)), sand_tint);
+                        }
                     }
                 }
                 CellType::Board(_) | CellType::Sea => unreachable!(),
             }
 
-            for ((dx, dy), a, b, side_shade) in [
-                ((0i8, -1i8), Vec3::new(cx - 0.5, 0.0, cz + 0.5), Vec3::new(cx + 0.5, 0.0, cz + 0.5), 0.84),
-                ((1, 0), Vec3::new(cx + 0.5, 0.0, cz + 0.5), Vec3::new(cx + 0.5, 0.0, cz - 0.5), 0.72),
-                ((0, 1), Vec3::new(cx + 0.5, 0.0, cz - 0.5), Vec3::new(cx - 0.5, 0.0, cz - 0.5), 0.56),
-                ((-1, 0), Vec3::new(cx - 0.5, 0.0, cz - 0.5), Vec3::new(cx - 0.5, 0.0, cz + 0.5), 0.62),
+            for ((dx, dy), a, b, side_shade, side) in [
+                (
+                    (0i8, -1i8),
+                    Vec3::new(cx - 0.5, 0.0, cz + 0.5),
+                    Vec3::new(cx + 0.5, 0.0, cz + 0.5),
+                    0.84,
+                    2,
+                ),
+                ((1, 0), Vec3::new(cx + 0.5, 0.0, cz + 0.5), Vec3::new(cx + 0.5, 0.0, cz - 0.5), 0.72, 1),
+                ((0, 1), Vec3::new(cx + 0.5, 0.0, cz - 0.5), Vec3::new(cx - 0.5, 0.0, cz - 0.5), 0.56, 0),
+                ((-1, 0), Vec3::new(cx - 0.5, 0.0, cz - 0.5), Vec3::new(cx - 0.5, 0.0, cz + 0.5), 0.62, 3),
             ] {
                 let n_cell = cell_at(x + dx as i32, y + dy as i32);
                 let n_top = height_at(n_cell);
                 if n_top < top_h {
                     let wall_tint = Color::srgb(side_shade * 0.62, side_shade * 0.70, side_shade * 0.80);
-                    wall_tinted(&mut solid, &atlas, a, b, n_top, top_h, wall_tint);
+                    let hi = if cushioned && drops[side] { top_h - CUSHION } else { top_h };
+                    wall_tinted(&mut solid, &atlas, a, b, n_top, hi, wall_tint);
                 }
             }
 
