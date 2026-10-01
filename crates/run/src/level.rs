@@ -69,7 +69,7 @@ pub const THEMES: [Theme; 10] = [
         variants: &[
             v("Queen's Hunt", &[King, Queen]),
             v("Rook's Hunt", &[King, Rook]),
-            v("Bishop's Hunt", &[King, Bishop, Bishop]),
+            v("Bishop's Hunt", &[King, Rook, Bishop]),
             v("Knight's Hunt", &[King, Knight, Knight, Pawn]),
         ],
     },
