@@ -10,10 +10,10 @@ use crate::game::GameState;
 use crate::loading::AppState;
 use crate::run::{DeckEdit, DeckSlot, PickCard, Run, RunCommand, RunPhase, TitleMenu};
 use crate::theme::{
-    self, ButtonDisabled, GOLD, GREEN, GREY, INFO_BG, L, M, ORANGE, OVERLAY_GUTTER, PanelKind, RED, S, SLATE,
-    SLATE_DARK, SLATE_LIGHT, TEXT, TEXT_DARK, TEXT_DIM, XL, XS, button, card_root, ink, integer_scaled_size,
-    label, label_nowrap, number_chip, panel, scrim, spawn_card_face, spell_accent, spell_item_id, spell_name,
-    tag_chip, title_bar,
+    self, ButtonDisabled, CARD_H_U, CARD_W_U, GOLD, GREEN, GREY, INFO_BG, L, M, ORANGE, OVERLAY_GUTTER,
+    PanelKind, RED, S, SLATE, SLATE_DARK, SLATE_LIGHT, TEXT, TEXT_DARK, TEXT_DIM, XL, XS, button, card_root,
+    ink, integer_scaled_size, label, label_nowrap, number_chip, panel, scrim, spawn_card_face, spell_accent,
+    spell_item_id, spell_name, tag_chip, title_bar,
 };
 use crate::ui_fx::{CardMotion, PopIn};
 
@@ -267,7 +267,7 @@ fn sync_overlays(
         RunPhase::Playing => {}
         RunPhase::Draft(items) => {
             let card_h = draft_card_h(win_w);
-            let card_w = (card_h * 59.0 / 81.0).round();
+            let card_w = (card_h * CARD_W_U / CARD_H_U).round();
             let body_px = if card_w < 170.0 { XS } else { S };
 
             commands.spawn((DraftOverlay, GlobalZIndex(100), scrim())).with_children(|parent| {
@@ -540,7 +540,7 @@ fn update_draft_card_sizes(
 ) {
     let Some(win) = window.iter().next() else { return };
     let card_h = draft_card_h(win.width());
-    let card_w = (card_h * 59.0 / 81.0).round();
+    let card_w = (card_h * CARD_W_U / CARD_H_U).round();
     for mut node in &mut cards {
         node.width = Val::Px(card_w);
         node.height = Val::Px(card_h);
@@ -658,11 +658,11 @@ fn sync_hand_bar(
 
     // Integer scaling keeps the card art crisp: 3 cards fit a phone's width, and on desktop a card
     // is about 30% of the window height.
-    let max_scale_w = ((win_w * 0.90) / (2.7 * 59.0)).floor() as u32;
-    let target_scale_h = ((win_h * 0.30) / 81.0).round() as u32;
+    let max_scale_w = ((win_w * 0.90) / (2.7 * CARD_W_U)).floor() as u32;
+    let target_scale_h = ((win_h * 0.30) / CARD_H_U).round() as u32;
     let scale = target_scale_h.min(max_scale_w).max(1);
-    let card_w = 59.0 * scale as f32;
-    let card_h = 81.0 * scale as f32;
+    let card_w = CARD_W_U * scale as f32;
+    let card_h = CARD_H_U * scale as f32;
 
     // Resting card position: about 20% of the card is below the screen edge, and the fan never
     // covers more than the bottom ~26% of the screen.

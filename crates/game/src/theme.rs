@@ -341,7 +341,11 @@ pub fn card_root(mut node: Node, radius: f32) -> impl Bundle {
     )
 }
 
-/// Face of a full-size card (59:81): art window, name plate, footer tags.
+/// Card proportions in design units: 3-unit margins around a 49-wide face.
+pub const CARD_W_U: f32 = 55.0;
+pub const CARD_H_U: f32 = 79.0;
+
+/// Face of a full-size card (55:79): art window, name plate, footer tags.
 /// Children are absolutely placed in percent, so the root can be any size with that ratio.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_card_face(
@@ -354,7 +358,7 @@ pub fn spawn_card_face(
     card_w: f32,
     name_px: f32,
 ) {
-    let u = card_w / 59.0;
+    let u = card_w / CARD_W_U;
     let pct = |v: f32, total: f32| Val::Percent(v / total * 100.0);
     // Narrow cards give the name plate room for two lines of the smallest text.
     let (art_h, plate_top, plate_h) = if card_w < 140.0 { (33.0, 38.0, 25.0) } else { (40.0, 46.0, 18.0) };
@@ -363,10 +367,10 @@ pub fn spawn_card_face(
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: pct(3.0, 59.0),
-                top: pct(3.0, 81.0),
-                width: pct(49.0, 59.0),
-                height: pct(art_h, 81.0),
+                left: pct(3.0, CARD_W_U),
+                top: pct(3.0, CARD_H_U),
+                width: pct(49.0, CARD_W_U),
+                height: pct(art_h, CARD_H_U),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 overflow: Overflow::clip(),
@@ -385,10 +389,10 @@ pub fn spawn_card_face(
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: pct(3.0, 59.0),
-                top: pct(plate_top, 81.0),
-                width: pct(49.0, 59.0),
-                height: pct(plate_h, 81.0),
+                left: pct(3.0, CARD_W_U),
+                top: pct(plate_top, CARD_H_U),
+                width: pct(49.0, CARD_W_U),
+                height: pct(plate_h, CARD_H_U),
                 justify_content: JustifyContent::Center,
                 align_items: AlignItems::Center,
                 padding: UiRect::horizontal(Val::Px(2.0)),
@@ -403,10 +407,10 @@ pub fn spawn_card_face(
         .spawn((
             Node {
                 position_type: PositionType::Absolute,
-                left: pct(3.0, 59.0),
-                top: pct(66.0, 81.0),
-                width: pct(49.0, 59.0),
-                height: pct(10.0, 81.0),
+                left: pct(3.0, CARD_W_U),
+                top: pct(66.0, CARD_H_U),
+                width: pct(49.0, CARD_W_U),
+                height: pct(10.0, CARD_H_U),
                 flex_direction: FlexDirection::Row,
                 justify_content: JustifyContent::SpaceBetween,
                 align_items: AlignItems::Center,

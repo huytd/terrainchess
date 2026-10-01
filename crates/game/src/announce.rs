@@ -12,8 +12,8 @@ use crate::fx::FxSpawner;
 use crate::game::GameState;
 use crate::loading::AppState;
 use crate::theme::{
-    self, PanelKind, RED, S, SLATE, TEXT, TEXT_DIM, XL, XS, card_root, label, label_nowrap, panel,
-    spawn_card_face, spell_accent, spell_item_id, spell_name,
+    self, CARD_H_U, CARD_W_U, PanelKind, RED, S, SLATE, TEXT, TEXT_DIM, XL, XS, card_root, label,
+    label_nowrap, panel, spawn_card_face, spell_accent, spell_item_id, spell_name,
 };
 use crate::ui_fx::{CardMotion, ease_out_back};
 
@@ -47,7 +47,7 @@ fn spawn_banner(commands: &mut Commands, atlas: &Atlas, spell: SpellId, win: Vec
     let compact = win.x < 600.0;
     let full_h = (win.y * if compact { 0.26 } else { 0.34 }).max(180.0);
     let card_h = (full_h * 0.82).round();
-    let card_w = (card_h * 59.0 / 81.0).round();
+    let card_w = (card_h * CARD_W_U / CARD_H_U).round();
     let from_x = -(card_w + 60.0);
     let name_px = if card_w < 170.0 { XS } else { S };
 
@@ -60,16 +60,18 @@ fn spawn_banner(commands: &mut Commands, atlas: &Atlas, spell: SpellId, win: Vec
                 left: Val::Px(0.0),
                 right: Val::Px(0.0),
                 top: Val::Px(((win.y - full_h) * 0.5).round()),
-                height: Val::Px(0.0),
+                height: Val::Px(full_h),
                 flex_direction: FlexDirection::Row,
                 align_items: AlignItems::Center,
                 justify_content: JustifyContent::Center,
                 column_gap: Val::Px(if compact { 14.0 } else { 40.0 }),
                 padding: UiRect::horizontal(Val::Px(if compact { 12.0 } else { 32.0 })),
                 border: UiRect::vertical(Val::Px(4.0)),
-                overflow: Overflow::clip(),
                 ..default()
             },
+            // The strip opens and closes by scaling, not by clipping a shrinking node: Bevy
+            // garbles clipped text under the card's tilt.
+            UiTransform::from_scale(Vec2::new(1.0, 0.0)),
             BackgroundColor(SLATE.with_alpha(0.92)),
             BorderColor::all(RED),
         ))
@@ -144,7 +146,7 @@ fn run_banner(
     atlas: Res<Atlas>,
     mut state: ResMut<GameState>,
     window: Query<&Window, With<PrimaryWindow>>,
-    mut banners: Query<(Entity, &mut Banner, &mut Node)>,
+    mut banners: Query<(Entity, &mut Banner, &mut Node, &mut UiTransform), Without<BannerTitle>>,
     mut cards: Query<(&BannerCard, &mut CardMotion)>,
     mut titles: Query<&mut UiTransform, With<BannerTitle>>,
     mut spawner: FxSpawner,
@@ -155,7 +157,7 @@ fn run_banner(
         }
         return;
     };
-    let Ok((entity, mut banner, mut node)) = banners.single_mut() else {
+    let Ok((entity, mut banner, mut node, mut strip_tf)) = banners.single_mut() else {
         let win = window.iter().next().map(|w| w.size()).unwrap_or(Vec2::new(1280.0, 800.0));
         spawn_banner(&mut commands, &atlas, spell, win);
         return;
@@ -188,10 +190,10 @@ fn run_banner(
     } else {
         1.0
     };
-    node.height = Val::Px((banner.full_h * k).round());
+    strip_tf.scale = Vec2::new(1.0, k);
     if let Val::Px(top) = node.top {
         let win_h = window.iter().next().map(|w| w.height()).unwrap_or(800.0);
-        let want = ((win_h - banner.full_h * k) * 0.5).round();
+        let want = ((win_h - banner.full_h) * 0.5).round();
         if (top - want).abs() > 0.5 {
             node.top = Val::Px(want);
         }
