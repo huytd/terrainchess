@@ -431,6 +431,26 @@ def wall_sprites(out):
     return walls
 
 
+def strip_tile(img):
+    """Clear an icon's dark backing tile (navy, purple fringe): flood-fill from the edges
+    through dark pixels, so dark detail enclosed by the icon (eye sockets) stays."""
+    img = img.copy()
+    rgb, alpha = img[..., :3], img[..., 3]
+    dark = (rgb.max(axis=-1) < 75) | ((rgb[..., 1] < 25) & (rgb[..., 0] > 25) & (rgb[..., 2] > 25))
+    passable = dark | (alpha == 0)
+    h, w = alpha.shape
+    seen = np.zeros((h, w), dtype=bool)
+    stack = [(y, x) for y in range(h) for x in (0, w - 1)] + [(y, x) for x in range(w) for y in (0, h - 1)]
+    while stack:
+        y, x = stack.pop()
+        if not (0 <= y < h and 0 <= x < w) or seen[y, x] or not passable[y, x]:
+            continue
+        seen[y, x] = True
+        stack += [(y + 1, x), (y - 1, x), (y, x + 1), (y, x - 1)]
+    img[seen] = 0.0
+    return img
+
+
 def process(src, src_sky, src_ground, src_gui, palette):
     rgb_all = np.asarray(src.convert("RGB")).astype(np.float32)
     rgb_sky = np.asarray(src_sky.convert("RGB")).astype(np.float32)
@@ -568,6 +588,11 @@ def process(src, src_sky, src_ground, src_gui, palette):
             downscale(rgb, mask.astype(np.float32), max(1, round(w * SCALE)), max(1, round(h * SCALE))),
             CENTER,
         )
+
+    # Particle versions of icons that sit on a dark tile: the tile reads as a black square
+    # when the icon flies around as a spell particle.
+    for src, dst in (("icon_feather", "fx_feather"), ("icon_skull", "fx_skull"), ("icon_star_small", "fx_star")):
+        out[dst] = (strip_tile(out[src][0]), CENTER)
 
     out.update(wall_sprites(out))
     # Generated terrain art (cliff rock, grass lip); see gen_terrain_art.py.

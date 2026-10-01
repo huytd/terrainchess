@@ -482,13 +482,13 @@ impl Particles<'_, '_> {
             }
             SpellId::Featherfall => {
                 for &sq in squares {
-                    self.drift_down(b, "icon_feather", WHITE, top(sq), 8, 0.45, 0.3);
+                    self.drift_down(b, "fx_feather", WHITE, top(sq), 8, 0.45, 0.3);
                 }
             }
             SpellId::Curse => {
                 for &sq in squares {
                     self.rise(b, "fx_smoke", PURPLE, top(sq) + Vec3::Y * 0.2, 10, 0.25, 1.6);
-                    self.rise(b, "icon_skull", WHITE, top(sq) + Vec3::Y * 0.4, 3, 0.22, 0.9);
+                    self.rise(b, "fx_skull", WHITE, top(sq) + Vec3::Y * 0.4, 3, 0.22, 0.9);
                 }
             }
             SpellId::Sprout => {
@@ -515,7 +515,7 @@ impl Particles<'_, '_> {
             }
             SpellId::Insight => {
                 if let Some(king) = state.game.pos.king(side) {
-                    self.swirl(b, "icon_star_small", GOLD, top(king) + Vec3::Y * 0.3, 14, 0.5, 1.2, 0.2);
+                    self.swirl(b, "fx_star", GOLD, top(king) + Vec3::Y * 0.3, 14, 0.5, 1.2, 0.2);
                 }
             }
         }
