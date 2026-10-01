@@ -19,6 +19,19 @@ use crate::input::MainCamera;
 /// Live particle caps; phones get fewer.
 const MAX_PARTICLES: usize = 400;
 const MAX_PARTICLES_COMPACT: usize = 150;
+/// Every particle is drawn this much bigger than its recipe says.
+const SIZE_K: f32 = 1.5;
+/// Bursts spread this much wider than one square's worth, reaching the neighbours.
+const SPREAD_K: f32 = 1.8;
+/// Each burst spawns this many times as many particles, to stay dense over the wider spread.
+const COUNT_K: f32 = 1.5;
+/// Particles are drawn pulled this far toward the camera (and shrunk to match), so they cover
+/// the pieces and terrain they fly through without looking any different.
+const PULL: f32 = 3.0;
+
+fn more(n: usize) -> usize {
+    (n as f32 * COUNT_K).round() as usize
+}
 
 #[derive(Clone, Copy)]
 enum Motion {
@@ -31,6 +44,8 @@ enum Motion {
 #[derive(Component)]
 struct Particle {
     motion: Motion,
+    /// Where the particle really is; its `Transform` is this pulled toward the camera.
+    pos: Vec3,
     vel: Vec3,
     gravity: f32,
     drag: f32,
@@ -169,13 +184,14 @@ impl Particles<'_, '_> {
         self.commands.spawn((
             Particle {
                 motion: s.motion,
+                pos: s.pos,
                 vel: s.vel,
                 gravity: s.gravity,
                 drag: s.drag,
                 delay: s.delay,
                 age: 0.0,
                 life: s.life,
-                size: s.size,
+                size: s.size * SIZE_K,
                 end_size: s.end_size,
                 spin: s.spin,
                 angle,
@@ -206,10 +222,10 @@ impl Particles<'_, '_> {
         out: (f32, f32),
         size: f32,
     ) {
-        for _ in 0..n {
+        for _ in 0..more(n) {
             let dir = self.rng.dir();
-            let vel = dir * self.rng.range(out.0, out.1) + Vec3::Y * self.rng.range(up.0, up.1);
-            let mut s = Spec::new(sprite, tint, at + dir * 0.1);
+            let vel = dir * self.rng.range(out.0, out.1) * SPREAD_K + Vec3::Y * self.rng.range(up.0, up.1);
+            let mut s = Spec::new(sprite, tint, at + dir * 0.1 * SPREAD_K);
             s.vel = vel;
             s.gravity = 7.0;
             s.life = self.rng.range(0.6, 1.0);
@@ -232,11 +248,12 @@ impl Particles<'_, '_> {
         speed: f32,
         size: f32,
     ) {
+        let n = more(n);
         for i in 0..n {
             let a = i as f32 / n as f32 * TAU;
             let dir = Vec3::new(a.cos(), 0.0, a.sin());
-            let mut s = Spec::new(sprite, tint, at + dir * 0.15);
-            s.vel = dir * speed + Vec3::Y * 0.2;
+            let mut s = Spec::new(sprite, tint, at + dir * 0.15 * SPREAD_K);
+            s.vel = dir * speed * SPREAD_K + Vec3::Y * 0.2;
             s.drag = 3.0;
             s.life = 0.55;
             s.size = size;
@@ -255,9 +272,9 @@ impl Particles<'_, '_> {
         n: usize,
         radius: f32,
     ) {
-        for _ in 0..n {
+        for _ in 0..more(n) {
             let dir = self.rng.dir();
-            let from = at + dir * radius + Vec3::Y * self.rng.range(-0.1, 0.4);
+            let from = at + dir * radius * SPREAD_K + Vec3::Y * self.rng.range(-0.1, 0.4);
             let life = self.rng.range(0.35, 0.5);
             let mut s = Spec::new(sprite, tint, from);
             s.vel = (at - from) / life;
@@ -281,15 +298,16 @@ impl Particles<'_, '_> {
         rise: f32,
         shrink: f32,
     ) {
+        let n = more(n);
         for i in 0..n {
             let mut s = Spec::new(sprite, tint, center);
             s.motion = Motion::Orbit {
                 center: center + Vec3::Y * self.rng.range(0.0, 0.3),
-                radius: radius * self.rng.range(0.8, 1.1),
+                radius: radius * SPREAD_K * self.rng.range(0.8, 1.1),
                 angle: i as f32 / n as f32 * TAU,
                 speed: 5.0,
                 rise,
-                shrink,
+                shrink: shrink * SPREAD_K,
             };
             s.life = self.rng.range(0.8, 1.1);
             s.size = 0.26;
@@ -336,8 +354,8 @@ impl Particles<'_, '_> {
         spread: f32,
         size: f32,
     ) {
-        for i in 0..n {
-            let off = self.rng.dir() * self.rng.range(0.0, spread);
+        for i in 0..more(n) {
+            let off = self.rng.dir() * self.rng.range(0.0, spread * SPREAD_K);
             let mut s = Spec::new(sprite, tint, at + off + Vec3::Y * self.rng.range(0.9, 1.4));
             s.vel = Vec3::Y * -self.rng.range(0.6, 0.9);
             s.life = self.rng.range(1.1, 1.4);
@@ -362,10 +380,10 @@ impl Particles<'_, '_> {
         size: f32,
         grow: f32,
     ) {
-        for i in 0..n {
+        for i in 0..more(n) {
             let dir = self.rng.dir();
-            let mut s = Spec::new(sprite, tint, at + dir * self.rng.range(0.0, 0.3));
-            s.vel = dir * 0.2 + Vec3::Y * self.rng.range(0.6, 1.2);
+            let mut s = Spec::new(sprite, tint, at + dir * self.rng.range(0.0, 0.3) * SPREAD_K);
+            s.vel = dir * 0.2 * SPREAD_K + Vec3::Y * self.rng.range(0.6, 1.2);
             s.drag = 0.6;
             s.life = self.rng.range(0.9, 1.3);
             s.size = size;
@@ -483,10 +501,10 @@ impl Particles<'_, '_> {
                 if let [from, to] = squares {
                     self.implode(b, "fx_sparkle", VIOLET, top(*from) + Vec3::Y * 0.4, 12, 0.6);
                     let at = top(*to) + Vec3::Y * 0.4;
-                    for _ in 0..14 {
+                    for _ in 0..more(14) {
                         let dir = (self.rng.dir() + Vec3::Y * self.rng.range(-0.3, 0.8)).normalize();
                         let mut s = Spec::new("fx_sparkle", VIOLET, at);
-                        s.vel = dir * self.rng.range(1.5, 2.5);
+                        s.vel = dir * self.rng.range(1.5, 2.5) * SPREAD_K;
                         s.drag = 2.5;
                         s.delay = 0.3;
                         s.life = 0.6;
@@ -525,6 +543,7 @@ fn update_particles(
     let cos_pitch = back.y.clamp(-0.99, 0.99).asin().cos().max(0.01);
     let face = Quat::from_rotation_y(yaw);
     let right = face * Vec3::X;
+    let eye = cam_tf.translation;
     let dt = time.delta_secs();
 
     for (e, mut p, mut tf) in &mut q {
@@ -543,23 +562,29 @@ fn update_particles(
                 p.vel.y -= p.gravity * dt;
                 let damp = (1.0 - p.drag * dt).max(0.0);
                 p.vel *= damp;
-                tf.translation += p.vel * dt;
+                let step = p.vel * dt;
+                p.pos += step;
             }
             Motion::Orbit { center, radius, angle, speed, rise, shrink } => {
                 let a = angle + speed * p.age;
                 let r = (radius - shrink * p.age).max(0.0);
-                tf.translation = center + Vec3::new(a.cos() * r, rise * p.age, a.sin() * r);
+                p.pos = center + Vec3::new(a.cos() * r, rise * p.age, a.sin() * r);
             }
         }
         if p.sway != 0.0 {
-            tf.translation += right * (p.age * 5.0).cos() * p.sway * 5.0 * dt;
+            let step = right * (p.age * 5.0).cos() * p.sway * 5.0 * dt;
+            p.pos += step;
         }
         p.angle += p.spin * dt;
         // Pop in over the first 10% of life, then ease toward the end size.
         let pop = (k / 0.1).min(1.0);
         let s = p.size * pop * (1.0 + (p.end_size - 1.0) * k);
+        // Same spot on screen, but nearer: shrinking by the pulled-in distance keeps its size.
+        let dist = (p.pos - eye).length().max(0.01);
+        let near = (dist - PULL).max(dist * 0.3) / dist;
+        tf.translation = eye + (p.pos - eye) * near;
         tf.rotation = face * Quat::from_rotation_z(p.angle);
-        tf.scale = Vec3::new(s, s / cos_pitch, s);
+        tf.scale = Vec3::new(s, s / cos_pitch, s) * near;
     }
 }
 
