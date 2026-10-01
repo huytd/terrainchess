@@ -424,6 +424,23 @@ fn sprout_plants_tree_on_empty_grass_outside_home_rows() {
 }
 
 #[test]
+fn sprout_and_flood_reach_the_middle_of_small_boards() {
+    // 4×4: two home rows per side would leave no middle; only the back ranks are off limits.
+    let pos = Position::from_army(4, &[PieceKind::King, PieceKind::Queen], &[PieceKind::King]).unwrap();
+    let mut game = Match::new(Terrain::flat(4), Rules::standard(4), pos);
+    game.set_deck(Side::White, vec![SpellId::Sprout, SpellId::Flood]);
+
+    for spell in [SpellId::Sprout, SpellId::Flood] {
+        let targets = game.cast_targets(spell);
+        assert!(!targets.is_empty(), "{spell:?} has targets on 4×4");
+        for cast in targets {
+            let (SpellCast::Sprout(t) | SpellCast::Flood(t)) = cast else { unreachable!() };
+            assert!(t.y == 1 || t.y == 2, "{spell:?} targets {t:?} on a back rank");
+        }
+    }
+}
+
+#[test]
 fn blink_teleports_within_two_squares() {
     let mut game = game_with_fen("7k/8/8/8/8/8/8/R3K3 w - - 0 1");
     game.set_deck(Side::White, vec![SpellId::Blink]);

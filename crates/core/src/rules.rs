@@ -623,7 +623,7 @@ impl Match {
                 }
             }
             SpellId::Flood => {
-                let home = Position::home_rows(size);
+                let home = spell_home_rows(size);
                 for sq in squares(size) {
                     let tile = self.terrain.get(sq);
                     if !matches!(tile.kind, TileKind::Grass | TileKind::Sand) {
@@ -659,7 +659,7 @@ impl Match {
                 }
             }
             SpellId::Sprout => {
-                let home = Position::home_rows(size);
+                let home = spell_home_rows(size);
                 for sq in squares(size) {
                     let tile = self.terrain.get(sq);
                     if tile.kind != TileKind::Grass || tile.feature != Feature::None {
@@ -1056,6 +1056,12 @@ impl Match {
 }
 
 /// King vs king, or king vs king and a single minor piece.
+/// Rows at each edge that Sprout and Flood can't touch. Small boards (6×6 and under) keep only
+/// the back rank, since two home rows would leave a 4×4 board no middle at all.
+fn spell_home_rows(size: u8) -> u8 {
+    if size <= 6 { 1 } else { Position::home_rows(size) }
+}
+
 fn insufficient_material(pos: &Position) -> bool {
     let mut minors = 0;
     for (_, p) in pos.pieces() {
